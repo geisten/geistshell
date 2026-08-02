@@ -106,10 +106,31 @@ Measured on the Pi against Gemma 4 E2B, the reject reason MOVED:
 
 That is real, measured forward progress: forcing the opening carries the model
 past the structure it could not start, and pinpoints the exact next
-constraint. The immediate follow-up is to constrain the KIND token to the enum
-(peek_logits + a mask over the valid kind names) — the first piece of the full
-token-level grammar acceptor (geistagent `agent.h` as reference). A fully valid
-form is expected once the kind is constrained too.
+constraint.
+
+**Stage 1 — kind-enum mask (merged).** After the forced prefix ends at
+`(kind `, a greedy `peek_logits` loop masks the next tokens to only those that
+keep the emitted text a live prefix of a valid kind name
+(`spg_action_kind_to_string` is the source of truth, so the mask cannot drift
+from `parse_action_kind`), until a complete name is reached. Pure predicates in
+`grammar_mask.c`, unit-tested without a GGUF. On the Pi the reject moved again:
+
+- forced prefix only → `REJECT_UNKNOWN_KIND` (Gemma picks an invalid kind).
+- **+ kind mask → `REJECT_MISSING_FIELD`** — output `(recommend (kind
+  simulator))`: a *valid kind by construction*, now missing the required
+  fields. `termination=finished`, not `budget` — the model lands a parseable
+  form immediately.
+
+Subtlety found on hardware: `token_to_str` detokenizes the SentencePiece
+word-boundary to a leading ASCII space/tab, so the first kind token reads
+`" simulator"`; the mask compares past leading whitespace (the separator stays
+in the output, valid in the s-expression). Without that, every candidate was
+rejected and the loop emitted `(recommend (kind ))`.
+
+Next: **Stage 2 — field scaffold.** Machine-emit the required-field skeleton
+for the chosen kind (source: `kind_fields_match`) via `prefill_tokens`, letting
+the model free-decode only the leaf string/number slots. That closes
+`MISSING_FIELD` and yields a full schema-valid form by construction.
 
 Dev-env note: the Mac's deps/geist pointed at a newer checkout lacking
 geist_util.h; switched to the pinned v0.2.1 via `make sync-engine`.
