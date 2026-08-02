@@ -1,6 +1,6 @@
-#include "geist-agent/sim_config.h"
+#include "geistshell/sim_config.h"
 
-#include "geist-agent/schema.h"
+#include "geistshell/schema.h"
 
 #include <stdbool.h>
 #include <stdint.h>

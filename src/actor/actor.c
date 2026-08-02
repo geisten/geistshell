@@ -1,4 +1,4 @@
-#include "geist-agent/actor.h"
+#include "geistshell/actor.h"
 
 #include <string.h>
 

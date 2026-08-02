@@ -4,7 +4,7 @@
 # feedback; the loop terminates on `finish` and is run-to-run deterministic.
 set -eu
 
-SPG_BIN=${SPG_BIN:-build/host-debug/bin/geist-agent}
+SPG_BIN=${SPG_BIN:-build/host-debug/bin/geistshell}
 T=$(mktemp -d)
 trap 'rm -rf "$T"' EXIT
 

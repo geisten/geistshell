@@ -1,5 +1,5 @@
-#include "geist-agent/policy.h"
-#include "geist-agent/policy_config.h"
+#include "geistshell/policy.h"
+#include "geistshell/policy_config.h"
 
 #include <stdio.h>
 #include <string.h>

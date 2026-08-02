@@ -3,7 +3,7 @@
 #    define _DARWIN_C_SOURCE 1
 #endif
 
-#include "geist-agent/mem_store.h"
+#include "geistshell/mem_store.h"
 
 #include <stdio.h>
 #include <stdlib.h>

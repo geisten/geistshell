@@ -1,11 +1,11 @@
-#include "geist-agent/geist-agent.h"
+#include "geistshell/geistshell.h"
 
-#include "geist-agent/chat_template.h"
-#include "geist-agent/chat_tools.h"
-#include "geist-agent/mem_store.h"
-#include "geist-agent/model_adapter.h"
-#include "geist-agent/model_resolve.h"
-#include "geist-agent/status.h"
+#include "geistshell/chat_template.h"
+#include "geistshell/chat_tools.h"
+#include "geistshell/mem_store.h"
+#include "geistshell/model_adapter.h"
+#include "geistshell/model_resolve.h"
+#include "geistshell/status.h"
 
 #include <geist.h>
 
@@ -32,9 +32,9 @@ static void print_usage(const char *argv0) {
             "[--fake] [--transcript <path>] [--memory-dir <path>] "
             "[--journal <path>] [--allow-exec]\n"
             "\n"
-            "Interactive geist-agent chat REPL.\n"
+            "Interactive geistshell chat REPL.\n"
             "Connects to a Gemma 4 GGUF via the geist engine. The model path is\n"
-            "taken from --model, then $GEIST_AGENT_MODEL, then "
+            "taken from --model, then $GEISTSHELL_MODEL, then "
             "./gguf_artifacts/gemma4-e2b-Q4_K_M.gguf;\n"
             "a missing default is auto-downloaded with curl unless --no-download.\n"
             "Use --fake to run offline without a model. Type /quit to exit, "
@@ -130,7 +130,7 @@ static int parse_args(int argc, char **argv, struct chat_args *out) {
             return 1;
         }
         if (strcmp(argv[i], "--version") == 0) {
-            printf("geist-agent-chat %s\n", SPG_VERSION_STRING);
+            printf("geistshell-chat %s\n", SPG_VERSION_STRING);
             printf("libgeist %s\n", geist_version_string());
             return 1;
         }
@@ -166,13 +166,13 @@ static int parse_args(int argc, char **argv, struct chat_args *out) {
             char           *end = nullptr;
             const unsigned long v = strtoul(argv[++i], &end, 10);
             if (end == argv[i] || *end != '\0' || v == 0u) {
-                fprintf(stderr, "geist-agent-chat: invalid --max-tokens\n");
+                fprintf(stderr, "geistshell-chat: invalid --max-tokens\n");
                 return 2;
             }
             out->max_tokens = (size_t)v;
             continue;
         }
-        fprintf(stderr, "geist-agent-chat: unknown or incomplete argument: %s\n",
+        fprintf(stderr, "geistshell-chat: unknown or incomplete argument: %s\n",
                 argv[i]);
         return 2;
     }
@@ -204,15 +204,15 @@ static enum spg_status init_adapter(const struct chat_args   *args,
         spg_model_resolve(&ropts, sizeof path, path, &downloaded);
     if (rstatus != SPG_OK) {
         fprintf(stderr,
-                "geist-agent-chat: no model (%s). Pass --model <path>, set "
-                "$GEIST_AGENT_MODEL, run `make fetch-model`, or use --fake.\n",
+                "geistshell-chat: no model (%s). Pass --model <path>, set "
+                "$GEISTSHELL_MODEL, run `make fetch-model`, or use --fake.\n",
                 spg_status_to_string(rstatus));
         return rstatus;
     }
     if (downloaded) {
-        fprintf(stderr, "geist-agent-chat: download complete.\n");
+        fprintf(stderr, "geistshell-chat: download complete.\n");
     }
-    fprintf(stderr, "geist-agent-chat: loading model %s ...\n", path);
+    fprintf(stderr, "geistshell-chat: loading model %s ...\n", path);
 
     const struct spg_model_adapter_config cfg = {
         .kind         = SPG_MODEL_ADAPTER_GEIST,
@@ -226,7 +226,7 @@ static enum spg_status init_adapter(const struct chat_args   *args,
     };
     const enum spg_status istatus = spg_model_adapter_init(adapter, &cfg);
     if (istatus != SPG_OK) {
-        fprintf(stderr, "geist-agent-chat: model load failed (%s)\n",
+        fprintf(stderr, "geistshell-chat: model load failed (%s)\n",
                 spg_status_to_string(istatus));
     }
     return istatus;
@@ -363,7 +363,7 @@ int main(int argc, char **argv) {
     if (!args.fake) {
         have_mem = spg_mem_store_open(&mem, resolve_mem_dir(&args)) == SPG_OK;
         if (!have_mem) {
-            fprintf(stderr, "geist-agent-chat: memory disabled (cannot open %s)\n",
+            fprintf(stderr, "geistshell-chat: memory disabled (cannot open %s)\n",
                     resolve_mem_dir(&args));
         }
     }
@@ -372,7 +372,7 @@ int main(int argc, char **argv) {
     if (args.transcript_path != nullptr) {
         transcript = fopen(args.transcript_path, "ab");
         if (transcript == nullptr) {
-            fprintf(stderr, "geist-agent-chat: transcript open failed\n");
+            fprintf(stderr, "geistshell-chat: transcript open failed\n");
             spg_model_adapter_destroy(&adapter);
             return 1;
         }
@@ -383,7 +383,7 @@ int main(int argc, char **argv) {
     struct spg_journal_writer *journal_ptr = nullptr;
     if (args.journal_path != nullptr) {
         if (spg_journal_writer_open(&journal, args.journal_path) != SPG_OK) {
-            fprintf(stderr, "geist-agent-chat: journal open failed\n");
+            fprintf(stderr, "geistshell-chat: journal open failed\n");
             if (transcript != nullptr) {
                 (void)fclose(transcript);
             }
@@ -394,7 +394,7 @@ int main(int argc, char **argv) {
         journal_ptr  = &journal;
     }
 
-    puts("geist-agent-chat ready. /quit, /reset, /memories, /recall <slug>, "
+    puts("geistshell-chat ready. /quit, /reset, /memories, /recall <slug>, "
          "/remember <slug> <desc>, /forget <slug>.");
     char                    line[CHAT_LINE_BYTES];
     char                    output[CHAT_OUTPUT_BYTES];
@@ -429,7 +429,7 @@ int main(int argc, char **argv) {
             continue;
         }
         if (transcript_write(transcript, "user", line) != 0) {
-            fprintf(stderr, "geist-agent-chat: transcript write failed\n");
+            fprintf(stderr, "geistshell-chat: transcript write failed\n");
             rc = 1;
             break;
         }
@@ -558,7 +558,7 @@ int main(int argc, char **argv) {
             printf("assistant> %s%s\n", reply,
                    result.output_truncated ? " …[truncated]" : "");
             if (transcript_write(transcript, "assistant", reply) != 0) {
-                fprintf(stderr, "geist-agent-chat: transcript write failed\n");
+                fprintf(stderr, "geistshell-chat: transcript write failed\n");
                 rc = 1;
                 break;
             }
@@ -573,7 +573,7 @@ int main(int argc, char **argv) {
         (void)spg_journal_writer_close(&journal);
     }
     if (transcript != nullptr && fclose(transcript) != 0) {
-        fprintf(stderr, "geist-agent-chat: transcript close failed\n");
+        fprintf(stderr, "geistshell-chat: transcript close failed\n");
         return 1;
     }
     return rc;

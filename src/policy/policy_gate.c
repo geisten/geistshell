@@ -1,4 +1,4 @@
-#include "geist-agent/policy_gate.h"
+#include "geistshell/policy_gate.h"
 
 #include <string.h>
 

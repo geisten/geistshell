@@ -3,7 +3,7 @@
 #    define _DARWIN_C_SOURCE 1
 #endif
 
-#include "geist-agent/improve.h"
+#include "geistshell/improve.h"
 
 #include <stdio.h>
 #include <stdlib.h>

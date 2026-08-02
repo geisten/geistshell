@@ -3,11 +3,11 @@
 #    define _DARWIN_C_SOURCE 1
 #endif
 
-#include "geist-agent/eval.h"
+#include "geistshell/eval.h"
 
-#include "geist-agent/policy_config.h"
-#include "geist-agent/run_config.h"
-#include "geist-agent/sim_config.h"
+#include "geistshell/policy_config.h"
+#include "geistshell/run_config.h"
+#include "geistshell/sim_config.h"
 
 #include <stdio.h>
 #include <stdlib.h>

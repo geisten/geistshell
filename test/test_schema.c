@@ -1,5 +1,5 @@
-#include "geist-agent/schema.h"
-#include "geist-agent/sexpr.h"
+#include "geistshell/schema.h"
+#include "geistshell/sexpr.h"
 
 #include <stdio.h>
 #include <string.h>

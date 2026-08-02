@@ -1,4 +1,4 @@
-#include "geist-agent/model_remote_codec.h"
+#include "geistshell/model_remote_codec.h"
 
 #include <stdio.h>
 #include <string.h>

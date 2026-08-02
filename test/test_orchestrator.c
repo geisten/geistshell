@@ -1,4 +1,4 @@
-#include "geist-agent/orchestrator.h"
+#include "geistshell/orchestrator.h"
 
 #include <stdio.h>
 #include <string.h>
@@ -92,7 +92,7 @@ static struct spg_orchestrator_workspace workspace_for(
 }
 
 static int test_simulator_tick_executes(void) {
-    const char journal_path[] = "/tmp/geist-agent_test_orchestrator_sim.journal";
+    const char journal_path[] = "/tmp/geistshell_test_orchestrator_sim.journal";
     (void)remove(journal_path);
 
     struct spg_policy_config policy = {};

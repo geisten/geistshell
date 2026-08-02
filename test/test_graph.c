@@ -1,4 +1,4 @@
-#include "geist-agent/graph.h"
+#include "geistshell/graph.h"
 
 #include <math.h>
 #include <stdio.h>

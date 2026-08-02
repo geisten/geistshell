@@ -18,7 +18,7 @@
 # Usage: examples/eval/bench/improve_benchmark.sh   (run from the repo root)
 set -eu
 
-SPG_BIN=${SPG_BIN:-build/host-debug/bin/geist-agent}
+SPG_BIN=${SPG_BIN:-build/host-debug/bin/geistshell}
 TRAIN=examples/eval/bench/train.spg
 HOLDOUT=examples/eval/bench/holdout.spg
 MEM=$(mktemp -d)

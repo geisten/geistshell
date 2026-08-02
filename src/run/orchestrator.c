@@ -1,4 +1,4 @@
-#include "geist-agent/orchestrator.h"
+#include "geistshell/orchestrator.h"
 
 static bool workspace_valid(const struct spg_orchestrator_workspace *workspace) {
     if (workspace == nullptr || workspace->policy_payload == nullptr ||

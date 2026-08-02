@@ -1,4 +1,4 @@
-#include "geist-agent/cmd_registry.h"
+#include "geistshell/cmd_registry.h"
 
 #include <string.h>
 

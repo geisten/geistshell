@@ -1,6 +1,6 @@
 # Security Policy
 
-geist-agent is a **governed agent runtime**: it executes actions proposed by a
+geistshell is a **governed agent runtime**: it executes actions proposed by a
 language model behind a mandatory policy gate, an executor boundary, an OS-level
 process sandbox, and a tamper-evident audit log. This document states the threat
 model honestly — **what the runtime enforces, and just as importantly what it
@@ -103,7 +103,7 @@ tamper-evidence. (Asymmetric Ed25519 signatures are on the roadmap, not shipped.
 
 ### 5. Secret handling
 
-The remote API key is read **only** from the `GEIST_AGENT_API_KEY` environment
+The remote API key is read **only** from the `GEISTSHELL_API_KEY` environment
 variable, used solely to build the `Authorization` header, and is **never** a
 command-line argument and **never** written to the journal.
 
@@ -115,7 +115,7 @@ raw model text. Writes are atomic (temp file + `rename`).
 
 ## What the runtime does NOT do
 
-These are deliberate scope limits. **Read them before exposing geist-agent to an
+These are deliberate scope limits. **Read them before exposing geistshell to an
 untrusted model or running it on a machine you care about.**
 
 - **No filesystem jail.** The sandbox `chdir`s into the working directory but
@@ -127,7 +127,7 @@ untrusted model or running it on a machine you care about.**
   *declarative*: it relies on the model's self-declared `uses_network` flag and
   the policy `network_default`. The command itself is **not** inspected, and the
   OS does not block sockets. A program that does network I/O (e.g. `curl`, `nc`)
-  launched with `uses_network=false` will **not** be stopped by geist-agent.
+  launched with `uses_network=false` will **not** be stopped by geistshell.
 - **No privilege drop, no seccomp, no cgroups.** The child inherits the parent's
   uid/gid/groups; there is no syscall filtering and no `capabilities(7)`
   reduction. Resource limits are `setrlimit` only (best-effort, platform-
@@ -146,7 +146,7 @@ untrusted model or running it on a machine you care about.**
 
 ## Operator hardening
 
-geist-agent provides *governance and audit*, not OS isolation. For untrusted or
+geistshell provides *governance and audit*, not OS isolation. For untrusted or
 high-stakes use, layer it under real isolation:
 
 1. **Run as a dedicated, unprivileged user** — never as root.

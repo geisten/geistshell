@@ -1,8 +1,8 @@
-#include "geist-agent/model_remote.h"
+#include "geistshell/model_remote.h"
 
 #ifdef SPG_ENABLE_REMOTE
 
-#include "geist-agent/model_remote_codec.h"
+#include "geistshell/model_remote_codec.h"
 
 #include <curl/curl.h>
 #include <stdio.h>

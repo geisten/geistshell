@@ -4,7 +4,7 @@
 # capability denies it (nothing written).
 set -eu
 
-SPG_BIN=${SPG_BIN:-build/host-debug/bin/geist-agent}
+SPG_BIN=${SPG_BIN:-build/host-debug/bin/geistshell}
 T=$(mktemp -d)
 trap 'rm -rf "$T"' EXIT
 

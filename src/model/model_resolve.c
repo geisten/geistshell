@@ -3,7 +3,7 @@
 #    define _DARWIN_C_SOURCE 1
 #endif
 
-#include "geist-agent/model_resolve.h"
+#include "geistshell/model_resolve.h"
 
 #include <errno.h>
 #include <limits.h>
@@ -67,7 +67,7 @@ static enum spg_status fetch_with_curl(const char *url, const char *dest) {
     }
 
     fprintf(stderr,
-            "geist-agent: model not found, downloading (~3.1 GB)\n  from %s\n"
+            "geistshell: model not found, downloading (~3.1 GB)\n  from %s\n"
             "  to   %s\n",
             url, dest);
 
@@ -79,7 +79,7 @@ static enum spg_status fetch_with_curl(const char *url, const char *dest) {
                                  (char *const *)argv, environ);
     if (rc != 0) {
         fprintf(stderr,
-                "geist-agent: cannot run curl (%s); install curl or run "
+                "geistshell: cannot run curl (%s); install curl or run "
                 "`make fetch-model`\n",
                 strerror(rc));
         return SPG_E_IO;
@@ -92,7 +92,7 @@ static enum spg_status fetch_with_curl(const char *url, const char *dest) {
     } while (w < 0 && errno == EINTR);
     if (w != pid || !WIFEXITED(wstatus) || WEXITSTATUS(wstatus) != 0) {
         fprintf(stderr,
-                "geist-agent: download failed; partial file kept for resume "
+                "geistshell: download failed; partial file kept for resume "
                 "at %s\n",
                 part);
         return SPG_E_IO;
@@ -119,7 +119,7 @@ enum spg_status spg_model_resolve(const struct spg_model_resolve_opts *opts,
     if (opts->explicit_path != nullptr && opts->explicit_path[0] != '\0') {
         named = opts->explicit_path;
     } else {
-        const char *env = getenv("GEIST_AGENT_MODEL");
+        const char *env = getenv("GEISTSHELL_MODEL");
         if (env != nullptr && env[0] != '\0') {
             named = env;
         }
@@ -138,7 +138,7 @@ enum spg_status spg_model_resolve(const struct spg_model_resolve_opts *opts,
         return SPG_E_NOT_FOUND;
     }
 
-    const char *url = getenv("GEIST_AGENT_MODEL_URL");
+    const char *url = getenv("GEISTSHELL_MODEL_URL");
     if (url == nullptr || url[0] == '\0') {
         url = SPG_MODEL_DEFAULT_URL;
     }

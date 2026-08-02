@@ -1,7 +1,7 @@
-#include "geist-agent/improve.h"
+#include "geistshell/improve.h"
 
-#include "geist-agent/policy.h"
-#include "geist-agent/recommendation.h"
+#include "geistshell/policy.h"
+#include "geistshell/recommendation.h"
 
 #include <stdio.h>
 #include <string.h>

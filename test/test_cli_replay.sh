@@ -1,7 +1,7 @@
 #!/bin/sh
 set -eu
 
-SPG_BIN=${SPG_BIN:-build/host-debug/bin/geist-agent}
+SPG_BIN=${SPG_BIN:-build/host-debug/bin/geistshell}
 JOURNAL=build/tick-demo.sgj
 OUT=build/test-cli-replay.jsonl
 

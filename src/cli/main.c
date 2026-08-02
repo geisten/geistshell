@@ -1,12 +1,12 @@
-#include "geist-agent/geist-agent.h"
+#include "geistshell/geistshell.h"
 
-#include "geist-agent/agent_loop.h"
-#include "geist-agent/agent_run.h"
-#include "geist-agent/eval.h"
-#include "geist-agent/exec_command.h"
-#include "geist-agent/improve.h"
-#include "geist-agent/mem_command.h"
-#include "geist-agent/mem_store.h"
+#include "geistshell/agent_loop.h"
+#include "geistshell/agent_run.h"
+#include "geistshell/eval.h"
+#include "geistshell/exec_command.h"
+#include "geistshell/improve.h"
+#include "geistshell/mem_command.h"
+#include "geistshell/mem_store.h"
 
 #include <geist.h>
 
@@ -45,7 +45,7 @@ static void print_usage(const char *argv0) {
             "usage: %s <command> [args]\n"
             "\n"
             "commands:\n"
-            "  version          print geist-agent and libgeist versions\n"
+            "  version          print geistshell and libgeist versions\n"
             "  exec             run a guarded local command and capture output\n"
             "  memory           store/recall Markdown long-term memories\n"
             "  tick             run one fake-model orchestrator tick\n"
@@ -82,9 +82,9 @@ static void print_run_usage(const char *argv0) {
             "simulator state.\n"
             "Without --fake, the model path from the run config is loaded via "
             "libgeist.\n"
-            "With --remote-url (or GEIST_AGENT_API_URL) and a REMOTE=1 build, an "
+            "With --remote-url (or GEISTSHELL_API_URL) and a REMOTE=1 build, an "
             "OpenAI-compatible\nendpoint drives the loop; the key is read from "
-            "GEIST_AGENT_API_KEY.\n"
+            "GEISTSHELL_API_KEY.\n"
             "Shell and network recommendations stop after recommendation and "
             "policy gating.\n"
             "If requested, writes the final simulator state as a scenario "
@@ -1435,9 +1435,9 @@ static int run_loop(const char *run_path, const char *fake_output,
     journal_open = true;
 
     /* Adapter selection: --fake wins; else a remote endpoint (flag or
-     * GEIST_AGENT_API_URL) selects the REMOTE model; else local GEIST. */
+     * GEISTSHELL_API_URL) selects the REMOTE model; else local GEIST. */
     const bool  use_fake    = fake_output != nullptr;
-    const char *env_api_url = getenv("GEIST_AGENT_API_URL");
+    const char *env_api_url = getenv("GEISTSHELL_API_URL");
     const char *url =
         (remote_url != nullptr && remote_url[0] != '\0')        ? remote_url
         : (env_api_url != nullptr && env_api_url[0] != '\0')    ? env_api_url
@@ -1457,7 +1457,7 @@ static int run_loop(const char *run_path, const char *fake_output,
         .model_path   = (kind == SPG_MODEL_ADAPTER_GEIST) ? model_path : nullptr,
         .endpoint_url = use_remote ? url : nullptr,
         .model_name   = use_remote ? remote_name : nullptr,
-        .api_key      = use_remote ? getenv("GEIST_AGENT_API_KEY") : nullptr,
+        .api_key      = use_remote ? getenv("GEISTSHELL_API_KEY") : nullptr,
         .sampling        = {.max_seq_len = 4096u,
                             .temperature = 0.0f,
                             .top_p = 1.0f,
@@ -1667,7 +1667,7 @@ static int run_command(int argc, char **argv) {
     const char *fake_output = nullptr;
     const char *sim_state_path = nullptr;
     const char *run_state_path = nullptr;
-    const char *memory_dir     = getenv("GEIST_AGENT_MEMORY_DIR");
+    const char *memory_dir     = getenv("GEISTSHELL_MEMORY_DIR");
     const char *remote_url     = nullptr;
     const char *remote_model   = nullptr;
     size_t ticks = 3u;
@@ -1765,7 +1765,7 @@ static size_t split_script_lines(char *data, const size_t n,
 static int agent_command(int argc, char **argv) {
     const char *run_path    = nullptr;
     const char *script_path = nullptr;
-    const char *memory_dir  = getenv("GEIST_AGENT_MEMORY_DIR");
+    const char *memory_dir  = getenv("GEISTSHELL_MEMORY_DIR");
     size_t      max_steps   = 8u;
     size_t      max_repairs = 2u;
     bool        allow_exec  = false;
@@ -2252,12 +2252,12 @@ static enum spg_status eval_run_suite(const char *suite_path,
     const struct eval_run_opts  defaults = {};
     const struct eval_run_opts *o = (opts != nullptr) ? opts : &defaults;
     const size_t                samples = (o->samples > 0u) ? o->samples : 1u;
-    const char                 *env_api_url = getenv("GEIST_AGENT_API_URL");
+    const char                 *env_api_url = getenv("GEISTSHELL_API_URL");
     const char                 *remote_url =
         (o->remote_url != nullptr && o->remote_url[0] != '\0') ? o->remote_url
         : (env_api_url != nullptr && env_api_url[0] != '\0')   ? env_api_url
                                                                : nullptr;
-    const char *api_key = getenv("GEIST_AGENT_API_KEY");
+    const char *api_key = getenv("GEISTSHELL_API_KEY");
 
     rc = SPG_OK;
     for (uint32_t c = spg_sexpr_first_child(nod, 0u);
@@ -2764,7 +2764,7 @@ int main(int argc, char **argv) {
     }
 
     if (strcmp(argv[1], "version") == 0) {
-        printf("geist-agent %s\n", SPG_VERSION_STRING);
+        printf("geistshell %s\n", SPG_VERSION_STRING);
         printf("libgeist %s\n", geist_version_string());
         return 0;
     }

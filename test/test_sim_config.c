@@ -1,4 +1,4 @@
-#include "geist-agent/sim_config.h"
+#include "geistshell/sim_config.h"
 
 #include <stdio.h>
 #include <string.h>

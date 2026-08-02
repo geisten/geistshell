@@ -23,7 +23,7 @@ Hard constraints:
 
 Memory allocation rule:
 - The `heap.h` allocation interface is owned by the geist engine (`deps/geist/heap.h`),
-  not by geist-agent. geist-agent consumes it directly (`#include "heap.h"`, resolved via
+  not by geistshell. geistshell consumes it directly (`#include "heap.h"`, resolved via
   `-Ideps/geist`) and must not maintain a divergent copy. Treat geist as the single source
   of truth for allocation policy and the `memory_arena` type.
 - Prefer this `heap.h` allocation interface whenever dynamic memory is required.

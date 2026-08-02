@@ -1,4 +1,4 @@
-#include "geist-agent/allocator.h"
+#include "geistshell/allocator.h"
 
 #include <stdint.h>
 

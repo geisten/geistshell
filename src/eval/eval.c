@@ -1,4 +1,4 @@
-#include "geist-agent/eval.h"
+#include "geistshell/eval.h"
 
 #include <string.h>
 

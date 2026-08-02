@@ -1,4 +1,4 @@
-#include "geist-agent/model_adapter.h"
+#include "geistshell/model_adapter.h"
 
 #include <geist.h>
 
@@ -6,7 +6,7 @@
 #include <string.h>
 
 #ifdef SPG_ENABLE_REMOTE
-#include "geist-agent/model_remote.h"
+#include "geistshell/model_remote.h"
 #endif
 
 static enum spg_status map_geist_status(const enum geist_status status) {

@@ -1,7 +1,7 @@
-#include "geist-agent/shell_executor.h"
+#include "geistshell/shell_executor.h"
 
-#include "geist-agent/cmd_executor.h"
-#include "geist-agent/sexpr.h"
+#include "geistshell/cmd_executor.h"
+#include "geistshell/sexpr.h"
 
 #include <stdio.h>
 #include <string.h>

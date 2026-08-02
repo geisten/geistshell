@@ -1,4 +1,4 @@
-#include "geist-agent/run_config.h"
+#include "geistshell/run_config.h"
 
 #include <stdio.h>
 #include <string.h>

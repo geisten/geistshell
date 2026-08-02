@@ -1,4 +1,4 @@
-#include "geist-agent/hmac.h"
+#include "geistshell/hmac.h"
 
 #include <stdio.h>
 #include <string.h>

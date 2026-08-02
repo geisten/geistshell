@@ -1,4 +1,4 @@
-#include "geist-agent/executor_boundary.h"
+#include "geistshell/executor_boundary.h"
 
 #include <stdio.h>
 #include <string.h>
@@ -25,7 +25,7 @@ static struct spg_policy_decision allow_policy(void) {
 static struct spg_executor_boundary_config boundary_config(void) {
     return (struct spg_executor_boundary_config){
         .execution_enabled      = true,
-        .allowed_workdir_prefix = "/tmp/geist-agent",
+        .allowed_workdir_prefix = "/tmp/geistshell",
         .max_timeout_ms         = 1000u,
         .max_stdout_bytes       = 4096u,
         .max_stderr_bytes       = 4096u,
@@ -35,7 +35,7 @@ static struct spg_executor_boundary_config boundary_config(void) {
 
 static struct spg_executor_boundary_request boundary_request(void) {
     return (struct spg_executor_boundary_request){
-        .working_dir        = "/tmp/geist-agent/lab",
+        .working_dir        = "/tmp/geistshell/lab",
         .timeout_ms         = 250u,
         .stdout_limit_bytes = 1024u,
         .stderr_limit_bytes = 1024u,

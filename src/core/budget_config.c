@@ -1,6 +1,6 @@
-#include "geist-agent/run_config.h"
+#include "geistshell/run_config.h"
 
-#include "geist-agent/sexpr.h"
+#include "geistshell/sexpr.h"
 
 #include <stdbool.h>
 #include <stddef.h>

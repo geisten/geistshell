@@ -3,14 +3,14 @@
 #    define _DARWIN_C_SOURCE 1
 #endif
 
-#include "geist-agent/agent_loop.h"
+#include "geistshell/agent_loop.h"
 
-#include "geist-agent/graph.h"
-#include "geist-agent/mem_store.h"
-#include "geist-agent/memory.h"
-#include "geist-agent/model_adapter.h"
-#include "geist-agent/policy_config.h"
-#include "geist-agent/sim_config.h"
+#include "geistshell/graph.h"
+#include "geistshell/mem_store.h"
+#include "geistshell/memory.h"
+#include "geistshell/model_adapter.h"
+#include "geistshell/policy_config.h"
+#include "geistshell/sim_config.h"
 
 #include <stdio.h>
 #include <stdlib.h>

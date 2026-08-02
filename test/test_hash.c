@@ -1,4 +1,4 @@
-#include "geist-agent/hash.h"
+#include "geistshell/hash.h"
 
 #include <stdio.h>
 #include <string.h>

@@ -5,8 +5,8 @@
 # default build (no libcurl needed; the guard fires before any HTTP).
 set -eu
 
-SPG_BIN=${SPG_BIN:-build/host-debug/bin/geist-agent}
-unset GEIST_AGENT_API_URL GEIST_AGENT_API_KEY 2>/dev/null || true
+SPG_BIN=${SPG_BIN:-build/host-debug/bin/geistshell}
+unset GEISTSHELL_API_URL GEISTSHELL_API_KEY 2>/dev/null || true
 
 T=$(mktemp -d)
 trap 'rm -rf "$T"' EXIT

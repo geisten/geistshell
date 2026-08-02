@@ -1,10 +1,10 @@
-#include "geist-agent/actor.h"
+#include "geistshell/actor.h"
 
 #include <stdio.h>
 #include <string.h>
 
 static int test_actor_step_updates_state_and_journal(void) {
-    const char journal_path[] = "/tmp/geist-agent_test_actor_step.journal";
+    const char journal_path[] = "/tmp/geistshell_test_actor_step.journal";
     (void)remove(journal_path);
 
     struct spg_graph          graph = {};
@@ -205,7 +205,7 @@ static int test_context_buffer_limit_stops_before_model(void) {
 }
 
 static int test_model_output_limit_is_journaled_as_failure(void) {
-    const char journal_path[] = "/tmp/geist-agent_test_actor_limit.journal";
+    const char journal_path[] = "/tmp/geistshell_test_actor_limit.journal";
     (void)remove(journal_path);
 
     struct spg_journal_writer writer = {};

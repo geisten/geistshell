@@ -1,4 +1,4 @@
-#include "geist-agent/shell_executor.h"
+#include "geistshell/shell_executor.h"
 
 #include <stdio.h>
 #include <string.h>

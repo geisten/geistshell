@@ -3,7 +3,7 @@
 #    define _DARWIN_C_SOURCE 1
 #endif
 
-#include "geist-agent/chat_tools.h"
+#include "geistshell/chat_tools.h"
 
 #include <stdio.h>
 #include <stdlib.h>
