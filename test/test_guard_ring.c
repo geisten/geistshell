@@ -50,20 +50,19 @@ static int test_ring_dedup_and_lru(void) {
     spg_guard_ring_init(&ring);
 
     /* two distinct shapes -> two guards */
-    spg_guard_ring_record(&ring, "shape-A", "/j/a.sgj", "OK");
-    spg_guard_ring_record(&ring, "shape-B", "/j/b.sgj", "OK");
+    spg_guard_ring_record(&ring, "shape-A", "/cfg/a.spg");
+    spg_guard_ring_record(&ring, "shape-B", "/cfg/b.spg");
     if (spg_guard_ring_count(&ring) != 2u) {
         return 1;
     }
 
     /* re-recording a shape refreshes, does not duplicate */
-    spg_guard_ring_record(&ring, "shape-A", "/j/a2.sgj", "OK2");
+    spg_guard_ring_record(&ring, "shape-A", "/cfg/a2.spg");
     if (spg_guard_ring_count(&ring) != 2u) {
         return 1;
     }
     const struct spg_guard *a = spg_guard_ring_find(&ring, "shape-A");
-    if (a == nullptr || strcmp(a->journal_path, "/j/a2.sgj") != 0 ||
-        strcmp(a->expect, "OK2") != 0) {
+    if (a == nullptr || strcmp(a->config_path, "/cfg/a2.spg") != 0) {
         return 1;
     }
 
@@ -73,7 +72,7 @@ static int test_ring_dedup_and_lru(void) {
     char name[32];
     for (unsigned i = 0u; i < SPG_GUARD_RING_CAP; i++) {
         snprintf(name, sizeof name, "fill-%u", i);
-        spg_guard_ring_record(&ring, name, "/j/f.sgj", "OK");
+        spg_guard_ring_record(&ring, name, "/cfg/f.spg");
     }
     /* ring is full at CAP distinct shapes */
     if (spg_guard_ring_count(&ring) != SPG_GUARD_RING_CAP) {
@@ -85,9 +84,74 @@ static int test_ring_dedup_and_lru(void) {
         return 1;
     }
     /* a fresh distinct shape still fits by evicting an LRU, never grows past cap */
-    spg_guard_ring_record(&ring, "shape-Z", "/j/z.sgj", "OK");
+    spg_guard_ring_record(&ring, "shape-Z", "/cfg/z.spg");
     if (spg_guard_ring_count(&ring) != SPG_GUARD_RING_CAP ||
         spg_guard_ring_find(&ring, "shape-Z") == nullptr) {
+        return 1;
+    }
+    return 0;
+}
+
+/* P5 (Weg 2): only a guard that passed without the lesson and fails with it
+ * vetoes; an already-failing guard carries no signal. */
+static int test_guard_veto_rule(void) {
+    if (!spg_guard_survives(true, true)) {   /* passed both -> fine */
+        return 1;
+    }
+    if (spg_guard_survives(true, false)) {   /* pass -> fail: the veto */
+        return 1;
+    }
+    if (!spg_guard_survives(false, false)) { /* already broken -> no signal */
+        return 1;
+    }
+    if (!spg_guard_survives(false, true)) {  /* lesson even helped -> fine */
+        return 1;
+    }
+    return 0;
+}
+
+/* A fake live-runner: a designated "regressing" guard passes at baseline and
+ * fails with the lesson; all others pass both ways. Records the call sequence. */
+struct fake_runner {
+    const char *regressing_config; /* the guard that breaks under the lesson */
+    int         calls;
+};
+static bool fake_run(void *ctx, const char *config_path, bool with_lesson) {
+    struct fake_runner *f = (struct fake_runner *)ctx;
+    f->calls++;
+    if (f->regressing_config != nullptr &&
+        strcmp(config_path, f->regressing_config) == 0) {
+        return !with_lesson; /* passes baseline, fails with the lesson */
+    }
+    return true;
+}
+
+/* P5 (Weg 2): the gate accepts when every guard survives, vetoes the moment a
+ * guard that passed at baseline fails with the lesson. */
+static int test_guard_gate(void) {
+    struct spg_guard_ring ring;
+    spg_guard_ring_init(&ring);
+    spg_guard_ring_record(&ring, "shape-A", "/cfg/a.spg");
+    spg_guard_ring_record(&ring, "shape-B", "/cfg/b.spg");
+
+    /* no guard regresses -> the lesson survives */
+    struct fake_runner ok = {.regressing_config = nullptr};
+    if (!spg_guard_ring_gate(&ring, fake_run, &ok) || ok.calls != 4) {
+        return 1; /* 2 guards x (baseline + trial) */
+    }
+
+    /* one guard regresses under the lesson -> vetoed */
+    struct fake_runner bad = {.regressing_config = "/cfg/b.spg"};
+    if (spg_guard_ring_gate(&ring, fake_run, &bad)) {
+        return 1;
+    }
+
+    /* an empty ring accepts; a null runner is rejected */
+    struct spg_guard_ring empty;
+    spg_guard_ring_init(&empty);
+    struct fake_runner e = {.regressing_config = nullptr};
+    if (!spg_guard_ring_gate(&empty, fake_run, &e) ||
+        spg_guard_ring_gate(&ring, nullptr, &e)) {
         return 1;
     }
     return 0;
@@ -100,6 +164,14 @@ int main(void) {
     }
     if (test_ring_dedup_and_lru() != 0) {
         fprintf(stderr, "test_ring_dedup_and_lru failed\n");
+        return 1;
+    }
+    if (test_guard_veto_rule() != 0) {
+        fprintf(stderr, "test_guard_veto_rule failed\n");
+        return 1;
+    }
+    if (test_guard_gate() != 0) {
+        fprintf(stderr, "test_guard_gate failed\n");
         return 1;
     }
     printf("test_guard_ring: PASS\n");
