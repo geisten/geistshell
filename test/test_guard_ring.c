@@ -27,8 +27,8 @@ static int test_shape_key(void) {
     if (spg_shape_from_script(a, 3u, sizeof shape, shape, &len) != SPG_OK) {
         return 1;
     }
-    /* sorted set: finish, local_shell:fs.write, local_shell:proc.exec */
-    if (strcmp(shape, "finish+local_shell:fs.write+local_shell:proc.exec") != 0) {
+    /* sorted set (finish excluded — universal): local_shell:fs.write, local_shell:proc.exec */
+    if (strcmp(shape, "local_shell:fs.write+local_shell:proc.exec") != 0) {
         fprintf(stderr, "shape=%s\n", shape);
         return 1;
     }

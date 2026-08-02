@@ -184,6 +184,14 @@ enum spg_status spg_shape_from_script(const struct spg_fake_response responses[]
         }
         char token[SPG_SHAPE_TOKEN_MAX + 1u];
         const char *kind = spg_action_kind_to_string(rec.action_kind);
+        /* `finish` ends every successful run, so it carries no discriminative
+         * information — excluding it lets a trajectory shape match the shape
+         * derivable upfront from the policy's enabled capabilities (there is
+         * no `finish` capability). Guard/skill shapes lose only the universal
+         * token, not any discrimination. */
+        if (rec.action_kind == SPG_ACTION_FINISH) {
+            continue;
+        }
         if (rec.capability.length > 0u) {
             (void)snprintf(token, sizeof token, "%s:%.*s", kind,
                            (int)rec.capability.length,
