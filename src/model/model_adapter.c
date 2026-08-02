@@ -1,6 +1,7 @@
 #include "geistshell/model_adapter.h"
 
-#include "geistshell/grammar_mask.h" /* #34: kind-slot mask */
+#include "geistshell/grammar_mask.h"  /* #34: kind + capability masks */
+#include "geistshell/policy_config.h" /* SPG_POLICY_MAX_CAPABILITIES */
 
 #include <geist.h>
 #include <geist_util.h> /* #34: tokenize + prefill_tokens + peek_logits */
@@ -188,6 +189,97 @@ static enum spg_status decode_string_slot(struct spg_model_adapter *adapter,
     return SPG_OK; /* length cap */
 }
 
+/* Decode one slot constrained to a fixed vocabulary (#34): greedily keep only
+ * tokens that leave the emitted text a live prefix of some candidate name,
+ * until one is complete. Leading detok whitespace is stripped from the appended
+ * text so the value carries no spurious space (correct for kind and capability,
+ * whose names contain none). The chosen name is written to out[]. Bails (leaving
+ * out partial) if no valid continuation exists. */
+static enum spg_status decode_choice_slot(
+    struct spg_model_adapter *adapter, struct spg_model_generate_result *result,
+    const char *const *names, const size_t names_n, char *out,
+    const size_t out_cap) {
+    size_t used = 0u;
+    out[0]      = '\0';
+    for (size_t step = 0u;
+         step < 24u && !spg_choice_complete(names, names_n, out); step += 1u) {
+        size_t       n_vocab = 0u;
+        const float *logits =
+            geist_session_peek_logits(adapter->session, &n_vocab);
+        if (logits == nullptr || n_vocab == 0u) {
+            break;
+        }
+        geist_token_t best       = -1;
+        float         best_logit = -INFINITY;
+        for (size_t t = 0u; t < n_vocab; t += 1u) {
+            if (logits[t] <= best_logit) {
+                continue;
+            }
+            const char *piece =
+                geist_session_token_to_str(adapter->session, (geist_token_t) t);
+            if (piece == nullptr ||
+                !spg_choice_prefix_ok(names, names_n, out, piece)) {
+                continue;
+            }
+            best       = (geist_token_t) t;
+            best_logit = logits[t];
+        }
+        if (best < 0) {
+            break;
+        }
+        const char *piece = geist_session_token_to_str(adapter->session, best);
+        const char *ap    = piece;
+        while (*ap == ' ' || *ap == '\t') {
+            ap += 1;
+        }
+        const size_t pl = strlen(ap);
+        if (used + pl >= out_cap) {
+            break;
+        }
+        if (pl > 0u) {
+            const enum spg_status as = append_bytes(result, pl, ap);
+            if (as != SPG_OK) {
+                return as;
+            }
+            memcpy(out + used, ap, pl);
+            used += pl;
+            out[used] = '\0';
+        }
+        const enum geist_status status =
+            geist_session_prefill_tokens(adapter->session, 1u, &best);
+        if (status != GEIST_OK) {
+            return map_geist_status(status);
+        }
+        result->tokens_decoded += 1u;
+    }
+    return SPG_OK;
+}
+
+/* Free-decode the capability slot masked to the policy capabilities enabled for
+ * `kind` (#34). With no matching capability it falls back to a free string —
+ * the form stays valid, the policy gate then decides. */
+static enum spg_status decode_capability_slot(
+    struct spg_model_adapter *adapter, struct spg_model_generate_result *result,
+    const enum spg_action_kind kind) {
+    const char *names[SPG_POLICY_MAX_CAPABILITIES];
+    size_t      names_n = 0u;
+    for (size_t i = 0u;
+         i < adapter->capability_count && names_n < SPG_POLICY_MAX_CAPABILITIES;
+         i += 1u) {
+        if (adapter->capabilities[i].kind == kind &&
+            adapter->capabilities[i].name != nullptr) {
+            names[names_n] = adapter->capabilities[i].name;
+            names_n += 1u;
+        }
+    }
+    if (names_n == 0u) {
+        return decode_string_slot(adapter, result); /* no mask: free-decode */
+    }
+    char chosen[128];
+    return decode_choice_slot(adapter, result, names, names_n, chosen,
+                              sizeof chosen);
+}
+
 static enum spg_status generate_geist(
     struct spg_model_adapter *adapter,
     const struct spg_model_generate_request *request,
@@ -221,67 +313,38 @@ static enum spg_status generate_geist(
             return prefix_as;
         }
 
-        /* 2. kind-slot mask: greedily keep only tokens that leave the emitted
-         * text a live prefix of a valid kind name, until one is complete. */
-        char   kindbuf[64];
-        size_t kind_used = 0u;
-        kindbuf[0]       = '\0';
-        for (size_t step = 0u; step < 16u && !spg_kind_complete(kindbuf);
-             step += 1u) {
-            size_t       n_vocab = 0u;
-            const float *logits =
-                geist_session_peek_logits(adapter->session, &n_vocab);
-            if (logits == nullptr || n_vocab == 0u) {
-                break;
-            }
-            geist_token_t best       = -1;
-            float         best_logit = -INFINITY;
-            for (size_t t = 0u; t < n_vocab; t += 1u) {
-                if (logits[t] <= best_logit) {
-                    continue; /* cannot beat the best valid token so far */
-                }
-                const char *piece = geist_session_token_to_str(
-                    adapter->session, (geist_token_t) t);
-                if (piece == nullptr || !spg_kind_prefix_ok(kindbuf, piece)) {
-                    continue;
-                }
-                best       = (geist_token_t) t;
-                best_logit = logits[t];
-            }
-            if (best < 0) {
-                break; /* dead end: no token keeps a valid kind prefix */
-            }
-            const char  *piece = geist_session_token_to_str(adapter->session, best);
-            const size_t pl    = strlen(piece);
-            if (kind_used + pl >= sizeof kindbuf) {
-                break;
-            }
-            const enum spg_status as = append_bytes(result, pl, piece);
-            if (as != SPG_OK) {
-                return as;
-            }
-            memcpy(kindbuf + kind_used, piece, pl);
-            kind_used += pl;
-            kindbuf[kind_used] = '\0';
-            status = geist_session_prefill_tokens(adapter->session, 1u, &best);
-            if (status != GEIST_OK) {
-                return map_geist_status(status);
-            }
-            result->tokens_decoded += 1u;
+        /* 2. kind-slot mask: constrain the slot to a valid kind enum name. */
+        char        kindbuf[64];
+        const char *kn[8];
+        const size_t  knn = spg_kind_names(kn, sizeof kn / sizeof kn[0]);
+        const enum spg_status ks =
+            decode_choice_slot(adapter, result, kn, knn, kindbuf, sizeof kindbuf);
+        if (ks != SPG_OK) {
+            return ks;
         }
 
         /* 3. field scaffold: emit the deterministic structure for the chosen
-         * kind, free-decoding only the leaf string slots. If the kind never
-         * resolved the partial output is left for the repair loop. */
+         * kind, decoding only the leaf slots — the capability masked to the
+         * policy's enabled caps, the rest free. If the kind never resolved the
+         * partial output is left for the repair loop. */
         enum spg_action_kind kind;
         if (spg_kind_from_text(kindbuf, &kind)) {
             const struct spg_scaffold_seg *segs = nullptr;
             const size_t nseg = spg_scaffold_for_kind(kind, &segs);
             for (size_t s = 0u; s < nseg; s += 1u) {
-                const enum spg_status ss =
-                    segs[s].literal != nullptr
-                        ? emit_literal(adapter, result, segs[s].literal)
-                        : decode_string_slot(adapter, result);
+                enum spg_status ss;
+                switch (segs[s].kind) {
+                case SPG_SCAFFOLD_LITERAL:
+                    ss = emit_literal(adapter, result, segs[s].literal);
+                    break;
+                case SPG_SCAFFOLD_CAPABILITY:
+                    ss = decode_capability_slot(adapter, result, kind);
+                    break;
+                case SPG_SCAFFOLD_STRING:
+                default:
+                    ss = decode_string_slot(adapter, result);
+                    break;
+                }
                 if (ss != SPG_OK) {
                     return ss;
                 }
@@ -323,8 +386,10 @@ spg_model_adapter_init(struct spg_model_adapter *adapter,
         return SPG_E_INVALID_ARG;
     }
     *adapter = (struct spg_model_adapter){
-        .kind         = config->kind,
-        .force_prefix = config->force_prefix, /* #34: GEIST-only, borrowed */
+        .kind             = config->kind,
+        .force_prefix     = config->force_prefix, /* #34: GEIST-only, borrowed */
+        .capabilities     = config->capabilities,
+        .capability_count = config->capability_count,
     };
 
     if (config->kind == SPG_MODEL_ADAPTER_FAKE) {

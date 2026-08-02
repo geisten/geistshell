@@ -25,11 +25,12 @@ static const char *skip_spaces(const char *s) {
     return s;
 }
 
-bool spg_kind_prefix_ok(const char *emitted, const char *piece) {
-    if (emitted == nullptr) {
+bool spg_choice_prefix_ok(const char *const *names, const size_t n,
+                          const char *emitted, const char *piece) {
+    if (names == nullptr || emitted == nullptr) {
         return false;
     }
-    char         buf[64];
+    char         buf[128];
     const size_t el = strlen(emitted);
     const size_t pl = piece == nullptr ? 0u : strlen(piece);
     if (el + pl >= sizeof buf) {
@@ -40,33 +41,56 @@ bool spg_kind_prefix_ok(const char *emitted, const char *piece) {
     buf[el + pl]     = '\0';
     const char  *cmp = skip_spaces(buf);
     const size_t len = strlen(cmp);
-    for (size_t i = 0u; i < KIND_COUNT; i += 1u) {
-        const char *name = spg_action_kind_to_string(ALL_KINDS[i]);
-        /* cmp is a prefix of name iff their first `len` bytes match; a name
+    for (size_t i = 0u; i < n; i += 1u) {
+        if (names[i] == nullptr) {
+            continue;
+        }
+        /* cmp is a prefix of names[i] iff their first `len` bytes match; a name
          * shorter than `len` has its '\0' compared against cmp's byte and
          * mismatches, which correctly rejects overshoot. An all-space buffer
          * (len 0) matches every name — still a live prefix. */
-        if (strncmp(name, cmp, len) == 0) {
+        if (strncmp(names[i], cmp, len) == 0) {
             return true;
         }
     }
     return false;
 }
 
-bool spg_kind_complete(const char *emitted) {
-    if (emitted == nullptr) {
+bool spg_choice_complete(const char *const *names, const size_t n,
+                         const char *emitted) {
+    if (names == nullptr || emitted == nullptr) {
         return false;
     }
     const char *cmp = skip_spaces(emitted);
     if (cmp[0] == '\0') {
         return false;
     }
-    for (size_t i = 0u; i < KIND_COUNT; i += 1u) {
-        if (strcmp(spg_action_kind_to_string(ALL_KINDS[i]), cmp) == 0) {
+    for (size_t i = 0u; i < n; i += 1u) {
+        if (names[i] != nullptr && strcmp(names[i], cmp) == 0) {
             return true;
         }
     }
     return false;
+}
+
+size_t spg_kind_names(const char **out, const size_t cap) {
+    size_t n = 0u;
+    for (size_t i = 0u; i < KIND_COUNT && n < cap; i += 1u) {
+        out[n] = spg_action_kind_to_string(ALL_KINDS[i]);
+        n += 1u;
+    }
+    return n;
+}
+
+bool spg_kind_prefix_ok(const char *emitted, const char *piece) {
+    const char *names[KIND_COUNT];
+    return spg_choice_prefix_ok(names, spg_kind_names(names, KIND_COUNT),
+                                emitted, piece);
+}
+
+bool spg_kind_complete(const char *emitted) {
+    const char *names[KIND_COUNT];
+    return spg_choice_complete(names, spg_kind_names(names, KIND_COUNT), emitted);
 }
 
 bool spg_kind_from_text(const char *emitted, enum spg_action_kind *out) {
@@ -88,27 +112,30 @@ bool spg_kind_from_text(const char *emitted, enum spg_action_kind *out) {
  * defaults are baked in; uses_network is fixed per kind by kind_fields_match
  * (true only for ssh_auth_probe). Field sets mirror required_fields_seen +
  * kind_fields_match in recommendation.c. */
-#define MS {.literal = nullptr}
+#define LIT(s) {.kind = SPG_SCAFFOLD_LITERAL, .literal = (s)}
+#define STR {.kind = SPG_SCAFFOLD_STRING}
+#define CAP {.kind = SPG_SCAFFOLD_CAPABILITY}
 #define BUREAU_OK ") (cost 1) (uses_network false) (confidence_bp 5000) "
 #define BUREAU_NET ") (cost 1) (uses_network true) (confidence_bp 5000) "
 
 static const struct spg_scaffold_seg SEG_FINISH[] = {
-    {") (reason \""}, MS, {"\"))"}};
+    LIT(") (reason \""), STR, LIT("\"))")};
 static const struct spg_scaffold_seg SEG_SIMULATOR[] = {
-    {") (capability \""}, MS, {"\"" BUREAU_OK "(reason \""}, MS, {"\"))"}};
+    LIT(") (capability \""), CAP, LIT("\"" BUREAU_OK "(reason \""), STR,
+    LIT("\"))")};
 static const struct spg_scaffold_seg SEG_LOCAL_SHELL[] = {
-    {") (capability \""},         MS, {"\"" BUREAU_OK "(command \""}, MS,
-    {"\") (reason \""}, MS, {"\"))"}};
+    LIT(") (capability \""), CAP, LIT("\"" BUREAU_OK "(command \""), STR,
+    LIT("\") (reason \""), STR, LIT("\"))")};
 static const struct spg_scaffold_seg SEG_SSH[] = {
-    {") (capability \""},        MS, {"\"" BUREAU_NET "(target \""}, MS,
-    {"\") (reason \""}, MS, {"\"))"}};
+    LIT(") (capability \""), CAP, LIT("\"" BUREAU_NET "(target \""), STR,
+    LIT("\") (reason \""), STR, LIT("\"))")};
 static const struct spg_scaffold_seg SEG_MEM_SAVE[] = {
-    {") (capability \""},        MS, {"\"" BUREAU_OK "(slug \""},     MS,
-    {"\") (description \""},      MS, {"\") (body \""},               MS,
-    {"\") (reason \""},          MS, {"\"))"}};
+    LIT(") (capability \""), CAP, LIT("\"" BUREAU_OK "(slug \""), STR,
+    LIT("\") (description \""), STR, LIT("\") (body \""), STR,
+    LIT("\") (reason \""), STR, LIT("\"))")};
 static const struct spg_scaffold_seg SEG_MEM_SLUG[] = {
-    {") (capability \""}, MS, {"\"" BUREAU_OK "(slug \""}, MS,
-    {"\") (reason \""}, MS, {"\"))"}};
+    LIT(") (capability \""), CAP, LIT("\"" BUREAU_OK "(slug \""), STR,
+    LIT("\") (reason \""), STR, LIT("\"))")};
 
 size_t spg_scaffold_for_kind(enum spg_action_kind kind,
                              const struct spg_scaffold_seg **out) {

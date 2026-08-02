@@ -1935,6 +1935,52 @@ static int agent_command(int argc, char **argv) {
     }
     journal_open = true;
 
+    /* Constrained-decode capability table (#34): enabled policy caps only,
+     * names materialized to cstrings (heap, outlive the adapter), memory caps
+     * expanded to one entry per memory_* action kind. Empty unless --constrained. */
+    static struct spg_model_capability agent_caps[SPG_POLICY_MAX_CAPABILITIES *
+                                                  3u];
+    size_t agent_caps_n = 0u;
+    if (constrained) {
+        for (size_t i = 0u; i < policy.capability_count; i += 1u) {
+            const struct spg_policy_capability *cap = &policy.capabilities[i];
+            if (!cap->enabled) {
+                continue;
+            }
+            char *name = nullptr;
+            if (span_to_cstr(policy_text.n, policy_text.data, cap->name,
+                             &name) != SPG_OK) {
+                continue;
+            }
+            enum spg_action_kind kinds[3];
+            size_t               nk = 0u;
+            switch (cap->kind) {
+            case SPG_POLICY_CAP_LOCAL_SHELL:
+                kinds[nk++] = SPG_ACTION_LOCAL_SHELL;
+                break;
+            case SPG_POLICY_CAP_SSH_AUTH_PROBE:
+                kinds[nk++] = SPG_ACTION_SSH_AUTH_PROBE;
+                break;
+            case SPG_POLICY_CAP_SIMULATOR:
+                kinds[nk++] = SPG_ACTION_SIMULATOR;
+                break;
+            case SPG_POLICY_CAP_MEMORY:
+                kinds[nk++] = SPG_ACTION_MEMORY_SAVE;
+                kinds[nk++] = SPG_ACTION_MEMORY_DELETE;
+                kinds[nk++] = SPG_ACTION_MEMORY_READ;
+                break;
+            }
+            for (size_t k = 0u;
+                 k < nk &&
+                 agent_caps_n < sizeof agent_caps / sizeof agent_caps[0];
+                 k += 1u) {
+                agent_caps[agent_caps_n].name = name;
+                agent_caps[agent_caps_n].kind = kinds[k];
+                agent_caps_n += 1u;
+            }
+        }
+    }
+
     /* --fake-script -> the scripted fake; otherwise the real model at the
      * config's (model ...) path, run and JOURNALED — the production path P6
      * (directive injection) and P7 (recurrence audit) read. */
@@ -1947,13 +1993,15 @@ static int agent_command(int argc, char **argv) {
                   .fake_responses      = script,
               }
             : (struct spg_model_adapter_config){
-                  .kind         = SPG_MODEL_ADAPTER_GEIST,
-                  .model_path   = model_path,
-                  .force_prefix = constrained ? "(recommend (kind " : nullptr,
-                  .sampling     = {.max_seq_len  = 4096u,
-                                   .temperature = 0.0f,
-                                   .top_p       = 1.0f,
-                                   .random_seed = run.seed},
+                  .kind             = SPG_MODEL_ADAPTER_GEIST,
+                  .model_path       = model_path,
+                  .force_prefix     = constrained ? "(recommend (kind " : nullptr,
+                  .capabilities     = agent_caps,
+                  .capability_count = agent_caps_n,
+                  .sampling         = {.max_seq_len = 4096u,
+                                       .temperature = 0.0f,
+                                       .top_p       = 1.0f,
+                                       .random_seed = run.seed},
               };
     status = spg_model_adapter_init(&model, &model_config);
     if (status != SPG_OK) {

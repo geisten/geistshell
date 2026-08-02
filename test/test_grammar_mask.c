@@ -117,6 +117,23 @@ int main(void) {
         return fail("unknown kind does not resolve");
     }
 
+    /* General choice mask over an arbitrary vocabulary (capability slot). */
+    const char *const caps[] = {"sim.act", "build.run"};
+    if (!spg_choice_prefix_ok(caps, 2u, "", "sim") ||
+        !spg_choice_prefix_ok(caps, 2u, "sim", ".act") ||
+        !spg_choice_prefix_ok(caps, 2u, "", " build") /* leading detok space */) {
+        return fail("capability live prefixes");
+    }
+    if (spg_choice_prefix_ok(caps, 2u, "", "read") ||
+        spg_choice_prefix_ok(caps, 2u, "sim.act", "x")) {
+        return fail("non-candidate / overshoot rejected");
+    }
+    if (!spg_choice_complete(caps, 2u, "sim.act") ||
+        !spg_choice_complete(caps, 2u, " build.run") ||
+        spg_choice_complete(caps, 2u, "sim")) {
+        return fail("capability completion");
+    }
+
     /* Every kind's scaffold parses as a valid recommendation by construction. */
     const enum spg_action_kind kinds[] = {
         SPG_ACTION_LOCAL_SHELL, SPG_ACTION_SSH_AUTH_PROBE, SPG_ACTION_SIMULATOR,

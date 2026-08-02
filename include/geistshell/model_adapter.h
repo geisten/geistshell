@@ -1,6 +1,7 @@
 #ifndef GEISTSHELL_MODEL_ADAPTER_H
 #define GEISTSHELL_MODEL_ADAPTER_H
 
+#include "geistshell/policy.h" /* enum spg_action_kind (constrained decode caps) */
 #include "geistshell/status.h"
 
 #include <stdbool.h>
@@ -14,6 +15,15 @@ extern "C" {
 struct geist_backend;
 struct geist_model;
 struct geist_session;
+
+/* A policy capability the constrained decoder may put in the capability slot,
+ * tagged with the action kind it applies to (memory capabilities are expanded
+ * to one entry per memory_* kind by the caller). name is borrowed and must be
+ * null-terminated. #34. */
+struct spg_model_capability {
+    const char          *name;
+    enum spg_action_kind kind;
+};
 
 enum spg_model_adapter_kind {
     SPG_MODEL_ADAPTER_FAKE = 0,
@@ -77,6 +87,12 @@ struct spg_model_adapter_config {
      * from a grammar description alone. Null = free decode (default). GEIST
      * only; ignored by fake/remote. */
     const char *force_prefix;
+
+    /* Capabilities the constrained decoder may emit in the capability slot,
+     * masked per chosen kind. Borrowed; must outlive the adapter. Empty → the
+     * capability slot free-decodes (valid form, but may be policy-denied). */
+    const struct spg_model_capability *capabilities;
+    size_t                             capability_count;
 };
 
 struct spg_model_adapter {
@@ -95,6 +111,8 @@ struct spg_model_adapter {
     size_t                          fake_index; /* next scripted reply */
     const char                     *fake_gate_marker;
     const char                     *force_prefix; /* constrained decode (#34) */
+    const struct spg_model_capability *capabilities; /* #34 capability mask */
+    size_t                             capability_count;
 
     /* REMOTE transport state: opaque CURL handle, borrowed config strings, and
      * the sampling values forwarded to the chat/completions request. */
