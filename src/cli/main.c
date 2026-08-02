@@ -2639,6 +2639,71 @@ static bool guard_run(void *vctx, const char *config_path, bool with_lesson) {
     return passed;
 }
 
+/* Longitudinal benefit audit (docs/LEARNING.md P7): a kept lesson earns its
+ * keep only if its failure slug stops recurring in later real runs. Sum the
+ * failure-mode events across the given journals and, for each kept lesson in
+ * the memory dir, flag whether its slug still recurs (review) or has dropped
+ * to zero (kept). Model-free: reads journals only. */
+static int audit_command(int argc, char **argv) {
+    const char *memory_dir = nullptr;
+    const char *journals[EVAL_MAX_CASES];
+    size_t      njournals = 0u;
+    for (int i = 2; i < argc; i += 1) {
+        if (strcmp(argv[i], "--memory-dir") == 0 && i + 1 < argc) {
+            memory_dir = argv[++i];
+            continue;
+        }
+        if (argv[i][0] != '-' && njournals < EVAL_MAX_CASES) {
+            journals[njournals++] = argv[i];
+            continue;
+        }
+        fprintf(stderr, "audit: unexpected argument: %s\n", argv[i]);
+        return 2;
+    }
+    if (njournals == 0u) {
+        fprintf(stderr, "usage: %s audit <journal.sgj>... [--memory-dir <d>]\n",
+                argv[0]);
+        return 2;
+    }
+
+    struct spg_recurrence total = {};
+    for (size_t i = 0u; i < njournals; i += 1u) {
+        if (spg_journal_recurrence(journals[i], &total) != SPG_OK) {
+            fprintf(stderr, "audit: cannot read journal %s\n", journals[i]);
+            return 1;
+        }
+    }
+    printf("{\"journals\":%zu,\"lesson-rejected\":%zu,\"lesson-denied\":%zu}\n",
+           njournals, total.rejected, total.denied);
+
+    /* Cross-reference kept lessons: a slug present in memory whose recurrence
+     * is still > 0 is not doing its job. */
+    if (memory_dir != nullptr) {
+        struct spg_mem_store store;
+        if (spg_mem_store_open(&store, spg_mem_resolve_dir(memory_dir)) !=
+            SPG_OK) {
+            fprintf(stderr, "audit: cannot open memory dir\n");
+            return 1;
+        }
+        char   probe[SPG_MEM_DESC_MAX + 1u];
+        const struct {
+            const char *slug;
+            size_t      count;
+        } kept[] = {{"lesson-rejected", total.rejected},
+                    {"lesson-denied", total.denied}};
+        for (size_t i = 0u; i < sizeof kept / sizeof kept[0]; i += 1u) {
+            if (spg_mem_directive(&store, kept[i].slug, 0u, sizeof probe,
+                                  probe) == 0u) {
+                continue; /* no such lesson kept */
+            }
+            printf("{\"lesson\":\"%s\",\"recurrence\":%zu,\"verdict\":\"%s\"}\n",
+                   kept[i].slug, kept[i].count,
+                   kept[i].count > 0u ? "review" : "kept");
+        }
+    }
+    return 0;
+}
+
 /* Self-improvement: run the suite, distill a lesson for each failing case,
  * persist each tentatively into the mind-palace, re-run, and keep it only if
  * the pass count did not drop (else revert). Emits a JSONL report. */
@@ -2943,6 +3008,10 @@ int main(int argc, char **argv) {
 
     if (strcmp(argv[1], "improve") == 0) {
         return improve_command(argc, argv);
+    }
+
+    if (strcmp(argv[1], "audit") == 0) {
+        return audit_command(argc, argv);
     }
 
     if (strcmp(argv[1], "verify-journal") == 0) {

@@ -109,6 +109,23 @@ spg_eval_run_case(const struct spg_fake_response *script, size_t script_n,
     const struct spg_fake_response responses[], size_t n, size_t cap,
     char out[], size_t *len);
 
+/* Per-slug failure recurrence in one journal (docs/LEARNING.md P7): the
+ * benefit of a kept lesson is not proven at mint time but observed in the
+ * field — a lesson that works makes its failure slug stop recurring. This
+ * tallies the loop-failure events a real run journals: a rejected
+ * recommendation (ERROR + "recommendation_rejected") and a policy denial
+ * (POLICY_DECISION with a deny_reason other than NONE). The counts ACCUMULATE
+ * into *out, so summing across a run's journals is repeated calls. Model-free:
+ * reads the journal only. Returns SPG_E_INVALID_ARG on null args, a journal
+ * read error otherwise; a missing/short journal counts nothing and is OK. */
+struct spg_recurrence {
+    size_t rejected; /* slug lesson-rejected */
+    size_t denied;   /* slug lesson-denied */
+};
+
+[[nodiscard]] enum spg_status spg_journal_recurrence(
+    const char *journal_path, struct spg_recurrence *out);
+
 #ifdef __cplusplus
 }
 #endif

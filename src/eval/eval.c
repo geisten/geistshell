@@ -234,3 +234,45 @@ enum spg_status spg_shape_from_script(const struct spg_fake_response responses[]
     *len   = w;
     return SPG_OK;
 }
+
+enum spg_status spg_journal_recurrence(const char *journal_path,
+                                       struct spg_recurrence *out) {
+    if (journal_path == nullptr || out == nullptr) {
+        return SPG_E_INVALID_ARG;
+    }
+    struct spg_journal_reader reader;
+    if (spg_journal_reader_open(&reader, journal_path) != SPG_OK) {
+        return SPG_OK; /* no journal yet -> nothing recurred */
+    }
+    char scratch[8192];
+    for (;;) {
+        struct spg_journal_record record = {};
+        const enum spg_status rs = spg_journal_reader_next(
+            &reader, sizeof scratch, (uint8_t *)scratch, &record);
+        if (rs == SPG_E_NOT_FOUND) {
+            break;
+        }
+        if (rs == SPG_E_LIMIT) {
+            continue; /* an oversized payload carries no failure marker we read */
+        }
+        if (rs != SPG_OK) {
+            (void)spg_journal_reader_close(&reader);
+            return rs;
+        }
+        const size_t n = record.payload_used < sizeof scratch
+                             ? record.payload_used
+                             : sizeof scratch - 1u;
+        scratch[n] = '\0';
+        if (record.header.event_kind == SPG_JOURNAL_EVENT_ERROR &&
+            strstr(scratch, "recommendation_rejected") != nullptr) {
+            out->rejected += 1u;
+        } else if (record.header.event_kind ==
+                       SPG_JOURNAL_EVENT_POLICY_DECISION &&
+                   strstr(scratch, "deny_reason") != nullptr &&
+                   strstr(scratch, "SPG_POLICY_DENY_NONE") == nullptr) {
+            out->denied += 1u;
+        }
+    }
+    (void)spg_journal_reader_close(&reader);
+    return SPG_OK;
+}
