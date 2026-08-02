@@ -89,6 +89,32 @@ is the honest place to build "learns from use."
   success`) verifying world state, for tasks that produce files rather than
   stdout.
 
+## Context-cost benchmark (2026-08-02, model-free)
+
+`eval/bench_context.sh` measures the load-bearing half of the small-seq-len
+claim: the context cost of learning per tick as the lesson set grows.
+
+| lessons | geistshell (directive) | full-index RAG |
+|---|---|---|
+| 1  | 72 B | 90 B |
+| 4  | 72 B | 360 B |
+| 8  | 72 B | 720 B |
+| 16 | 72 B | 1454 B |
+| 32 | 72 B | 2233 B |
+
+geistshell's per-tick learning cost is **flat** (one budgeted directive)
+while the mind-palace-index approach grows linearly — 31× more context at 32
+lessons, and widening. This substantiates the *denominator* of the SOTA
+claim (learning is context-invariant). It does **not** measure success lift:
+the numerator (does flat context still improve task success?) needs a
+model-completable task corpus and real inference — the remaining half of #25.
+A benchmark that measures only the free half must say so.
+
+The benchmark also surfaced and fixed a real bug: `spg_mem_directive`
+originally read the *capped* index, so a slug beyond `SPG_MEM_INDEX_TOPK`
+injected nothing; it now reads the description from the memory file, available
+for any slug.
+
 ## Hardware verification (2026-08-02, Pi 5 against Gemma 4 E2B)
 
 The model-dependent paths, run live through the whole stack (release build,

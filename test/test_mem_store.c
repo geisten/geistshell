@@ -96,6 +96,24 @@ static int test_directive(void) {
         spg_mem_directive(&store, nullptr, 0u, sizeof out, out) != 0u) {
         return 1;
     }
+
+    /* a slug BEYOND the index cap (SPG_MEM_INDEX_TOPK) still yields its
+     * directive: the description is read from the file, not the capped index
+     * (regression from the #25 benchmark, which showed 0 bytes at 32 slugs). */
+    for (unsigned i = 0u; i < SPG_MEM_INDEX_TOPK + 8u; i++) {
+        char slug[32];
+        char desc[64];
+        (void)snprintf(slug, sizeof slug, "zzz-beyond-%02u", i);
+        (void)snprintf(desc, sizeof desc, "directive number %u", i);
+        if (spg_mem_save(&store, slug, desc, "b") != SPG_OK) {
+            return 1;
+        }
+    }
+    /* "zzz-beyond-31" sorts last, well past the 24-line index cap */
+    if (spg_mem_directive(&store, "zzz-beyond-31", 0u, sizeof out, out) == 0u ||
+        strcmp(out, "directive number 31") != 0) {
+        return 1;
+    }
     return 0;
 }
 

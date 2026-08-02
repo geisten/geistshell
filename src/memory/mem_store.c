@@ -495,38 +495,29 @@ size_t spg_mem_directive(struct spg_mem_store *store, const char *slug,
     }
     dst[0] = '\0';
 
-    /* The index renders one "- <slug>: <description>\n" line per memory; the
-     * directive is a slug's description, extracted without a new read path. */
-    static char index[SPG_MEM_INDEX_CACHE_BYTES];
-    if (spg_mem_index(store, sizeof index, index, nullptr, nullptr) != SPG_OK) {
+    /* Read the slug's memory directly and lift the "description:" frontmatter
+     * line. Reading the file (not the rendered index) is what makes the
+     * directive available for ANY slug — the index is capped at
+     * SPG_MEM_INDEX_TOPK lines, so a slug beyond the cap has no index line and
+     * its directive would silently vanish (found via the #25 benchmark). */
+    static char content[SPG_MEM_BODY_MAX + SPG_MEM_DESC_MAX + 256u];
+    if (spg_mem_read(store, slug, sizeof content, content, nullptr) != SPG_OK) {
         return 0u;
     }
-
-    char prefix[SPG_MEM_SLUG_MAX + 4u];
-    const int pn = snprintf(prefix, sizeof prefix, "- %s: ", slug);
-    if (pn <= 0 || (size_t)pn >= sizeof prefix) {
+    /* frontmatter: "name: <slug>\ndescription: <text>\n" — description is never
+     * the first line, so a leading-newline match is unambiguous. */
+    const char *key = strstr(content, "\ndescription: ");
+    if (key == nullptr) {
         return 0u;
     }
-    const char *line = index;
-    while (*line != '\0') {
-        const char *eol = strchr(line, '\n');
-        const size_t line_n = eol != nullptr ? (size_t)(eol - line) : strlen(line);
-        if (strncmp(line, prefix, (size_t)pn) == 0) {
-            const char  *desc   = line + pn;
-            const size_t desc_n = line_n - (size_t)pn;
-            const size_t budget =
-                budget_bytes > 0u ? budget_bytes : SPG_MEM_DESC_MAX;
-            if (desc_n == 0u || desc_n > budget || desc_n + 1u > dst_cap) {
-                return 0u; /* one slot, description-only, budget-capped */
-            }
-            memcpy(dst, desc, desc_n);
-            dst[desc_n] = '\0';
-            return desc_n;
-        }
-        if (eol == nullptr) {
-            break;
-        }
-        line = eol + 1u;
+    const char  *desc   = key + strlen("\ndescription: ");
+    const char  *eol    = strchr(desc, '\n');
+    const size_t desc_n = eol != nullptr ? (size_t)(eol - desc) : strlen(desc);
+    const size_t budget = budget_bytes > 0u ? budget_bytes : SPG_MEM_DESC_MAX;
+    if (desc_n == 0u || desc_n > budget || desc_n + 1u > dst_cap) {
+        return 0u; /* one slot, description-only, budget-capped */
     }
-    return 0u;
+    memcpy(dst, desc, desc_n);
+    dst[desc_n] = '\0';
+    return desc_n;
 }
