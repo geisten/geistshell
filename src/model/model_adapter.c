@@ -1,7 +1,9 @@
 #include "geistshell/model_adapter.h"
 
+#include "geistshell/grammar_mask.h" /* #34: kind-slot mask */
+
 #include <geist.h>
-#include <geist_util.h> /* #34: tokenize + prefill_tokens for forced-prefix decode */
+#include <geist_util.h> /* #34: tokenize + prefill_tokens + peek_logits */
 
 #include <math.h>
 #include <string.h>
@@ -181,6 +183,60 @@ static enum spg_status generate_geist(
                 return map_geist_status(status);
             }
             result->tokens_decoded += prefix_n;
+        }
+
+        /* Kind-slot mask (#34 stage 1): the forced prefix ends at "(kind ", so
+         * the next tokens name the action kind. Constrain them to a valid enum
+         * name by masking peek_logits to tokens that keep the emitted text a
+         * live prefix, greedily, until a complete kind name is reached. This
+         * flips the free-decode REJECT_UNKNOWN_KIND to a valid kind; the field
+         * scaffold (stage 2) will take over from here. Bails to free decode if
+         * the tokenizer offers no valid continuation. */
+        char   kindbuf[64];
+        size_t kind_used = 0u;
+        kindbuf[0]       = '\0';
+        for (size_t step = 0u; step < 16u && !spg_kind_complete(kindbuf);
+             step += 1u) {
+            size_t       n_vocab = 0u;
+            const float *logits =
+                geist_session_peek_logits(adapter->session, &n_vocab);
+            if (logits == nullptr || n_vocab == 0u) {
+                break;
+            }
+            geist_token_t best       = -1;
+            float         best_logit = -INFINITY;
+            for (size_t t = 0u; t < n_vocab; t += 1u) {
+                if (logits[t] <= best_logit) {
+                    continue; /* cannot beat the best valid token so far */
+                }
+                const char *piece = geist_session_token_to_str(
+                    adapter->session, (geist_token_t) t);
+                if (piece == nullptr || !spg_kind_prefix_ok(kindbuf, piece)) {
+                    continue;
+                }
+                best       = (geist_token_t) t;
+                best_logit = logits[t];
+            }
+            if (best < 0) {
+                break; /* dead end: no token keeps a valid kind prefix */
+            }
+            const char  *piece = geist_session_token_to_str(adapter->session, best);
+            const size_t pl    = strlen(piece);
+            if (kind_used + pl >= sizeof kindbuf) {
+                break;
+            }
+            const enum spg_status as = append_bytes(result, pl, piece);
+            if (as != SPG_OK) {
+                return as;
+            }
+            memcpy(kindbuf + kind_used, piece, pl);
+            kind_used += pl;
+            kindbuf[kind_used] = '\0';
+            status = geist_session_prefill_tokens(adapter->session, 1u, &best);
+            if (status != GEIST_OK) {
+                return map_geist_status(status);
+            }
+            result->tokens_decoded += 1u;
         }
     }
 
