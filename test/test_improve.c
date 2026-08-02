@@ -121,6 +121,47 @@ static int test_reflect_finished_no_lesson(void) {
     return spg_reflect_case(&result, &lesson) ? 1 : 0;
 }
 
+/* P2 (docs/LEARNING.md): a finished-but-criterion-failed run yields an
+ * outcome lesson keyed per task shape, quoting the concrete miss. */
+static int test_reflect_outcome(void) {
+    struct spg_lesson lesson = {};
+    if (!spg_reflect_outcome("proc.exec+fs.write", "SUCCESS",
+                             "error: file not found", &lesson)) {
+        return 1;
+    }
+    /* slug is per-shape and mind-palace-safe */
+    if (strcmp(lesson.slug, "lesson-outcome-proc-exec-fs-write") != 0 ||
+        !spg_mem_slug_valid(lesson.slug)) {
+        return 1;
+    }
+    /* the body quotes both the expected criterion and the actual observation */
+    if (strstr(lesson.body, "SUCCESS") == nullptr ||
+        strstr(lesson.body, "file not found") == nullptr) {
+        return 1;
+    }
+    /* two different shapes dedup to two different slugs */
+    struct spg_lesson other = {};
+    if (!spg_reflect_outcome("net.http", "200 OK", "503", &other) ||
+        strcmp(lesson.slug, other.slug) == 0) {
+        return 1;
+    }
+    /* a token that sanitizes to nothing still yields a valid, stable slug */
+    struct spg_lesson punct = {};
+    if (!spg_reflect_outcome("///", "x", "y", &punct) ||
+        !spg_mem_slug_valid(punct.slug) ||
+        strcmp(punct.slug, "lesson-outcome-x") != 0) {
+        return 1;
+    }
+    /* null/empty args produce no lesson */
+    struct spg_lesson none = {};
+    if (spg_reflect_outcome(nullptr, "x", "y", &none) ||
+        spg_reflect_outcome("s", "", "y", &none) ||
+        spg_reflect_outcome("s", "x", nullptr, &none)) {
+        return 1;
+    }
+    return 0;
+}
+
 static int test_accept_gate(void) {
     /* keep on improvement and on no-change; revert on regression */
     if (!spg_improve_accept(2u, 3u) || !spg_improve_accept(2u, 2u) ||
@@ -197,6 +238,10 @@ int main(void) {
     }
     if (test_reflect_finished_no_lesson() != 0) {
         fprintf(stderr, "test_reflect_finished_no_lesson failed\n");
+        return 1;
+    }
+    if (test_reflect_outcome() != 0) {
+        fprintf(stderr, "test_reflect_outcome failed\n");
         return 1;
     }
     if (test_accept_gate() != 0) {
