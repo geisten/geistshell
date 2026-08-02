@@ -1,7 +1,10 @@
 #ifndef GEISTSHELL_GRAMMAR_MASK_H
 #define GEISTSHELL_GRAMMAR_MASK_H
 
+#include "geistshell/policy.h" /* enum spg_action_kind */
+
 #include <stdbool.h>
+#include <stddef.h>
 
 #ifdef __cplusplus
 extern "C" {
@@ -25,6 +28,30 @@ extern "C" {
 /* Is `emitted` exactly one valid kind name? True terminates the kind slot (no
  * valid kind name is a prefix of another, so completion is unambiguous). */
 [[nodiscard]] bool spg_kind_complete(const char *emitted);
+
+/* Resolve a decoded kind name (leading detok whitespace tolerated) to its enum.
+ * Returns false if it is not a valid kind. */
+[[nodiscard]] bool spg_kind_from_text(const char *emitted,
+                                      enum spg_action_kind *out);
+
+/* Field scaffold (geistshell#34 stage 2). Once the kind is fixed, the rest of a
+ * valid (recommend ...) form is deterministic structure with a few free leaf
+ * values. A scaffold is that structure as an ordered segment list: a LITERAL
+ * segment is emitted verbatim (via prefill_tokens); a model-string segment
+ * (literal == nullptr) is one free-decoded string value, stopped at the closing
+ * quote. Emitting the literals with the model filling the string slots yields a
+ * schema-valid form by construction. The bureaucratic fields (cost,
+ * uses_network, confidence_bp) are baked into the literals with sane defaults —
+ * they are deterministic per kind, not a decision the small model must make. */
+struct spg_scaffold_seg {
+    const char *literal; /* verbatim text, or nullptr for a free string slot */
+};
+
+/* The scaffold for `kind`, to emit right after the kind name (the caller has
+ * already emitted "(recommend (kind <name>"). Writes the segment array to
+ * *out and returns its length (0 for an unknown kind). */
+[[nodiscard]] size_t spg_scaffold_for_kind(enum spg_action_kind kind,
+                                           const struct spg_scaffold_seg **out);
 
 #ifdef __cplusplus
 }

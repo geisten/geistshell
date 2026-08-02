@@ -127,10 +127,40 @@ word-boundary to a leading ASCII space/tab, so the first kind token reads
 in the output, valid in the s-expression). Without that, every candidate was
 rejected and the loop emitted `(recommend (kind ))`.
 
-Next: **Stage 2 — field scaffold.** Machine-emit the required-field skeleton
-for the chosen kind (source: `kind_fields_match`) via `prefill_tokens`, letting
-the model free-decode only the leaf string/number slots. That closes
-`MISSING_FIELD` and yields a full schema-valid form by construction.
+**Stage 2 — field scaffold (merged).** Once the kind resolves, the rest of a
+valid form is deterministic structure with a few free leaf values, so the
+adapter emits that structure itself (`emit_literal` → `prefill_tokens`) and lets
+the model free-decode only the string slots (`decode_string_slot`, stopped at
+the closing quote). The bureaucratic fields (`cost`, `uses_network`,
+`confidence_bp`) are baked into the scaffold literals with defaults —
+deterministic per kind, not a decision a 2B model should have to land. The
+per-kind field sets mirror `required_fields_seen` + `kind_fields_match`, so a
+scaffold is valid by construction; `test_grammar_mask` builds each of the seven
+kinds' forms and parses them through the real `recommendation.c` — all VALID,
+no GGUF.
+
+On the Pi the whole reject chain is now resolved:
+
+`SYNTAX` (free) → `UNKNOWN_KIND` (prefix) → `MISSING_FIELD` (kind mask) →
+**a valid form** (scaffold). Gemma emitted, in **one step / ~22 s** (vs ~2m20
+of repair loops before):
+
+    (recommend (kind simulator) (capability "read") (cost 1)
+      (uses_network false) (confidence_bp 5000)
+      (reason "Simulate a general system behavior"))
+
+Parses and matches the schema — the model now emits the DSL. `termination`
+is `denied`, not a decode failure: the form reached the **policy gate**, which
+denied capability `"read"` (the policy allows `sim.act` / `build.run`). That is
+acceptance criterion #1 met — a valid, schema-matching form where free decoding
+gave SYNTAX.
+
+Remaining for criterion #3 (verdict=pass): the model free-picked a capability
+the policy does not grant. The next piece is a **capability mask** — constrain
+the capability slot to the policy's enabled capabilities for the chosen kind,
+exactly as stage 1 masked the kind. It needs the policy capabilities plumbed
+into the adapter. Then a simple task can actually pass, and the LIFT
+experiments (#25/#26) can run on a model that acts.
 
 Dev-env note: the Mac's deps/geist pointed at a newer checkout lacking
 geist_util.h; switched to the pinned v0.2.1 via `make sync-engine`.
