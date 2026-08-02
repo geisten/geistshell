@@ -14,6 +14,17 @@ static const enum spg_action_kind ALL_KINDS[] = {
 };
 static const size_t KIND_COUNT = sizeof ALL_KINDS / sizeof ALL_KINDS[0];
 
+/* The tokenizer detokenizes a SentencePiece word-boundary (U+2581) to a leading
+ * ASCII space, so the first kind token reads as " local", not "local". Kind
+ * names never start with space and the s-expression tolerates the separator, so
+ * we compare against the text past any leading spaces. */
+static const char *skip_spaces(const char *s) {
+    while (*s == ' ' || *s == '\t') {
+        s += 1;
+    }
+    return s;
+}
+
 bool spg_kind_prefix_ok(const char *emitted, const char *piece) {
     if (emitted == nullptr) {
         return false;
@@ -26,14 +37,16 @@ bool spg_kind_prefix_ok(const char *emitted, const char *piece) {
     }
     memcpy(buf, emitted, el);
     memcpy(buf + el, piece == nullptr ? "" : piece, pl);
-    const size_t len = el + pl;
-    buf[len]         = '\0';
+    buf[el + pl]     = '\0';
+    const char  *cmp = skip_spaces(buf);
+    const size_t len = strlen(cmp);
     for (size_t i = 0u; i < KIND_COUNT; i += 1u) {
         const char *name = spg_action_kind_to_string(ALL_KINDS[i]);
-        /* buf is a prefix of name iff their first `len` bytes match; a name
-         * shorter than `len` has its '\0' compared against buf's byte and
-         * mismatches, which correctly rejects overshoot. */
-        if (strncmp(name, buf, len) == 0) {
+        /* cmp is a prefix of name iff their first `len` bytes match; a name
+         * shorter than `len` has its '\0' compared against cmp's byte and
+         * mismatches, which correctly rejects overshoot. An all-space buffer
+         * (len 0) matches every name — still a live prefix. */
+        if (strncmp(name, cmp, len) == 0) {
             return true;
         }
     }
@@ -41,11 +54,15 @@ bool spg_kind_prefix_ok(const char *emitted, const char *piece) {
 }
 
 bool spg_kind_complete(const char *emitted) {
-    if (emitted == nullptr || emitted[0] == '\0') {
+    if (emitted == nullptr) {
+        return false;
+    }
+    const char *cmp = skip_spaces(emitted);
+    if (cmp[0] == '\0') {
         return false;
     }
     for (size_t i = 0u; i < KIND_COUNT; i += 1u) {
-        if (strcmp(spg_action_kind_to_string(ALL_KINDS[i]), emitted) == 0) {
+        if (strcmp(spg_action_kind_to_string(ALL_KINDS[i]), cmp) == 0) {
             return true;
         }
     }

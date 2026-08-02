@@ -33,6 +33,19 @@ int main(void) {
         return fail("completing exactly is still a live prefix");
     }
 
+    /* Leading spaces from SentencePiece detokenization are ignored: the first
+     * kind token reads as " local", must still match local_shell. */
+    if (!spg_kind_prefix_ok("", " local")) {
+        return fail("' local' (leading space) is a live prefix");
+    }
+    if (!spg_kind_prefix_ok(" ", "local")) {
+        return fail("space then local is a live prefix");
+    }
+    if (!spg_kind_prefix_ok(" local", "_shell") ||
+        !spg_kind_complete(" local_shell")) {
+        return fail("leading-space name completes");
+    }
+
     /* Rejections: unknown text and overshoot past a complete name. */
     if (spg_kind_prefix_ok("", "xyz")) {
         return fail("'xyz' is not any kind prefix");
