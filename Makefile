@@ -83,6 +83,7 @@ SPG_SOURCES := \
     src/dsl/schema.c \
     src/dsl/sexpr.c \
     src/eval/eval.c \
+    src/eval/guard_ring.c \
     src/exec/cmd_executor.c \
     src/exec/cmd_registry.c \
     src/exec/exec_command.c \
