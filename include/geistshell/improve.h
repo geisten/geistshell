@@ -54,6 +54,23 @@ struct spg_lesson {
                                        const char *observation,
                                        struct spg_lesson *out);
 
+/* Distil a reusable SKILL from a PASSING trajectory (docs/LEARNING.md /
+ * geistshell#26): the success-side counterpart to reflect. Where a lesson says
+ * "do not do the broken thing", a skill says "here is how a task of this shape
+ * was done". Keyed by the capability shape (P4) so it dedups per task kind and
+ * a later same-shape task recalls it.
+ *
+ * slug = "skill-<shape_token>". The description is a one-line procedure
+ * directive; the body lists the ordered action kinds of the successful run.
+ * Deterministic — a template over the trajectory, no model (a model-driven
+ * distillation is the offline follow-up in #26). procedure_summary is a short
+ * caller-built string of the ordered kinds (e.g. "local_shell -> finish").
+ *
+ * Returns false (out untouched) on null/empty args. */
+[[nodiscard]] bool spg_reflect_skill(const char *shape_token,
+                                     const char *procedure_summary,
+                                     struct spg_lesson *out);
+
 /* The acceptance gate: keep a tentatively-persisted lesson only if the suite's
  * pass count did not drop. Equality keeps (a lesson that neither helps nor hurts
  * is retained, since it may help cases outside the suite). */

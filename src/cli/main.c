@@ -2661,6 +2661,94 @@ static bool guard_run(void *vctx, const char *config_path, bool with_lesson) {
     return passed;
 }
 
+/* Distil a success SKILL from a passing run's journal (docs/LEARNING.md /
+ * geistshell#26). OFFLINE by design: the caller invokes this only for a run
+ * that met its criterion — the live agent never self-mints skills.
+ * Reconstructs the trajectory (P3), computes the capability shape (P4) and the
+ * ordered-kind procedure, distils a skill-<shape> memory, and saves it. The
+ * saved skill is injected on later runs via the mind-palace index the agent
+ * already renders into context. */
+static int distill_command(int argc, char **argv) {
+    const char *journal    = nullptr;
+    const char *memory_dir = nullptr;
+    for (int i = 2; i < argc; i += 1) {
+        if (strcmp(argv[i], "--memory-dir") == 0 && i + 1 < argc) {
+            memory_dir = argv[++i];
+            continue;
+        }
+        if (argv[i][0] != '-' && journal == nullptr) {
+            journal = argv[i];
+            continue;
+        }
+        fprintf(stderr, "distill: unexpected argument: %s\n", argv[i]);
+        return 2;
+    }
+    if (journal == nullptr) {
+        fprintf(stderr, "usage: %s distill <journal.sgj> [--memory-dir <d>]\n",
+                argv[0]);
+        return 2;
+    }
+
+    static struct spg_fake_response responses[AGENT_MAX_SCRIPT];
+    static char                     text[CLI_MODEL_OUTPUT_BYTES];
+    size_t                          n = 0u;
+    if (spg_eval_script_from_journal(journal, AGENT_MAX_SCRIPT, responses,
+                                     sizeof text, text, &n) != SPG_OK ||
+        n == 0u) {
+        fprintf(stderr, "distill: no trajectory in %s\n", journal);
+        return 1;
+    }
+
+    char   shape[256];
+    size_t shape_n = 0u;
+    if (spg_shape_from_script(responses, n, sizeof shape, shape, &shape_n) !=
+            SPG_OK ||
+        shape_n == 0u) {
+        fprintf(stderr, "distill: could not derive a shape\n");
+        return 1;
+    }
+
+    /* ordered-kind procedure summary, e.g. "local_shell -> finish" */
+    char   procedure[256];
+    size_t pw = 0u;
+    for (size_t i = 0u; i < n; i += 1u) {
+        struct spg_sexpr_token          toks[256];
+        struct spg_sexpr_node           nodes[256];
+        struct spg_recommendation       rec = {};
+        struct spg_recommendation_error err = {};
+        if (spg_recommendation_parse(responses[i].n, responses[i].text, 256u,
+                                     toks, 256u, nodes, &rec, &err) != SPG_OK) {
+            continue;
+        }
+        const char *kind = spg_action_kind_to_string(rec.action_kind);
+        pw += (size_t)snprintf(procedure + pw, sizeof procedure - pw, "%s%s",
+                               pw > 0u ? " -> " : "", kind);
+        if (pw >= sizeof procedure) {
+            break;
+        }
+    }
+
+    struct spg_lesson skill = {};
+    if (!spg_reflect_skill(shape, procedure, &skill)) {
+        fprintf(stderr, "distill: could not distil a skill\n");
+        return 1;
+    }
+
+    struct spg_mem_store store;
+    if (spg_mem_store_open(&store, spg_mem_resolve_dir(memory_dir)) != SPG_OK) {
+        fprintf(stderr, "distill: cannot open memory dir\n");
+        return 1;
+    }
+    if (spg_mem_save(&store, skill.slug, skill.description, skill.body) !=
+        SPG_OK) {
+        fprintf(stderr, "distill: cannot save %s\n", skill.slug);
+        return 1;
+    }
+    printf("{\"skill\":\"%s\",\"shape\":\"%s\",\"procedure\":\"%s\"}\n",
+           skill.slug, shape, procedure);
+    return 0;
+}
+
 /* Longitudinal benefit audit (docs/LEARNING.md P7): a kept lesson earns its
  * keep only if its failure slug stops recurring in later real runs. Sum the
  * failure-mode events across the given journals and, for each kept lesson in
@@ -3030,6 +3118,10 @@ int main(int argc, char **argv) {
 
     if (strcmp(argv[1], "improve") == 0) {
         return improve_command(argc, argv);
+    }
+
+    if (strcmp(argv[1], "distill") == 0) {
+        return distill_command(argc, argv);
     }
 
     if (strcmp(argv[1], "audit") == 0) {

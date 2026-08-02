@@ -162,6 +162,45 @@ static int test_reflect_outcome(void) {
     return 0;
 }
 
+/* #26: a passing trajectory distils a reusable skill keyed by shape. */
+static int test_reflect_skill(void) {
+    struct spg_lesson skill = {};
+    if (!spg_reflect_skill("local_shell:build.run", "local_shell -> finish",
+                           &skill)) {
+        return 1;
+    }
+    /* slug is the skill namespace, per-shape, mind-palace-safe */
+    if (strcmp(skill.slug, "skill-local_shell:build.run") != 0 &&
+        strcmp(skill.slug, "skill-local-shell-build-run") != 0) {
+        /* slugify keeps [a-z0-9-]; ':' becomes '-' */
+        if (strcmp(skill.slug, "skill-local-shell-build-run") != 0) {
+            fprintf(stderr, "skill slug=%s\n", skill.slug);
+            return 1;
+        }
+    }
+    if (!spg_mem_slug_valid(skill.slug)) {
+        return 1;
+    }
+    /* the procedure is quoted in both description and body */
+    if (strstr(skill.description, "local_shell -> finish") == nullptr ||
+        strstr(skill.body, "local_shell -> finish") == nullptr) {
+        return 1;
+    }
+    /* distinct shapes -> distinct skills */
+    struct spg_lesson other = {};
+    if (!spg_reflect_skill("simulator", "simulator -> finish", &other) ||
+        strcmp(skill.slug, other.slug) == 0) {
+        return 1;
+    }
+    /* null/empty -> no skill */
+    struct spg_lesson none = {};
+    if (spg_reflect_skill(nullptr, "x", &none) ||
+        spg_reflect_skill("s", "", &none)) {
+        return 1;
+    }
+    return 0;
+}
+
 static int test_accept_gate(void) {
     /* keep on improvement and on no-change; revert on regression */
     if (!spg_improve_accept(2u, 3u) || !spg_improve_accept(2u, 2u) ||
@@ -242,6 +281,10 @@ int main(void) {
     }
     if (test_reflect_outcome() != 0) {
         fprintf(stderr, "test_reflect_outcome failed\n");
+        return 1;
+    }
+    if (test_reflect_skill() != 0) {
+        fprintf(stderr, "test_reflect_skill failed\n");
         return 1;
     }
     if (test_accept_gate() != 0) {
