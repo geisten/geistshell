@@ -37,6 +37,11 @@ struct spg_context_sources {
     const char                        *memory_index;
     /* Content of the most recently recalled memory (memory_read), or null. */
     const char                        *observation;
+    /* Optional concrete worked examples of the recommendation form, rendered
+     * right after the (contract ...) schema. The schema is a grammar; a small
+     * model imitates filled-in examples far more reliably than it parses a
+     * grammar. Null = none (unchanged behaviour). */
+    const char                        *exemplars;
 };
 
 struct spg_context_budget_item {

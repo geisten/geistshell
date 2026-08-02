@@ -1770,12 +1770,13 @@ static size_t split_script_lines(char *data, const size_t n,
  * --fake-script is one recommendation; the loop gates, executes, journals, and
  * feeds each result forward until `finish` or a termination condition. */
 static int agent_command(int argc, char **argv) {
-    const char *run_path    = nullptr;
-    const char *script_path = nullptr;
-    const char *memory_dir  = getenv("GEISTSHELL_MEMORY_DIR");
-    size_t      max_steps   = 8u;
-    size_t      max_repairs = 2u;
-    bool        allow_exec  = false;
+    const char *run_path       = nullptr;
+    const char *script_path    = nullptr;
+    const char *exemplars_path = nullptr;
+    const char *memory_dir     = getenv("GEISTSHELL_MEMORY_DIR");
+    size_t      max_steps      = 8u;
+    size_t      max_repairs    = 2u;
+    bool        allow_exec     = false;
     for (int i = 2; i < argc; i += 1) {
         if ((strcmp(argv[i], "--config") == 0 ||
              strcmp(argv[i], "--run") == 0) &&
@@ -1786,6 +1787,11 @@ static int agent_command(int argc, char **argv) {
         }
         if (strcmp(argv[i], "--fake-script") == 0 && i + 1 < argc) {
             script_path = argv[i + 1];
+            i += 1;
+            continue;
+        }
+        if (strcmp(argv[i], "--exemplars") == 0 && i + 1 < argc) {
+            exemplars_path = argv[i + 1];
             i += 1;
             continue;
         }
@@ -1831,10 +1837,11 @@ static int agent_command(int argc, char **argv) {
     }
 
     int                rc            = 1;
-    struct file_buffer run_text      = {};
-    struct file_buffer policy_text   = {};
-    struct file_buffer scenario_text = {};
-    struct file_buffer script_text   = {};
+    struct file_buffer run_text       = {};
+    struct file_buffer policy_text    = {};
+    struct file_buffer scenario_text  = {};
+    struct file_buffer script_text    = {};
+    struct file_buffer exemplars_text = {};
     char              *policy_path   = nullptr;
     char              *scenario_path = nullptr;
     char              *journal_path  = nullptr;
@@ -1898,6 +1905,17 @@ static int agent_command(int argc, char **argv) {
                                       AGENT_MAX_SCRIPT);
         if (script_n == 0u) {
             fprintf(stderr, "agent: empty --fake-script\n");
+            goto done;
+        }
+    }
+
+    /* Optional few-shot exemplars: concrete filled-in recommendation forms a
+     * small model can imitate (context (examples ...) section). */
+    if (exemplars_path != nullptr) {
+        status = read_file(exemplars_path, &exemplars_text);
+        if (status != SPG_OK) {
+            fprintf(stderr, "agent: read exemplars failed: %s\n",
+                    spg_status_to_string(status));
             goto done;
         }
     }
@@ -1999,6 +2017,7 @@ static int agent_command(int argc, char **argv) {
         .sim           = &sim,
         .store         = store_open ? &store : nullptr,
         .journal       = &journal,
+        .exemplars     = exemplars_text.data, /* null when --exemplars absent */
     };
     const struct spg_agent_run_config rcfg = {
         .max_steps         = max_steps,
@@ -2057,6 +2076,7 @@ done:
     free_file_buffer(&policy_text);
     free_file_buffer(&scenario_text);
     free_file_buffer(&script_text);
+    free_file_buffer(&exemplars_text);
     return rc;
 }
 

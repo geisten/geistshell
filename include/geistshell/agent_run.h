@@ -34,6 +34,10 @@ struct spg_agent_run_inputs {
     struct spg_sim_config          *sim;         /* nullable (no simulator) */
     struct spg_mem_store           *store;       /* nullable (no memory) */
     struct spg_journal_writer      *journal;     /* nullable (no audit/trajectory) */
+    /* Optional concrete worked examples of the recommendation form, rendered
+     * in the context's (examples ...) section — few-shot so a small model can
+     * imitate the DSL rather than parse the schema grammar. Null = none. */
+    const char                     *exemplars;
 };
 
 struct spg_agent_run_config {

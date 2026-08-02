@@ -55,6 +55,9 @@ struct spg_orchestrator_state {
     const char *memory_text;
     const char *memory_index;
     const char *observation;
+    /* Optional concrete worked examples of the recommendation form (context
+     * (examples ...) section) — few-shot for a small model. Null = none. */
+    const char *exemplars;
 };
 
 struct spg_orchestrator_config {

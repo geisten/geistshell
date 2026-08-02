@@ -196,6 +196,7 @@ enum spg_status spg_orchestrator_tick(
         .memory_text          = state->memory_text,
         .memory_index         = memory_index,
         .observation        = state->observation,
+        .exemplars            = state->exemplars,
     };
     const struct spg_actor_step_config actor_config = {
         .actor_id            = config->actor_id,

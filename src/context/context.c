@@ -695,6 +695,11 @@ enum spg_status spg_context_render(const struct spg_context_sources *sources,
         .dst      = dst,
     };
     render_contract(&state);
+    if (sources->exemplars != nullptr && sources->exemplars[0] != '\0') {
+        append_cstr(&state, "(examples\n");
+        append_cstr(&state, sources->exemplars);
+        append_cstr(&state, ")\n");
+    }
     render_budgets(&state, &view->budgets);
     render_graph(sources, view, &state);
     render_memory(sources, view, &state);

@@ -73,6 +73,7 @@ enum spg_status spg_agent_run(const struct spg_agent_run_inputs *inputs,
         .policy_text_n = inputs->policy_text_n,
         .policy_text   = inputs->policy_text,
         .observation   = workspace->observation,
+        .exemplars     = inputs->exemplars,
     };
 
     const size_t refs = config->context_refs > 0u ? config->context_refs : 8u;
