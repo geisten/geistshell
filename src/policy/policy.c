@@ -1,4 +1,4 @@
-#include "geist-agent/policy.h"
+#include "geistshell/policy.h"
 
 #include <string.h>
 

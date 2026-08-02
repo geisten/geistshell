@@ -3,8 +3,8 @@
 # memory slash-commands — without needing a real model.
 set -eu
 
-SPG_BIN=${SPG_BIN:-build/host-debug/bin/geist-agent}
-CHAT="$(dirname "$SPG_BIN")/geist-agent-chat"
+SPG_BIN=${SPG_BIN:-build/host-debug/bin/geistshell}
+CHAT="$(dirname "$SPG_BIN")/geistshell-chat"
 T=$(mktemp -d)
 trap 'rm -rf "$T"' EXIT
 

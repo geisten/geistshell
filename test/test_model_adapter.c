@@ -1,4 +1,4 @@
-#include "geist-agent/model_adapter.h"
+#include "geistshell/model_adapter.h"
 
 #include <stdio.h>
 #include <string.h>

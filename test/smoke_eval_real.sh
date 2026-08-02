@@ -7,8 +7,8 @@
 # works (model loads, runs, is judged, JSONL emitted) — not that it succeeds.
 set -eu
 
-SPG_BIN=${SPG_BIN:-build/host-debug/bin/geist-agent}
-MODEL=${GEIST_AGENT_MODEL:-/Users/germar/workspace/geist/gguf_artifacts/gemma4-e2b-Q4_K_M.gguf}
+SPG_BIN=${SPG_BIN:-build/host-debug/bin/geistshell}
+MODEL=${GEISTSHELL_MODEL:-/Users/germar/workspace/geist/gguf_artifacts/gemma4-e2b-Q4_K_M.gguf}
 
 if [ ! -f "$MODEL" ]; then
     echo "smoke_eval_real: SKIP (model not found: $MODEL)"

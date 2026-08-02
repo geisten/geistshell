@@ -3,7 +3,7 @@
 #    define _DARWIN_C_SOURCE 1
 #endif
 
-#include "geist-agent/cmd_executor.h"
+#include "geistshell/cmd_executor.h"
 
 #include <signal.h>
 #include <stdio.h>

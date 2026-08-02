@@ -3,7 +3,7 @@
 # and the executor-boundary network denial — driven through the real binary.
 set -eu
 
-SPG_BIN=${SPG_BIN:-build/host-debug/bin/geist-agent}
+SPG_BIN=${SPG_BIN:-build/host-debug/bin/geistshell}
 T=$(mktemp -d)
 trap 'rm -rf "$T"' EXIT
 

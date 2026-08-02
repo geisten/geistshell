@@ -3,7 +3,7 @@
 # report (the machine-readable signal a self-improvement loop consumes).
 set -eu
 
-SPG_BIN=${SPG_BIN:-build/host-debug/bin/geist-agent}
+SPG_BIN=${SPG_BIN:-build/host-debug/bin/geistshell}
 
 OUT=$("$SPG_BIN" eval examples/eval/suite.spg)
 printf '%s\n' "$OUT"

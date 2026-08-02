@@ -1,4 +1,4 @@
-#include "geist-agent/policy_gate.h"
+#include "geistshell/policy_gate.h"
 
 #include <stdio.h>
 #include <string.h>
@@ -58,7 +58,7 @@ static struct spg_recommendation sim_recommendation(void) {
 }
 
 static int test_allow_journaled(void) {
-    const char journal_path[] = "/tmp/geist-agent_test_policy_gate_allow.journal";
+    const char journal_path[] = "/tmp/geistshell_test_policy_gate_allow.journal";
     (void)remove(journal_path);
 
     struct spg_policy_config policy = {};
@@ -194,7 +194,7 @@ static int test_deny_updates_graph(void) {
 }
 
 static int test_deny_journal_status(void) {
-    const char journal_path[] = "/tmp/geist-agent_test_policy_gate_deny.journal";
+    const char journal_path[] = "/tmp/geistshell_test_policy_gate_deny.journal";
     (void)remove(journal_path);
     struct spg_policy_config policy = {};
     struct spg_policy_usage  usage = {};

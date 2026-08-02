@@ -1,4 +1,4 @@
-#include "geist-agent/schema.h"
+#include "geistshell/schema.h"
 
 #include <string.h>
 

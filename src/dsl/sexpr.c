@@ -1,4 +1,4 @@
-#include "geist-agent/sexpr.h"
+#include "geistshell/sexpr.h"
 
 #include <stdbool.h>
 #include <string.h>

@@ -1,4 +1,4 @@
-#include "geist-agent/recommendation.h"
+#include "geistshell/recommendation.h"
 
 #include <stdio.h>
 #include <string.h>

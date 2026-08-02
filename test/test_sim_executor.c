@@ -1,4 +1,4 @@
-#include "geist-agent/sim_executor.h"
+#include "geistshell/sim_executor.h"
 
 #include <stdio.h>
 #include <string.h>
@@ -134,7 +134,7 @@ static int test_noop_when_no_mutation_available(void) {
 }
 
 static int test_journal_graph_memory(void) {
-    const char journal_path[] = "/tmp/geist-agent_test_sim_executor.journal";
+    const char journal_path[] = "/tmp/geistshell_test_sim_executor.journal";
     (void)remove(journal_path);
     const char *text =
         "(scenario"

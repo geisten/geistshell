@@ -1,6 +1,6 @@
-#include "geist-agent/journal.h"
+#include "geistshell/journal.h"
 
-#include "geist-agent/hash.h"
+#include "geistshell/hash.h"
 
 #include <errno.h>
 #include <stdbool.h>

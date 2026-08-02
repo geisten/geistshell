@@ -1,8 +1,8 @@
-#include "geist-agent/chat_tools.h"
+#include "geistshell/chat_tools.h"
 
-#include "geist-agent/mem_executor.h"
-#include "geist-agent/sexpr.h"
-#include "geist-agent/shell_executor.h"
+#include "geistshell/mem_executor.h"
+#include "geistshell/sexpr.h"
+#include "geistshell/shell_executor.h"
 
 #include <stdint.h>
 #include <stdio.h>
@@ -62,7 +62,7 @@ static void run_exec(size_t input_n, const char *input,
                      const size_t out_cap) {
     if (!allow_exec) {
         (void)snprintf(out, out_cap,
-                       "error: exec is disabled (start geist-agent-chat with "
+                       "error: exec is disabled (start geistshell-chat with "
                        "--allow-exec)");
         return;
     }

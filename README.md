@@ -1,6 +1,6 @@
-# geist-agent
+# geistshell
 
-A **governed agent runtime** written in pure C23. geist-agent is not another
+A **governed agent runtime** written in pure C23. geistshell is not another
 "smart agent" wrapper — it is a deterministic, auditable *control plane* for
 agent actions: every action a model proposes is policy‑gated, budget‑bounded,
 journaled into a hash‑chained log, and replayable byte‑for‑byte. On top of that
@@ -8,14 +8,30 @@ spine sits a self‑improvement loop whose changes are accepted only if its own
 evaluation harness proves they do not regress.
 
 The language model is swappable and external (the [geist](https://github.com/geisten/geistlib)
-engine, pinned). geist-agent owns everything *around* the model: perception,
+engine, pinned). geistshell owns everything *around* the model: perception,
 governance, execution, audit, memory, evaluation, and learning.
+
+## geistshell vs geistagent — two runtimes, two jobs
+
+They are deliberately separate because they enforce different security models;
+merging them would weaken both.
+
+| | **geistshell** (this repo) | **[geistagent](https://github.com/geisten/geistagent)** |
+|---|---|---|
+| Job | *execute* arbitrary governed actions (shell, scripts) and learn from them | *call* a fixed, host-supplied toolset safely |
+| Action space | open — any command the policy gate + OS sandbox allow | closed — an off-list tool name never runs |
+| Output model | incremental (`poll()`-drained stdout/stderr, journaled) | one atomic `tool.result` per call |
+| Learning | built-in eval-gated self-improvement loop (`improve`) | offline skill miner over the same gate |
+| Use it for | "write a script, run it, watch the output, react" | "turn on the hallway light", bounded device control |
+
+Rule of thumb: **bounded tool-calling → geistagent; open action execution →
+geistshell.**
 
 ```
 make            # build (host-debug: ASan/UBSan, strict warnings)
 make test       # framework-free C tests + CLI system tests
-./build/host-debug/bin/geist-agent            # CLI: agent / eval / improve / run / exec / memory / replay / seal-journal / ...
-./build/host-debug/bin/geist-agent-chat       # governed chat REPL
+./build/host-debug/bin/geistshell            # CLI: agent / eval / improve / run / exec / memory / replay / seal-journal / ...
+./build/host-debug/bin/geistshell-chat       # governed chat REPL
 ```
 
 ## Architecture
@@ -107,7 +123,7 @@ re‑evaluates, and **keeps the lesson only if the pass count did not drop** —
 otherwise it reverts. The eval harness is the acceptance gate for the agent's
 own self‑modifications.
 
-### Evaluation (`geist-agent eval` / `improve`)
+### Evaluation (`geistshell eval` / `improve`)
 
 Suites are s‑expressions of scored cases. A scripted case drives a deterministic
 fake model and is checked against expectations (termination reason, step bounds,
@@ -115,7 +131,7 @@ an observation substring), emitting a JSONL verdict per case — usable both in 
 and as the measurement step of the self‑improvement loop. A `(model "geist")`
 case runs the local engine; a `(model "remote")` case runs a **frontier model**
 through the remote adapter (`eval`/`improve` take `--remote-url`/`--remote-model`,
-key from `GEIST_AGENT_API_KEY`) — so the *same* governed, journaled measurement
+key from `GEISTSHELL_API_KEY`) — so the *same* governed, journaled measurement
 now works against a strong model.
 
 Because a real model is non‑deterministic, `--samples N` runs each case N times
@@ -126,7 +142,7 @@ stays byte‑identical‑replayable from its journal; only *which* run you get
 varies.
 
 ```
-$ geist-agent improve examples/eval/improve_gated.spg --memory-dir ./mem
+$ geistshell improve examples/eval/improve_gated.spg --memory-dir ./mem
 {"lesson":"lesson-rejected","accepted":true,"baseline_passed":0,"trial_passed":1}
 {"suite":"…","baseline_passed":0,"final_passed":1,"lessons_kept":1}
 ```
@@ -145,7 +161,7 @@ claim — and it is model‑agnostic, so it matters *more* for small/noisy model
 where keeping a lucky lesson is the main failure mode.
 
 ```
-$ geist-agent improve train.spg --validate holdout.spg --memory-dir ./mem
+$ geistshell improve train.spg --validate holdout.spg --memory-dir ./mem
 {"lesson":"lesson-rejected","accepted":true,"held_out_passed":0,"trial_passed":1}
 {"suite":"train.spg","validate":"holdout.spg","held_out_baseline":0,"held_out_final":1,"lessons_kept":1}
 ```
@@ -182,14 +198,14 @@ regression), not a capability gain on a real model. Swap in a local or remote
 model and add `--samples N` to run the identical harness under noise — each case
 then reports `k of N` and the gate compares summed pass counts.
 
-## Where geist-agent is different — and where it is not
+## Where geistshell is different — and where it is not
 
-This section is deliberately critical. geist-agent makes a sharp bet: be a
+This section is deliberately critical. geistshell makes a sharp bet: be a
 *governance and self‑improvement substrate*, not a capable autonomous agent.
 
 ### Where we genuinely differentiate
 
-| Axis                        | geist-agent                                                                                                                        | Typical agent frameworks (LangChain/LangGraph, AutoGPT, CrewAI)                              |
+| Axis                        | geistshell                                                                                                                        | Typical agent frameworks (LangChain/LangGraph, AutoGPT, CrewAI)                              |
 | --------------------------- | --------------------------------------------------------------------------------------------------------------------------------- | -------------------------------------------------------------------------------------------- |
 | **Governance**              | A **mandatory** policy gate (capability + budget) on *every* action — constitutive, not optional middleware.                      | Guardrails are opt‑in middleware bolted around the loop.                                     |
 | **Determinism & audit**     | Hash‑chained journal with logical timestamps → **byte‑identical replay**, plus an optional **keyed HMAC seal** (tamper‑evidence). | Non‑deterministic by default; tracing is best‑effort.                                        |
@@ -200,11 +216,11 @@ This section is deliberately critical. geist-agent makes a sharp bet: be a
 The combination — *mandatory gating + deterministic replay + eval‑gated
 self‑improvement* in one allocation‑free C core — is, as far as we can tell, not
 something mainstream frameworks offer. On the governance/auditability axis
-geist-agent is arguably **ahead** of them.
+geistshell is arguably **ahead** of them.
 
 ### Where we are honestly behind
 
-- **Reasoning capability.** geist-agent is *not* a smart agent. It runs a single
+- **Reasoning capability.** geistshell is *not* a smart agent. It runs a single
   small local model with no constrained/grammar‑guided decoding (the engine does
   not expose logit masking), so the model must emit a custom s‑expression
   grammar from free text — which small models do unreliably. Real‑model runs
@@ -226,7 +242,7 @@ geist-agent is arguably **ahead** of them.
 
 ### Honest positioning
 
-geist-agent is **SOTA‑grade on governance, determinism, auditability, and
+geistshell is **SOTA‑grade on governance, determinism, auditability, and
 self‑improvement *safety*** — and deliberately minimal (and behind) on raw agent
 *capability*. It is the chassis and the safety system, not yet the engine. The
 architecture is built so a stronger model drops in without touching the spine.
@@ -239,8 +255,8 @@ the same governed loop** rather than compete on local‑model capability.
 
 - **Remote model adapter** *(shipped)*. A third `model_adapter` mode beside
   FAKE/GEIST that calls an **OpenAI‑compatible `/v1/chat/completions`** endpoint
-  over libcurl — drive it with `geist-agent run --remote-url <url>
-  [--remote-model <name>]` (or `GEIST_AGENT_API_URL`). One URL selects a cloud
+  over libcurl — drive it with `geistshell run --remote-url <url>
+  [--remote-model <name>]` (or `GEISTSHELL_API_URL`). One URL selects a cloud
   frontier model *or* a local server (ollama / llama.cpp / vLLM), so "strong
   cloud brain" vs. "offline/edge" is a deployment choice, not a rewrite. The JSON
   request/response **codec is pure, allocation‑free, and unit‑tested in the
@@ -249,7 +265,7 @@ the same governed loop** rather than compete on local‑model capability.
   limit: remote inference is non‑deterministic, but **journal replay stays
   byte‑identical** (it replays recorded I/O), and the HTTP call is inference
   *transport* — not a governed action — so the policy gate and audit trail are
-  unchanged. The API key is read only from `GEIST_AGENT_API_KEY` (never an
+  unchanged. The API key is read only from `GEISTSHELL_API_KEY` (never an
   argument, never logged, never journaled).
 - **Verifiable audit** *(started)*. The shipped keyed **HMAC seal** is symmetric
   tamper‑evidence; asymmetric signatures (**Ed25519**) for third‑party

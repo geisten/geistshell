@@ -1,6 +1,6 @@
 #define _POSIX_C_SOURCE 200809L
 
-#include "geist-agent/model_resolve.h"
+#include "geistshell/model_resolve.h"
 
 #include <stdio.h>
 #include <stdlib.h>
@@ -20,7 +20,7 @@ static int make_temp(void) {
 }
 
 static int test_explicit_existing(void) {
-    (void)unsetenv("GEIST_AGENT_MODEL");
+    (void)unsetenv("GEISTSHELL_MODEL");
     char out[256] = {0};
     bool downloaded = true;
     const struct spg_model_resolve_opts opts = {.explicit_path = TMP_MODEL,
@@ -32,7 +32,7 @@ static int test_explicit_existing(void) {
 }
 
 static int test_explicit_missing(void) {
-    (void)unsetenv("GEIST_AGENT_MODEL");
+    (void)unsetenv("GEISTSHELL_MODEL");
     (void)unlink(MISSING);
     char out[256] = {0};
     const struct spg_model_resolve_opts opts = {.explicit_path = MISSING,
@@ -44,7 +44,7 @@ static int test_explicit_missing(void) {
 }
 
 static int test_env_override(void) {
-    if (setenv("GEIST_AGENT_MODEL", TMP_MODEL, 1) != 0) {
+    if (setenv("GEISTSHELL_MODEL", TMP_MODEL, 1) != 0) {
         return 1;
     }
     char out[256] = {0};
@@ -52,12 +52,12 @@ static int test_env_override(void) {
                                                 .allow_download = false};
     const enum spg_status st =
         spg_model_resolve(&opts, sizeof out, out, nullptr);
-    (void)unsetenv("GEIST_AGENT_MODEL");
+    (void)unsetenv("GEISTSHELL_MODEL");
     return (st == SPG_OK && strcmp(out, TMP_MODEL) == 0) ? 0 : 1;
 }
 
 static int test_buffer_too_small(void) {
-    (void)unsetenv("GEIST_AGENT_MODEL");
+    (void)unsetenv("GEISTSHELL_MODEL");
     char out[4] = {0};
     const struct spg_model_resolve_opts opts = {.explicit_path = TMP_MODEL,
                                                 .allow_download = false};

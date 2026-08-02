@@ -1,4 +1,4 @@
-#include "geist-agent/memory.h"
+#include "geistshell/memory.h"
 
 #include <math.h>
 

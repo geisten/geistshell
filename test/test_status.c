@@ -1,5 +1,5 @@
-#include "geist-agent/allocator.h"
-#include "geist-agent/status.h"
+#include "geistshell/allocator.h"
+#include "geistshell/status.h"
 
 #include <stdalign.h>
 #include <stdint.h>

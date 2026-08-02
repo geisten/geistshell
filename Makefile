@@ -1,4 +1,4 @@
-APP_NAME := geist-agent
+APP_NAME := geistshell
 
 DEPS_DIR  := deps
 GEIST_DIR := $(DEPS_DIR)/geist
@@ -46,9 +46,9 @@ BIN_DIR   := $(BUILD_DIR)/bin
 LIB_DIR   := $(BUILD_DIR)/lib
 TEST_DIR  := $(BUILD_DIR)/test
 
-SPG_LIB := $(LIB_DIR)/libgeist-agent.a
+SPG_LIB := $(LIB_DIR)/libgeistshell.a
 SPG_BIN := $(BIN_DIR)/$(APP_NAME)
-CHAT_BIN := $(BIN_DIR)/geist-agent-chat
+CHAT_BIN := $(BIN_DIR)/geistshell-chat
 
 GEIST_LIB := $(GEIST_DIR)/lib/$(GEIST_TARGET)/$(GEIST_MODE)/libgeist.a
 
@@ -62,7 +62,7 @@ else
     GEIST_LINK_FLAGS :=
 endif
 
-CPPFLAGS := -Iinclude -Iinclude/geist-agent -I$(GEIST_DIR)/include -I$(GEIST_DIR) -I$(DEPS_DIR)/jsmn
+CPPFLAGS := -Iinclude -Iinclude/geistshell -I$(GEIST_DIR)/include -I$(GEIST_DIR) -I$(DEPS_DIR)/jsmn
 WARNINGS := -Wall -Wextra -Wpedantic -Wconversion -Wshadow -Wstrict-prototypes
 CFLAGS := -std=c23 $(WARNINGS) $(SPG_OPT_FLAGS) $(CPPFLAGS) $(REMOTE_DEFS)
 LDLIBS := $(GEIST_LINK_FLAGS) -lm -lpthread $(REMOTE_LIBS)
@@ -202,7 +202,7 @@ distclean: clean
 	rm -rf $(DEPS_DIR)
 
 help:
-	@echo "geist-agent build"
+	@echo "geistshell build"
 	@echo "  make                 build host-debug"
 	@echo "  make host-debug      build ASan/UBSan host binary"
 	@echo "  make host-release    build optimized host binary"

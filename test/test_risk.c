@@ -1,5 +1,5 @@
-#include "geist-agent/risk.h"
-#include "geist-agent/sim_config.h"
+#include "geistshell/risk.h"
+#include "geistshell/sim_config.h"
 
 #include <stdio.h>
 #include <string.h>

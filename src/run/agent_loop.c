@@ -1,4 +1,4 @@
-#include "geist-agent/agent_loop.h"
+#include "geistshell/agent_loop.h"
 
 #include <stdio.h>
 

@@ -4,7 +4,7 @@
 # around the reproducible benchmark so CI guards the numbers in the README.
 set -eu
 
-SPG_BIN=${SPG_BIN:-build/host-debug/bin/geist-agent}
+SPG_BIN=${SPG_BIN:-build/host-debug/bin/geistshell}
 export SPG_BIN
 
 OUT=$(sh examples/eval/bench/improve_benchmark.sh)

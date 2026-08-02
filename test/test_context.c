@@ -1,4 +1,4 @@
-#include "geist-agent/context.h"
+#include "geistshell/context.h"
 
 #include <stdio.h>
 #include <string.h>

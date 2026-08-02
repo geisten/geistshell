@@ -3,7 +3,7 @@
 #define JSMN_HEADER
 #include "jsmn.h" /* jsmntok_t for the caller-provided token array */
 
-#include "geist-agent/model_remote_codec.h"
+#include "geistshell/model_remote_codec.h"
 
 #include <stdio.h>
 #include <string.h>

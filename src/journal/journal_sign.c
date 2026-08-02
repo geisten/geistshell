@@ -1,5 +1,5 @@
-#include "geist-agent/hmac.h"
-#include "geist-agent/journal.h"
+#include "geistshell/hmac.h"
+#include "geistshell/journal.h"
 
 #include <stdio.h>
 #include <string.h>

@@ -1,4 +1,4 @@
-#include "geist-agent/chat_template.h"
+#include "geistshell/chat_template.h"
 
 #include <stdio.h>
 #include <string.h>

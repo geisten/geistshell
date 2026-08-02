@@ -1,6 +1,6 @@
-#include "geist-agent/policy_config.h"
+#include "geistshell/policy_config.h"
 
-#include "geist-agent/schema.h"
+#include "geistshell/schema.h"
 
 #include <stdbool.h>
 #include <stdint.h>

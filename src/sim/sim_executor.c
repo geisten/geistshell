@@ -1,4 +1,4 @@
-#include "geist-agent/sim_executor.h"
+#include "geistshell/sim_executor.h"
 
 static uint64_t bp_mul(const uint32_t a, const uint32_t b) {
     return ((uint64_t)a * (uint64_t)b) / SPG_SIM_MAX_BASIS_POINTS;

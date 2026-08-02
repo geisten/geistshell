@@ -1,4 +1,4 @@
-#include "geist-agent/status.h"
+#include "geistshell/status.h"
 
 const char *spg_status_to_string(const enum spg_status status) {
     switch (status) {

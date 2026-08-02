@@ -1,9 +1,9 @@
 /* In-process integration test: composes the DSL parser, the recommendation
  * parser, the policy decision type, and the executor boundary guard across
  * module boundaries — the same chain the orchestrator drives, without the CLI. */
-#include "geist-agent/executor_boundary.h"
-#include "geist-agent/policy.h"
-#include "geist-agent/recommendation.h"
+#include "geistshell/executor_boundary.h"
+#include "geistshell/policy.h"
+#include "geistshell/recommendation.h"
 
 #include <stdio.h>
 #include <string.h>

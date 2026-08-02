@@ -1,7 +1,7 @@
-#include "geist-agent/mem_command.h"
+#include "geistshell/mem_command.h"
 
-#include "geist-agent/mem_store.h"
-#include "geist-agent/status.h"
+#include "geistshell/mem_store.h"
+#include "geistshell/status.h"
 
 #include <stdio.h>
 #include <stdlib.h>
@@ -12,7 +12,7 @@
 
 static void usage(void) {
     fprintf(stderr,
-            "usage: geist-agent memory [--dir <path>] "
+            "usage: geistshell memory [--dir <path>] "
             "<list | read <slug> | save <slug> <description> | delete <slug>>\n"
             "  save reads the memory body from stdin\n");
 }

@@ -1,6 +1,6 @@
-#include "geist-agent/mem_executor.h"
+#include "geistshell/mem_executor.h"
 
-#include "geist-agent/sexpr.h"
+#include "geistshell/sexpr.h"
 
 #include <string.h>
 

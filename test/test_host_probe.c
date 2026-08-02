@@ -1,4 +1,4 @@
-#include "geist-agent/host_probe.h"
+#include "geistshell/host_probe.h"
 
 #include <stdio.h>
 #include <string.h>
