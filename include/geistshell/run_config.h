@@ -31,6 +31,16 @@ struct spg_run_config {
 
     uint64_t               seed;
     struct spg_run_budgets budgets;
+
+    /* Optional success criterion for learning from real runs (docs/LEARNING.md,
+     * P1). When has_expect, the run is judged: it succeeded iff it finished and
+     * its observation contains expect_observation (a substring into `input`).
+     * The shell observation folds in the exit code, so a marker substring
+     * verifies real outcomes. Absent -> no success-side verdict; the run's
+     * terminal failures still teach through the existing path. Model-free,
+     * zero tokens: the world supplies the ground truth. */
+    bool                 has_expect;
+    struct spg_text_span expect_observation;
 };
 
 struct spg_run_config_error {
