@@ -1,3 +1,8 @@
+#define _POSIX_C_SOURCE 200809L /* mkstemp/write/unlink: the guard-gate temp suite */
+#if defined(__APPLE__)
+#    define _DARWIN_C_SOURCE 1
+#endif
+
 #include "geistshell/geistshell.h"
 
 #include "geistshell/agent_loop.h"
