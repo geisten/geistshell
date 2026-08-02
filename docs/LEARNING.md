@@ -37,11 +37,17 @@ is the honest place to build "learns from use."
      observed-vs-expected (`"file not found" instead of "SUCCESS"`). No invented
      fix — the fact, and recurrence judges whether stating it helps.
 
-4. **Mint and gate — regression only.** The lesson is persisted tentatively,
-   then re-checked by frozen replay against the shipped hand-written suite
-   **plus a bounded ring of real positive guards** (finished + criterion-passed
-   runs), deduped by capability-set task shape, LRU-evicted. No live inference,
-   sequence-length-neutral. Kept iff `candidate_passed >= baseline_passed`.
+4. **Mint and gate.** The lesson is persisted tentatively, then re-checked
+   against the shipped hand-written suite (frozen, `gate_marker`-reactive)
+   **and a bounded ring of real positive guards** (finished + criterion-passed
+   runs), deduped by capability-set task shape, LRU-evicted. Kept iff nothing
+   regressed. **Weg 2 (chosen):** each guard is re-run **live** — a frozen
+   replay of a real guard ignores context and so cannot react to the lesson at
+   all, so the guard is re-run from its config with, then without, the lesson
+   in the mind-palace; a guard that passed at baseline and fails with the
+   lesson vetoes it. This costs live inference and loads the sequence length —
+   the price accepted for catching a regression on a diverse task at mint time
+   rather than only later (see decision 3).
 
 5. **Measure benefit longitudinally.** No synthetic proof at mint time. If a
    lesson works, its failure slug stops recurring in later journals; if the
@@ -68,7 +74,7 @@ is the honest place to build "learns from use."
 |---|---|---|
 | 1 | Verifier signal is programmatic (exit code, output substring) | Model-judged trajectory — blows a small model's sequence length; is Hermes' self-grading defect. |
 | 2 | Criterion reuses `spg_eval_expect`, optional on the live run | A new type — the eval loop already consumes this one. |
-| 3 | Mint-time gate is regression-only (frozen replay); benefit is longitudinal slug-recurrence | Live re-run to prove benefit — the only path that loads the sequence length, and non-deterministic on the small model. Kept open (see below). |
+| 3 | **Weg 2:** guards are re-run **live** at mint time (with vs without the lesson); a guard that passed and now fails vetoes it. Benefit is still longitudinal slug-recurrence. | Frozen replay of guards — a frozen tape ignores context, so it can never react to a lesson and thus gates nothing (found during P5 implementation). The live re-run's sequence-length cost is accepted for early regression detection on diverse tasks. |
 | 4 | Slug-triggered auto-injection of the single relevant lesson | Model-directed recall — a small model may never emit `memory_read`, so lessons sit unused. |
 | 5 | Frozen suite accumulates real positive guards | Shipped hand-written suite only — cannot represent diverse ad-hoc script tasks; the longitudinal signal is too slow to catch a broken rare type. |
 | 6 | Task-shape key = capability set `(action_kind, capability-class)` | Scenario name — ad-hoc runs have none. `expect` hash — collides unrelated tasks that share "exit 0". |
@@ -77,8 +83,6 @@ is the honest place to build "learns from use."
 
 ## Deliberately open — practice decides
 
-- **Hybrid gate (decision 3c):** a live re-run to prove a lesson helps its own
-  case at mint time. Build only if longitudinal slug-recurrence proves too slow.
 - **Sequence over set (decision 6):** the finer shape key, if too many distinct
   scripts share one capability set and a guard misses regressions.
 - **Post-check command (decision 2):** a last-step shell probe (`exit 0 =
