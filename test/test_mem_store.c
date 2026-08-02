@@ -59,6 +59,46 @@ static int test_save_read_roundtrip(void) {
     return required == strlen(out) ? 0 : 1;
 }
 
+/* P6 (docs/LEARNING.md): the one-line directive for slug-triggered
+ * auto-injection — description only, budget-capped, one slot. */
+static int test_directive(void) {
+    struct spg_mem_store store;
+    char                 dir[64];
+    if (open_temp(&store, dir) != 0) {
+        return 1;
+    }
+    if (spg_mem_save(&store, "lesson-rejected", "Emit one valid form.",
+                     "long body text that must NOT be injected") != SPG_OK) {
+        return 1;
+    }
+    char   out[256];
+    /* the directive is the description, not the body */
+    size_t n = spg_mem_directive(&store, "lesson-rejected", 0u, sizeof out, out);
+    if (n != strlen("Emit one valid form.") ||
+        strcmp(out, "Emit one valid form.") != 0) {
+        return 1;
+    }
+    /* a budget smaller than the description injects nothing (over budget) */
+    if (spg_mem_directive(&store, "lesson-rejected", 5u, sizeof out, out) != 0u ||
+        out[0] != '\0') {
+        return 1;
+    }
+    /* a budget that fits still returns it */
+    if (spg_mem_directive(&store, "lesson-rejected", 64u, sizeof out, out) == 0u) {
+        return 1;
+    }
+    /* an unknown slug injects nothing */
+    if (spg_mem_directive(&store, "lesson-absent", 0u, sizeof out, out) != 0u) {
+        return 1;
+    }
+    /* null args are rejected */
+    if (spg_mem_directive(nullptr, "x", 0u, sizeof out, out) != 0u ||
+        spg_mem_directive(&store, nullptr, 0u, sizeof out, out) != 0u) {
+        return 1;
+    }
+    return 0;
+}
+
 static int test_upsert_overwrites(void) {
     struct spg_mem_store store;
     char                 dir[64];
@@ -235,6 +275,10 @@ int main(void) {
     }
     if (test_save_read_roundtrip() != 0) {
         fprintf(stderr, "test_save_read_roundtrip failed\n");
+        return 1;
+    }
+    if (test_directive() != 0) {
+        fprintf(stderr, "test_directive failed\n");
         return 1;
     }
     if (test_upsert_overwrites() != 0) {

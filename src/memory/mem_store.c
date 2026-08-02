@@ -486,3 +486,47 @@ enum spg_status spg_mem_list(struct spg_mem_store *store, const size_t cap,
     *count = n;
     return total > cap ? SPG_E_LIMIT : SPG_OK;
 }
+
+size_t spg_mem_directive(struct spg_mem_store *store, const char *slug,
+                         const size_t budget_bytes, const size_t dst_cap,
+                         char dst[]) {
+    if (store == nullptr || slug == nullptr || dst == nullptr || dst_cap == 0u) {
+        return 0u;
+    }
+    dst[0] = '\0';
+
+    /* The index renders one "- <slug>: <description>\n" line per memory; the
+     * directive is a slug's description, extracted without a new read path. */
+    static char index[SPG_MEM_INDEX_CACHE_BYTES];
+    if (spg_mem_index(store, sizeof index, index, nullptr, nullptr) != SPG_OK) {
+        return 0u;
+    }
+
+    char prefix[SPG_MEM_SLUG_MAX + 4u];
+    const int pn = snprintf(prefix, sizeof prefix, "- %s: ", slug);
+    if (pn <= 0 || (size_t)pn >= sizeof prefix) {
+        return 0u;
+    }
+    const char *line = index;
+    while (*line != '\0') {
+        const char *eol = strchr(line, '\n');
+        const size_t line_n = eol != nullptr ? (size_t)(eol - line) : strlen(line);
+        if (strncmp(line, prefix, (size_t)pn) == 0) {
+            const char  *desc   = line + pn;
+            const size_t desc_n = line_n - (size_t)pn;
+            const size_t budget =
+                budget_bytes > 0u ? budget_bytes : SPG_MEM_DESC_MAX;
+            if (desc_n == 0u || desc_n > budget || desc_n + 1u > dst_cap) {
+                return 0u; /* one slot, description-only, budget-capped */
+            }
+            memcpy(dst, desc, desc_n);
+            dst[desc_n] = '\0';
+            return desc_n;
+        }
+        if (eol == nullptr) {
+            break;
+        }
+        line = eol + 1u;
+    }
+    return 0u;
+}

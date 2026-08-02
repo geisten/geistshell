@@ -1,5 +1,7 @@
 #include "geistshell/agent_loop.h"
 
+#include "geistshell/mem_store.h" /* P6: slug-triggered directive injection */
+
 #include <stdio.h>
 
 static void add_u64(uint64_t *acc, const uint64_t v) {
@@ -146,12 +148,25 @@ enum spg_status spg_agent_loop_run(
             if (result->repairs_used < config->max_repairs &&
                 workspace->observation_buf != nullptr &&
                 workspace->observation_capacity > 0u) {
+                /* Slug-triggered auto-injection (P6): if a stored lesson names
+                 * this failure slug, lead the repair observation with its
+                 * earned directive — no memory_read needed, one slot, budgeted.
+                 * The generic hint always follows so a repair works even when
+                 * no lesson exists yet. */
+                char   directive[SPG_MEM_DESC_MAX + 1u];
+                size_t dn =
+                    state->store != nullptr
+                        ? spg_mem_directive(state->store, "lesson-rejected",
+                                            config->lesson_budget_bytes,
+                                            sizeof directive, directive)
+                        : 0u;
                 (void)snprintf(
                     workspace->observation_buf,
                     workspace->observation_capacity,
-                    "[invalid recommendation: %s] Reply with exactly one valid "
-                    "(recommend ...) form, or (recommend (kind finish) "
+                    "%s%s[invalid recommendation: %s] Reply with exactly one "
+                    "valid (recommend ...) form, or (recommend (kind finish) "
                     "(reason \"...\")).",
+                    dn > 0u ? directive : "", dn > 0u ? " " : "",
                     spg_recommendation_reject_reason_to_string(
                         step_result.recommendation.reject_reason));
                 result->repairs_used += 1u;
