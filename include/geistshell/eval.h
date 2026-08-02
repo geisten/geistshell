@@ -95,6 +95,20 @@ spg_eval_run_case(const struct spg_fake_response *script, size_t script_n,
     struct spg_fake_response responses[], size_t text_cap, char text_buf[],
     size_t *count);
 
+/* Canonical task-shape key from a reconstructed script (docs/LEARNING.md P4):
+ * the SET of "<action_kind>:<capability>" tokens the run's recommendations use
+ * (a finish action has no capability, so just "<action_kind>"), deduplicated,
+ * sorted, joined with '+'. command/target specifics are ignored, so two runs
+ * that touch the same capabilities share a shape — the key the positive-guard
+ * ring dedups on and the token spg_reflect_outcome keys its slug by.
+ *
+ * Writes a NUL-terminated key into out[0..cap); *len receives its length.
+ * Unparseable responses are skipped (a shape is best-effort, not a gate).
+ * Returns SPG_E_INVALID_ARG on null args, SPG_E_LIMIT if the key exceeds cap. */
+[[nodiscard]] enum spg_status spg_shape_from_script(
+    const struct spg_fake_response responses[], size_t n, size_t cap,
+    char out[], size_t *len);
+
 #ifdef __cplusplus
 }
 #endif

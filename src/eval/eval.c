@@ -1,7 +1,11 @@
 #include "geistshell/eval.h"
 
 #include "geistshell/journal.h"
+#include "geistshell/policy.h"
+#include "geistshell/recommendation.h"
+#include "geistshell/sexpr.h"
 
+#include <stdio.h>
 #include <string.h>
 
 const char *spg_eval_outcome_to_string(const enum spg_eval_outcome o) {
@@ -151,4 +155,82 @@ enum spg_status spg_eval_script_from_journal(
         *count = n;
     }
     return result;
+}
+
+enum { SPG_SHAPE_MAX_TOKENS = 16u, SPG_SHAPE_TOKEN_MAX = 48u };
+
+enum spg_status spg_shape_from_script(const struct spg_fake_response responses[],
+                                      const size_t n, const size_t cap,
+                                      char out[], size_t *len) {
+    if (responses == nullptr || out == nullptr || len == nullptr || cap == 0u) {
+        return SPG_E_INVALID_ARG;
+    }
+    *len   = 0u;
+    out[0] = '\0';
+
+    /* Distinct "<kind>:<capability>" tokens, inserted in sorted order (small
+     * fixed set — the codebase does no dynamic allocation). */
+    char   tokens[SPG_SHAPE_MAX_TOKENS][SPG_SHAPE_TOKEN_MAX + 1u];
+    size_t token_count = 0u;
+
+    for (size_t i = 0u; i < n; i++) {
+        struct spg_sexpr_token toks[256];
+        struct spg_sexpr_node  nodes[256];
+        struct spg_recommendation rec = {};
+        struct spg_recommendation_error err = {};
+        if (spg_recommendation_parse(responses[i].n, responses[i].text, 256u,
+                                     toks, 256u, nodes, &rec, &err) != SPG_OK) {
+            continue; /* best-effort: an unparseable reply adds no shape */
+        }
+        char token[SPG_SHAPE_TOKEN_MAX + 1u];
+        const char *kind = spg_action_kind_to_string(rec.action_kind);
+        if (rec.capability.length > 0u) {
+            (void)snprintf(token, sizeof token, "%s:%.*s", kind,
+                           (int)rec.capability.length,
+                           responses[i].text + rec.capability.offset);
+        } else {
+            (void)snprintf(token, sizeof token, "%s", kind);
+        }
+
+        /* insert into the sorted set, skipping duplicates */
+        size_t pos = 0u;
+        bool   dup = false;
+        while (pos < token_count) {
+            const int cmp = strcmp(tokens[pos], token);
+            if (cmp == 0) {
+                dup = true;
+                break;
+            }
+            if (cmp > 0) {
+                break;
+            }
+            pos++;
+        }
+        if (dup || token_count == SPG_SHAPE_MAX_TOKENS) {
+            continue;
+        }
+        for (size_t j = token_count; j > pos; j--) {
+            memcpy(tokens[j], tokens[j - 1u], sizeof tokens[0]);
+        }
+        (void)snprintf(tokens[pos], sizeof tokens[0], "%s", token);
+        token_count++;
+    }
+
+    size_t w = 0u;
+    for (size_t i = 0u; i < token_count; i++) {
+        const size_t tn = strlen(tokens[i]);
+        const size_t sep = (i > 0u) ? 1u : 0u;
+        if (w + sep + tn + 1u > cap) {
+            out[w] = '\0';
+            return SPG_E_LIMIT;
+        }
+        if (sep) {
+            out[w++] = '+';
+        }
+        memcpy(out + w, tokens[i], tn);
+        w += tn;
+    }
+    out[w] = '\0';
+    *len   = w;
+    return SPG_OK;
 }
