@@ -1777,6 +1777,7 @@ static int agent_command(int argc, char **argv) {
     size_t      max_steps      = 8u;
     size_t      max_repairs    = 2u;
     bool        allow_exec     = false;
+    bool        constrained    = false;
     for (int i = 2; i < argc; i += 1) {
         if ((strcmp(argv[i], "--config") == 0 ||
              strcmp(argv[i], "--run") == 0) &&
@@ -1820,6 +1821,12 @@ static int agent_command(int argc, char **argv) {
         }
         if (strcmp(argv[i], "--allow-exec") == 0) {
             allow_exec = true;
+            continue;
+        }
+        if (strcmp(argv[i], "--constrained") == 0) {
+            /* #34: force the real model's output to begin with the
+             * recommendation opening, then decode freely. */
+            constrained = true;
             continue;
         }
         fprintf(stderr, "agent: unknown or incomplete argument: %s\n", argv[i]);
@@ -1940,12 +1947,13 @@ static int agent_command(int argc, char **argv) {
                   .fake_responses      = script,
               }
             : (struct spg_model_adapter_config){
-                  .kind       = SPG_MODEL_ADAPTER_GEIST,
-                  .model_path = model_path,
-                  .sampling   = {.max_seq_len  = 4096u,
-                                 .temperature = 0.0f,
-                                 .top_p       = 1.0f,
-                                 .random_seed = run.seed},
+                  .kind         = SPG_MODEL_ADAPTER_GEIST,
+                  .model_path   = model_path,
+                  .force_prefix = constrained ? "(recommend (kind " : nullptr,
+                  .sampling     = {.max_seq_len  = 4096u,
+                                   .temperature = 0.0f,
+                                   .top_p       = 1.0f,
+                                   .random_seed = run.seed},
               };
     status = spg_model_adapter_init(&model, &model_config);
     if (status != SPG_OK) {

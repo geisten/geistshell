@@ -89,6 +89,31 @@ is the honest place to build "learns from use."
   success`) verifying world state, for tasks that produce files rather than
   stdout.
 
+## Constrained decoding, forced-prefix first cut (geistshell#34, 2026-08-02)
+
+The exemplar finding pointed to grammar-constrained decoding as the real
+unblock. First cut: force the GEIST model's output to BEGIN with a fixed
+literal (`(recommend (kind `), then decode freely — using the engine hooks
+the #34 pre-clarification found (`geist_session_tokenize` +
+`geist_session_prefill_tokens`, v0.2.1 `geist_util.h`, no engine fork).
+
+Measured on the Pi against Gemma 4 E2B, the reject reason MOVED:
+
+- free decode / exemplars only: `REJECT_SYNTAX` — not even a parseable form.
+- **forced prefix (`--constrained`): `REJECT_UNKNOWN_KIND`** — the output now
+  parses as a recommendation up to the kind field; Gemma only picks an invalid
+  kind name after the forced `(recommend (kind `.
+
+That is real, measured forward progress: forcing the opening carries the model
+past the structure it could not start, and pinpoints the exact next
+constraint. The immediate follow-up is to constrain the KIND token to the enum
+(peek_logits + a mask over the valid kind names) — the first piece of the full
+token-level grammar acceptor (geistagent `agent.h` as reference). A fully valid
+form is expected once the kind is constrained too.
+
+Dev-env note: the Mac's deps/geist pointed at a newer checkout lacking
+geist_util.h; switched to the pinned v0.2.1 via `make sync-engine`.
+
 ## Real-model completion: exemplars are necessary but not sufficient (2026-08-02)
 
 Path B added an `(examples ...)` context slot so a small model gets concrete

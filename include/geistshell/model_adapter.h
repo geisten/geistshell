@@ -69,6 +69,14 @@ struct spg_model_adapter_config {
      * emits an invalid form (the loop rejects it); once present, the script
      * runs. Null disables gating. */
     const char *fake_gate_marker;
+
+    /* Constrained decoding (geistshell#34, first cut): a literal the GEIST
+     * model's output is FORCED to begin with, then it decodes freely. Forcing
+     * the recommendation opening (e.g. "(recommend (kind ") past the hardest
+     * part lifts a small model over the structure it cannot reliably produce
+     * from a grammar description alone. Null = free decode (default). GEIST
+     * only; ignored by fake/remote. */
+    const char *force_prefix;
 };
 
 struct spg_model_adapter {
@@ -86,6 +94,7 @@ struct spg_model_adapter {
     const struct spg_fake_response *fake_responses;
     size_t                          fake_index; /* next scripted reply */
     const char                     *fake_gate_marker;
+    const char                     *force_prefix; /* constrained decode (#34) */
 
     /* REMOTE transport state: opaque CURL handle, borrowed config strings, and
      * the sampling values forwarded to the chat/completions request. */

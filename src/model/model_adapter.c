@@ -1,6 +1,7 @@
 #include "geistshell/model_adapter.h"
 
 #include <geist.h>
+#include <geist_util.h> /* #34: tokenize + prefill_tokens for forced-prefix decode */
 
 #include <math.h>
 #include <string.h>
@@ -148,6 +149,41 @@ static enum spg_status generate_geist(
         return map_geist_status(status);
     }
 
+    /* Constrained decode (#34): force the output to begin with a fixed literal
+     * (the recommendation opening), then decode freely. Tokenize the prefix,
+     * feed it into the KV as if the model had produced it, and append its text
+     * to the output — the model then continues past the structure it cannot
+     * reliably start on its own. */
+    if (adapter->force_prefix != nullptr && adapter->force_prefix[0] != '\0') {
+        geist_token_t prefix_ids[256];
+        size_t        prefix_n = 0u;
+        status                 = geist_session_tokenize(
+            adapter->session, adapter->force_prefix,
+            sizeof prefix_ids / sizeof prefix_ids[0], prefix_ids, &prefix_n);
+        if (status != GEIST_OK) {
+            return map_geist_status(status);
+        }
+        for (size_t i = 0u; i < prefix_n; i += 1u) {
+            const char *piece =
+                geist_session_token_to_str(adapter->session, prefix_ids[i]);
+            if (piece != nullptr && piece[0] != '\0') {
+                const enum spg_status as =
+                    append_bytes(result, strlen(piece), piece);
+                if (as != SPG_OK) {
+                    return as;
+                }
+            }
+        }
+        if (prefix_n > 0u) {
+            status =
+                geist_session_prefill_tokens(adapter->session, prefix_n, prefix_ids);
+            if (status != GEIST_OK) {
+                return map_geist_status(status);
+            }
+            result->tokens_decoded += prefix_n;
+        }
+    }
+
     for (size_t i = 0u; i < request->max_decode_tokens; i += 1u) {
         geist_token_t token = 0;
         status = geist_session_decode_step(adapter->session, &token);
@@ -181,7 +217,8 @@ spg_model_adapter_init(struct spg_model_adapter *adapter,
         return SPG_E_INVALID_ARG;
     }
     *adapter = (struct spg_model_adapter){
-        .kind = config->kind,
+        .kind         = config->kind,
+        .force_prefix = config->force_prefix, /* #34: GEIST-only, borrowed */
     };
 
     if (config->kind == SPG_MODEL_ADAPTER_FAKE) {
