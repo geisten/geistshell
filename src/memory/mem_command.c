@@ -75,6 +75,23 @@ int spg_memory_command(const int argc, char **argv) {
         return 0;
     }
 
+    if (strcmp(verb, "directive") == 0) {
+        /* The one-line P6 injection for a slug (docs/LEARNING.md): what the
+         * small-model auto-injection actually costs, vs the full `list` index. */
+        if (np < 2u) {
+            usage();
+            return 2;
+        }
+        char         line[SPG_MEM_DESC_MAX + 1u];
+        const size_t n =
+            spg_mem_directive(&store, pos[1], 0u, sizeof line, line);
+        if (n == 0u) {
+            return 1;
+        }
+        puts(line);
+        return 0;
+    }
+
     if (strcmp(verb, "save") == 0) {
         if (np < 3u) {
             usage();
