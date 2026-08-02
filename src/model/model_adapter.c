@@ -133,6 +133,61 @@ static enum spg_status generate_fake(struct spg_model_adapter *adapter,
     return append_bytes(result, n, resp);
 }
 
+/* Emit a scaffold literal (#34): append its exact bytes to the output and feed
+ * its tokens into the KV so the model's next prediction is grounded on it. */
+static enum spg_status emit_literal(struct spg_model_adapter *adapter,
+                                    struct spg_model_generate_result *result,
+                                    const char *text) {
+    geist_token_t     ids[256];
+    size_t            n      = 0u;
+    enum geist_status status = geist_session_tokenize(
+        adapter->session, text, sizeof ids / sizeof ids[0], ids, &n);
+    if (status != GEIST_OK) {
+        return map_geist_status(status);
+    }
+    const enum spg_status as = append_bytes(result, strlen(text), text);
+    if (as != SPG_OK) {
+        return as;
+    }
+    if (n > 0u) {
+        status = geist_session_prefill_tokens(adapter->session, n, ids);
+        if (status != GEIST_OK) {
+            return map_geist_status(status);
+        }
+        result->tokens_decoded += n;
+    }
+    return SPG_OK;
+}
+
+/* Free-decode one scaffold string value (#34): the model fills the slot, but we
+ * stop at the first character that would close or corrupt the string — the
+ * closing quote, a newline, or a paren — so the surrounding scaffold literal
+ * supplies the delimiter. Bounded so a runaway slot cannot eat the budget. */
+static enum spg_status decode_string_slot(struct spg_model_adapter *adapter,
+                                          struct spg_model_generate_result *result) {
+    for (size_t j = 0u; j < 64u; j += 1u) {
+        geist_token_t     token  = 0;
+        enum geist_status status = geist_session_decode_step(adapter->session, &token);
+        if (status != GEIST_OK) {
+            return map_geist_status(status);
+        }
+        result->tokens_decoded += 1u;
+        const char *piece = geist_session_token_to_str(adapter->session, token);
+        if (piece == nullptr || piece[0] == '\0') {
+            return SPG_OK; /* eos ends the slot */
+        }
+        const size_t stop = strcspn(piece, "\"\n\r()");
+        if (piece[stop] != '\0') {
+            return append_bytes(result, stop, piece); /* delimiter reached */
+        }
+        const enum spg_status as = append_bytes(result, strlen(piece), piece);
+        if (as != SPG_OK) {
+            return as;
+        }
+    }
+    return SPG_OK; /* length cap */
+}
+
 static enum spg_status generate_geist(
     struct spg_model_adapter *adapter,
     const struct spg_model_generate_request *request,
@@ -151,47 +206,23 @@ static enum spg_status generate_geist(
         return map_geist_status(status);
     }
 
-    /* Constrained decode (#34): force the output to begin with a fixed literal
-     * (the recommendation opening), then decode freely. Tokenize the prefix,
-     * feed it into the KV as if the model had produced it, and append its text
-     * to the output — the model then continues past the structure it cannot
-     * reliably start on its own. */
-    if (adapter->force_prefix != nullptr && adapter->force_prefix[0] != '\0') {
-        geist_token_t prefix_ids[256];
-        size_t        prefix_n = 0u;
-        status                 = geist_session_tokenize(
-            adapter->session, adapter->force_prefix,
-            sizeof prefix_ids / sizeof prefix_ids[0], prefix_ids, &prefix_n);
-        if (status != GEIST_OK) {
-            return map_geist_status(status);
-        }
-        for (size_t i = 0u; i < prefix_n; i += 1u) {
-            const char *piece =
-                geist_session_token_to_str(adapter->session, prefix_ids[i]);
-            if (piece != nullptr && piece[0] != '\0') {
-                const enum spg_status as =
-                    append_bytes(result, strlen(piece), piece);
-                if (as != SPG_OK) {
-                    return as;
-                }
-            }
-        }
-        if (prefix_n > 0u) {
-            status =
-                geist_session_prefill_tokens(adapter->session, prefix_n, prefix_ids);
-            if (status != GEIST_OK) {
-                return map_geist_status(status);
-            }
-            result->tokens_decoded += prefix_n;
+    /* Constrained structural decode (#34): build a valid (recommend ...) form
+     * by construction. (1) force the fixed opening the model cannot reliably
+     * start; (2) mask the kind slot to a valid enum name; (3) emit the field
+     * scaffold for that kind, letting the model free-decode only the leaf
+     * string values. The free decode loop below is skipped entirely. */
+    const bool constrained =
+        adapter->force_prefix != nullptr && adapter->force_prefix[0] != '\0';
+    if (constrained) {
+        /* 1. forced opening "(recommend (kind " */
+        const enum spg_status prefix_as =
+            emit_literal(adapter, result, adapter->force_prefix);
+        if (prefix_as != SPG_OK) {
+            return prefix_as;
         }
 
-        /* Kind-slot mask (#34 stage 1): the forced prefix ends at "(kind ", so
-         * the next tokens name the action kind. Constrain them to a valid enum
-         * name by masking peek_logits to tokens that keep the emitted text a
-         * live prefix, greedily, until a complete kind name is reached. This
-         * flips the free-decode REJECT_UNKNOWN_KIND to a valid kind; the field
-         * scaffold (stage 2) will take over from here. Bails to free decode if
-         * the tokenizer offers no valid continuation. */
+        /* 2. kind-slot mask: greedily keep only tokens that leave the emitted
+         * text a live prefix of a valid kind name, until one is complete. */
         char   kindbuf[64];
         size_t kind_used = 0u;
         kindbuf[0]       = '\0';
@@ -238,6 +269,25 @@ static enum spg_status generate_geist(
             }
             result->tokens_decoded += 1u;
         }
+
+        /* 3. field scaffold: emit the deterministic structure for the chosen
+         * kind, free-decoding only the leaf string slots. If the kind never
+         * resolved the partial output is left for the repair loop. */
+        enum spg_action_kind kind;
+        if (spg_kind_from_text(kindbuf, &kind)) {
+            const struct spg_scaffold_seg *segs = nullptr;
+            const size_t nseg = spg_scaffold_for_kind(kind, &segs);
+            for (size_t s = 0u; s < nseg; s += 1u) {
+                const enum spg_status ss =
+                    segs[s].literal != nullptr
+                        ? emit_literal(adapter, result, segs[s].literal)
+                        : decode_string_slot(adapter, result);
+                if (ss != SPG_OK) {
+                    return ss;
+                }
+            }
+        }
+        return SPG_OK;
     }
 
     for (size_t i = 0u; i < request->max_decode_tokens; i += 1u) {
