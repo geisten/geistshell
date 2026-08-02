@@ -185,6 +185,41 @@ where control (free decode, scores ~0) vs constrained can be compared for
 success rate and gain-per-token. That is the payoff the whole decoder was built
 to unblock, and it is now unblocked.
 
+## LIFT measured (stage 3, geistshell#34/#25, Pi against Gemma 4 E2B)
+
+geistshell has no free-text goal — the task IS the security scenario, and the
+model recommends risk-reducing actions. `eval/bench_lift.sh` runs four scenario
+variants (rising vulnerability severity) twice each: free decode vs
+`--constrained`, real model, ~18 min on the Pi.
+
+| task | free valid | constr valid | free acted | constr acted | free done | constr done |
+|---|---|---|---|---|---|---|
+| sev=4000 | 0 | 1 | 0 | 1 | 0 | 0 |
+| sev=6000 | 0 | 1 | 0 | 1 | 0 | 0 |
+| sev=8000 | 0 | 1 | 0 | 1 | 0 | 0 |
+| sev=9500 | 0 | 1 | 0 | 1 | 0 | 0 |
+| **total** | **0/4** | **4/4** | **0/4** | **4/4** | **0/4** | **0/4** |
+
+- **valid** — a valid, policy-allowed recommendation (`(policy_decision (decision
+  allow ...)` in the journal).
+- **acted** — an action actually executed and moved the world (a `(sim_result
+  ...)` in the journal): the honest task-success signal.
+- **done** — `verdict=pass`.
+
+The LIFT is unambiguous: free decode **0/4**, constrained **4/4** on both valid
+emission and real execution. Constrained decoding is what turns a 2B model that
+cannot emit the DSL at all into one that reliably proposes valid, grantable,
+executing actions — the #25 numerator, measured.
+
+`done` (verdict=pass) is **0/4 in both arms**, and honestly so: the CLI's expect
+judge requires `termination=FINISHED` (main.c), i.e. the model must emit `(kind
+finish)`. Greedy Gemma keeps choosing simulator until the step cap, so it acts
+but never declares completion. Emitting a valid action and choosing to STOP are
+separate behaviours; the decoder fixed the first, not the second. Closing that
+gap (e.g. a finish nudge once risk is under threshold, or a terminating corpus)
+is follow-on behaviour work, not a decoder gap — the constrained decoder's job,
+lifting DSL emission and execution from 0 to 100%, is done and measured.
+
 Dev-env note: the Mac's deps/geist pointed at a newer checkout lacking
 geist_util.h; switched to the pinned v0.2.1 via `make sync-engine`.
 
