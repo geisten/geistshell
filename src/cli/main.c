@@ -1819,11 +1819,13 @@ static int agent_command(int argc, char **argv) {
         fprintf(stderr, "agent: unknown or incomplete argument: %s\n", argv[i]);
         return 2;
     }
-    if (run_path == nullptr || script_path == nullptr) {
+    if (run_path == nullptr) {
         fprintf(stderr,
-                "usage: %s agent --config <run> --fake-script <file> "
+                "usage: %s agent --config <run> [--fake-script <file>] "
                 "[--max-steps N] [--max-repairs N] [--allow-exec] "
-                "[--memory-dir <d>]\n",
+                "[--memory-dir <d>]\n"
+                "  without --fake-script the real model at the config's "
+                "(model ...) path is run and journaled\n",
                 argv[0]);
         return 2;
     }
@@ -1883,19 +1885,21 @@ static int agent_command(int argc, char **argv) {
         goto done;
     }
 
-    status = read_file(script_path, &script_text);
-    if (status != SPG_OK) {
-        fprintf(stderr, "agent: read script failed: %s\n",
-                spg_status_to_string(status));
-        goto done;
-    }
     static struct spg_fake_response script[AGENT_MAX_SCRIPT];
-    const size_t                    script_n =
-        split_script_lines(script_text.data, script_text.n, script,
-                           AGENT_MAX_SCRIPT);
-    if (script_n == 0u) {
-        fprintf(stderr, "agent: empty --fake-script\n");
-        goto done;
+    size_t                          script_n = 0u;
+    if (script_path != nullptr) {
+        status = read_file(script_path, &script_text);
+        if (status != SPG_OK) {
+            fprintf(stderr, "agent: read script failed: %s\n",
+                    spg_status_to_string(status));
+            goto done;
+        }
+        script_n = split_script_lines(script_text.data, script_text.n, script,
+                                      AGENT_MAX_SCRIPT);
+        if (script_n == 0u) {
+            fprintf(stderr, "agent: empty --fake-script\n");
+            goto done;
+        }
     }
 
     status = spg_journal_writer_open(&journal, journal_path);
@@ -1906,12 +1910,25 @@ static int agent_command(int argc, char **argv) {
     }
     journal_open = true;
 
-    const struct spg_model_adapter_config model_config = {
-        .kind                = SPG_MODEL_ADAPTER_FAKE,
-        .sampling            = {.top_p = 1.0f},
-        .fake_response_count = script_n,
-        .fake_responses      = script,
-    };
+    /* --fake-script -> the scripted fake; otherwise the real model at the
+     * config's (model ...) path, run and JOURNALED — the production path P6
+     * (directive injection) and P7 (recurrence audit) read. */
+    const struct spg_model_adapter_config model_config =
+        script_path != nullptr
+            ? (struct spg_model_adapter_config){
+                  .kind                = SPG_MODEL_ADAPTER_FAKE,
+                  .sampling            = {.top_p = 1.0f},
+                  .fake_response_count = script_n,
+                  .fake_responses      = script,
+              }
+            : (struct spg_model_adapter_config){
+                  .kind       = SPG_MODEL_ADAPTER_GEIST,
+                  .model_path = model_path,
+                  .sampling   = {.max_seq_len  = 4096u,
+                                 .temperature = 0.0f,
+                                 .top_p       = 1.0f,
+                                 .random_seed = run.seed},
+              };
     status = spg_model_adapter_init(&model, &model_config);
     if (status != SPG_OK) {
         fprintf(stderr, "agent: model init failed: %s\n",
