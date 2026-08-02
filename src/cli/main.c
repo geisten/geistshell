@@ -4,6 +4,7 @@
 #include "geistshell/agent_run.h"
 #include "geistshell/eval.h"
 #include "geistshell/exec_command.h"
+#include "geistshell/guard_ring.h"
 #include "geistshell/improve.h"
 #include "geistshell/mem_command.h"
 #include "geistshell/mem_store.h"
@@ -16,6 +17,7 @@
 #include <stdint.h>
 #include <stdlib.h>
 #include <string.h>
+#include <unistd.h> /* mkstemp/write/close/unlink: the guard-gate temp suite */
 
 #define CLI_TOKEN_CAPACITY 1024u
 #define CLI_NODE_CAPACITY 1024u
@@ -2553,6 +2555,90 @@ static int eval_command(int argc, char **argv) {
     return (report.total > 0u && report.passed == report.total) ? 0 : 1;
 }
 
+/* ---- P5 (Weg 2): live guard re-run gate --------------------------------- *
+ * A guard is a real run config that finished and passed its (expect). At mint
+ * time it is re-run live so the real model reacts to the candidate lesson in
+ * the mind-palace; a guard that passed without the lesson and fails with it
+ * vetoes it. The guard is run by synthesising a one-case suite over its config
+ * and reusing eval_run_suite — no new model orchestration. Without a real
+ * model the run fails at baseline, which spg_guard_survives treats as no
+ * signal, so guards degrade to inert rather than veto spuriously. */
+struct guard_ctx {
+    struct spg_mem_store       *store;
+    const struct eval_run_opts *opts;
+    const struct spg_lesson    *lesson;
+};
+
+/* Escape a string into an s-expr double-quoted literal at *w (bounded). */
+static void sexpr_escape(char *dst, size_t cap, size_t *w, const char *s) {
+    for (const char *p = s; *p != '\0' && *w + 2u < cap; p++) {
+        if (*p == '"' || *p == '\\') {
+            dst[(*w)++] = '\\';
+        }
+        dst[(*w)++] = *p;
+    }
+}
+
+static bool guard_run(void *vctx, const char *config_path, bool with_lesson) {
+    struct guard_ctx *ctx = (struct guard_ctx *)vctx;
+
+    /* toggle the candidate lesson so the real model sees it (trial) or not
+     * (baseline); cheap file ops, isolating the lesson's effect on the guard */
+    if (with_lesson) {
+        (void)spg_mem_save(ctx->store, ctx->lesson->slug,
+                           ctx->lesson->description, ctx->lesson->body);
+    } else {
+        (void)spg_mem_delete(ctx->store, ctx->lesson->slug);
+    }
+
+    /* the guard's own (expect) criterion (P1) is what judges it */
+    struct file_buffer    cfg_text = {};
+    struct spg_run_config cfg      = {};
+    if (load_run_file(config_path, &cfg_text, &cfg) != SPG_OK || !cfg.has_expect) {
+        free_file_buffer(&cfg_text);
+        return false; /* no criterion -> cannot judge -> no signal (baseline fail) */
+    }
+    char   expect[AGENT_OBS_BYTES];
+    size_t en = cfg.expect_observation.length < sizeof expect
+                    ? cfg.expect_observation.length
+                    : sizeof expect - 1u;
+    memcpy(expect, cfg_text.data + cfg.expect_observation.offset, en);
+    expect[en] = '\0';
+    free_file_buffer(&cfg_text);
+
+    /* synthesise a one-case suite over the guard config; (model "geist") uses
+     * the real model from that config, with the mind-palace injected */
+    char   suite[1024];
+    size_t w = (size_t)snprintf(suite, sizeof suite,
+                                "(eval_suite (config \"");
+    sexpr_escape(suite, sizeof suite, &w, config_path);
+    w += (size_t)snprintf(suite + w, sizeof suite - w,
+                          "\") (case (name \"guard\") (model \"geist\") "
+                          "(allow_exec) (max_steps 8) (expect (observation \"");
+    sexpr_escape(suite, sizeof suite, &w, expect);
+    w += (size_t)snprintf(suite + w, sizeof suite - w, "\")))) ");
+    if (w >= sizeof suite) {
+        return false;
+    }
+
+    char tmpl[] = "/tmp/spg_guard_XXXXXX";
+    int  fd     = mkstemp(tmpl);
+    if (fd < 0) {
+        return false;
+    }
+    const bool wrote = write(fd, suite, w) == (ssize_t)w;
+    (void)close(fd);
+    bool passed = false;
+    if (wrote) {
+        struct eval_run_report report = {};
+        if (eval_run_suite(tmpl, ctx->store, ctx->opts, &report) == SPG_OK) {
+            passed = report.total > 0u && report.passed == report.total;
+        }
+    }
+    (void)unlink(tmpl);
+    return passed;
+}
+
 /* Self-improvement: run the suite, distill a lesson for each failing case,
  * persist each tentatively into the mind-palace, re-run, and keep it only if
  * the pass count did not drop (else revert). Emits a JSONL report. */
@@ -2563,6 +2649,8 @@ static int improve_command(int argc, char **argv) {
     const char *remote_model  = nullptr;
     const char *validate_path = nullptr;
     size_t      samples       = 1u;
+    struct spg_guard_ring guards;
+    spg_guard_ring_init(&guards);
     for (int i = 2; i < argc; i += 1) {
         if (strcmp(argv[i], "--memory-dir") == 0 && i + 1 < argc) {
             memory_dir = argv[++i];
@@ -2587,6 +2675,13 @@ static int improve_command(int argc, char **argv) {
             }
             continue;
         }
+        if (strcmp(argv[i], "--guard") == 0 && i + 1 < argc) {
+            /* a real run config re-run live to gate lessons (P5, Weg 2);
+             * repeatable, deduped by shape=path in the ring */
+            spg_guard_ring_record(&guards, argv[i + 1], argv[i + 1]);
+            i += 1;
+            continue;
+        }
         if (suite_path == nullptr && argv[i][0] != '-') {
             suite_path = argv[i];
             continue;
@@ -2597,6 +2692,7 @@ static int improve_command(int argc, char **argv) {
     if (suite_path == nullptr) {
         fprintf(stderr,
                 "usage: %s improve <suite.spg> [--validate <holdout.spg>] "
+                "[--guard <run.spg>]... "
                 "[--memory-dir <d>] [--remote-url <url>] [--remote-model <name>] "
                 "[--samples <N>]\n",
                 argv[0]);
@@ -2669,7 +2765,25 @@ static int improve_command(int argc, char **argv) {
             fprintf(stderr, "improve: trial run failed\n");
             return 1;
         }
-        const bool accepted = spg_improve_accept(cur_passed, trial.passed);
+        /* Suite gate first; then, if it would keep, the live guard gate
+         * (P5, Weg 2): re-run every guard with vs without the lesson and veto
+         * if any that passed now regresses. A guard vetoes only a lesson the
+         * suite already accepts, so it can only make the gate stricter. */
+        bool accepted = spg_improve_accept(cur_passed, trial.passed);
+        bool guard_vetoed = false;
+        if (accepted) {
+            struct guard_ctx gctx = {
+                .store = &store, .opts = &opts, .lesson = lesson};
+            if (!spg_guard_ring_gate(&guards, guard_run, &gctx)) {
+                accepted     = false;
+                guard_vetoed = true;
+            }
+            /* the gate's guard runs toggled the lesson; leave it saved so the
+             * commit below decides keep/revert from a known state */
+            (void)spg_mem_save(&store, lesson->slug, lesson->description,
+                               lesson->body);
+        }
+        (void)guard_vetoed;
         bool       was_kept = false;
         (void)spg_improve_commit(&store, lesson, accepted, &was_kept);
         if (validate_path != nullptr) {
