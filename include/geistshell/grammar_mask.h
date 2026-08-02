@@ -34,6 +34,24 @@ extern "C" {
 [[nodiscard]] bool spg_kind_from_text(const char *emitted,
                                       enum spg_action_kind *out);
 
+/* Fill `out` (capacity `cap`, need >= 7) with the valid kind names and return
+ * the count, so the caller can drive the kind slot through the general choice
+ * mask below. */
+size_t spg_kind_names(const char **out, size_t cap);
+
+/* General choice mask (kind is the special case above). Would `emitted` + `piece`
+ * still be a live prefix of at least one of the `n` candidate names, without
+ * overshooting? Leading whitespace in the comparison is ignored, so a
+ * detokenized " sim.act" matches "sim.act". Used to constrain a value slot
+ * (e.g. capability) to a fixed vocabulary. */
+[[nodiscard]] bool spg_choice_prefix_ok(const char *const *names, size_t n,
+                                        const char *emitted, const char *piece);
+
+/* Is `emitted` exactly one of the `n` candidate names? Assumes no candidate is a
+ * prefix of another (true for policy capability names). */
+[[nodiscard]] bool spg_choice_complete(const char *const *names, size_t n,
+                                       const char *emitted);
+
 /* Field scaffold (geistshell#34 stage 2). Once the kind is fixed, the rest of a
  * valid (recommend ...) form is deterministic structure with a few free leaf
  * values. A scaffold is that structure as an ordered segment list: a LITERAL
@@ -43,8 +61,15 @@ extern "C" {
  * schema-valid form by construction. The bureaucratic fields (cost,
  * uses_network, confidence_bp) are baked into the literals with sane defaults —
  * they are deterministic per kind, not a decision the small model must make. */
+enum spg_scaffold_seg_kind {
+    SPG_SCAFFOLD_LITERAL = 0, /* emit `literal` verbatim */
+    SPG_SCAFFOLD_STRING,      /* one free-decoded string value */
+    SPG_SCAFFOLD_CAPABILITY,  /* one string value masked to the policy caps */
+};
+
 struct spg_scaffold_seg {
-    const char *literal; /* verbatim text, or nullptr for a free string slot */
+    enum spg_scaffold_seg_kind kind;
+    const char *literal; /* set for SPG_SCAFFOLD_LITERAL, else nullptr */
 };
 
 /* The scaffold for `kind`, to emit right after the kind name (the caller has

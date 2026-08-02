@@ -155,12 +155,35 @@ denied capability `"read"` (the policy allows `sim.act` / `build.run`). That is
 acceptance criterion #1 met — a valid, schema-matching form where free decoding
 gave SYNTAX.
 
-Remaining for criterion #3 (verdict=pass): the model free-picked a capability
-the policy does not grant. The next piece is a **capability mask** — constrain
-the capability slot to the policy's enabled capabilities for the chosen kind,
-exactly as stage 1 masked the kind. It needs the policy capabilities plumbed
-into the adapter. Then a simple task can actually pass, and the LIFT
-experiments (#25/#26) can run on a model that acts.
+**Stage 2b — capability mask (merged).** The kind mask generalized to a choice
+mask over any candidate list (`spg_choice_*`); the capability slot is now masked
+to the policy's enabled capabilities for the chosen kind (the adapter is handed
+the enabled caps, memory expanded to each `memory_*` kind). Inside a quoted
+string whitespace is literal, so `decode_choice_slot` strips the leading detok
+space — the value is emitted exactly (`"sim.act"`, not `" sim.act"`, which the
+policy would not match).
+
+On the Pi the deny cleared and the action executed end to end:
+
+    (recommend (kind simulator) (capability "sim.act") (cost 1)
+      (uses_network false) (confidence_bp 5000) (reason "Simulate a scenario"))
+    (policy_decision (decision allow) (deny_reason SPG_POLICY_DENY_NONE) ...)
+    (sim_result (action patch_vulnerability) (mutated true)
+      (risk_before 35300) (risk_after 32100))
+
+The policy **allowed** the action and the simulator **ran**, dropping risk — a
+real effect from a model that could not emit the DSL at all before constrained
+decoding. The full chain is resolved: `SYNTAX → UNKNOWN_KIND → MISSING_FIELD →
+valid form → denied → allowed + executed`.
+
+That is the decoder complete: a small model reliably emits a valid,
+policy-grantable, executable recommendation under `--constrained`. `termination`
+was `max_steps` (Gemma kept choosing simulator actions rather than `finish`) —
+a behaviour/corpus matter, not a decode gap. What remains is the **LIFT
+measurement** (#25 numerator, #26 benefit): a corpus with an `expect` criterion
+where control (free decode, scores ~0) vs constrained can be compared for
+success rate and gain-per-token. That is the payoff the whole decoder was built
+to unblock, and it is now unblocked.
 
 Dev-env note: the Mac's deps/geist pointed at a newer checkout lacking
 geist_util.h; switched to the pinned v0.2.1 via `make sync-engine`.
