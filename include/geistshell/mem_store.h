@@ -90,6 +90,17 @@ struct spg_mem_store {
                                             size_t *out_required,
                                             bool   *truncated);
 
+/* The one-line DIRECTIVE (description) of a single memory, for slug-triggered
+ * auto-injection on small models (docs/LEARNING.md P6): when the loop hits a
+ * failure whose slug names a stored lesson, its directive is injected without
+ * the model having to recall it, and the full body is left in the mind-palace
+ * for larger models. budget_bytes caps the injected length (0 = the store's
+ * description cap); an over-budget or missing directive writes nothing.
+ * Writes a NUL-terminated directive into dst[0..dst_cap) and returns its
+ * length, or 0 when the slug has no memory / does not fit / on bad args. */
+size_t spg_mem_directive(struct spg_mem_store *store, const char *slug,
+                         size_t budget_bytes, size_t dst_cap, char dst[]);
+
 /* Enumerate memory slugs (slug-sorted) into slugs[0..*count). Returns
  * SPG_E_LIMIT if there are more than cap (the first cap are written). */
 [[nodiscard]] enum spg_status

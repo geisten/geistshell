@@ -47,6 +47,14 @@ struct spg_agent_loop_config {
      * workspace (observation_buf). */
     size_t max_repairs;
 
+    /* Slug-triggered lesson auto-injection budget (docs/LEARNING.md P6): when a
+     * step is rejected and a stored lesson names that failure slug, its
+     * one-line directive is injected into the repair observation without the
+     * model having to recall it — capped to this many bytes (0 = the store's
+     * description cap; a small model with a short sequence length sets it low).
+     * At most one directive per tick. Requires state->store. */
+    size_t lesson_budget_bytes;
+
     /* Optional trajectory feedback: a caller-owned array the loop binds to the
      * journal writer so every event from earlier steps is rendered into the
      * next step's context (the agent sees its own history, not just the last
