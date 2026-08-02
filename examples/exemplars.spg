@@ -1,0 +1,3 @@
+  (recommend (kind local_shell) (capability "build.run") (cost 1) (uses_network false) (confidence_bp 7000) (reason "run the build") (command "echo done"))
+  (recommend (kind simulator) (capability "sim.act") (cost 1) (uses_network false) (confidence_bp 6500) (reason "probe the state"))
+  (recommend (kind finish) (reason "the goal is met"))
