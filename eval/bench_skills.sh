@@ -12,7 +12,7 @@
 set -eu
 
 SPG=${SPG_BIN:-build/host-debug/bin/geistshell}
-SKILL_SLUG="skill-finish-local-shell-build-run" # the shape of a shell+finish run
+SKILL_SLUG="skill-local-shell-build-run" # the shape of a shell+finish run
 T=$(mktemp -d)
 trap 'rm -rf "$T"' EXIT
 
