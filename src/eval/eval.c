@@ -1,5 +1,7 @@
 #include "geistshell/eval.h"
 
+#include "geistshell/journal.h"
+
 #include <string.h>
 
 const char *spg_eval_outcome_to_string(const enum spg_eval_outcome o) {
@@ -85,4 +87,68 @@ spg_eval_run_case(const struct spg_fake_response *script, const size_t script_n,
     result->outcome =
         spg_eval_judge(expect, &loop, status, workspace->observation);
     return SPG_OK;
+}
+
+enum spg_status spg_eval_script_from_journal(
+    const char *journal_path, const size_t max_responses,
+    struct spg_fake_response responses[], const size_t text_cap,
+    char text_buf[], size_t *count) {
+    if (journal_path == nullptr || responses == nullptr ||
+        text_buf == nullptr || count == nullptr) {
+        return SPG_E_INVALID_ARG;
+    }
+    *count = 0u;
+
+    struct spg_journal_reader reader;
+    enum spg_status status = spg_journal_reader_open(&reader, journal_path);
+    if (status != SPG_OK) {
+        return status;
+    }
+
+    /* A recommendation is small; the scratch only needs to hold one MODEL_OUTPUT
+     * payload. Larger records (the MODEL_INPUT context) overflow it and are
+     * skipped — we do not need them. */
+    char            scratch[8192];
+    size_t          used   = 0u; /* bytes of text_buf consumed */
+    size_t          n      = 0u; /* fake responses collected */
+    enum spg_status result = SPG_OK;
+    for (;;) {
+        struct spg_journal_record record = {};
+        const enum spg_status rs = spg_journal_reader_next(
+            &reader, sizeof scratch, (uint8_t *)scratch, &record);
+        if (rs == SPG_E_NOT_FOUND) {
+            break; /* end of journal */
+        }
+        if (rs == SPG_E_LIMIT) {
+            /* Payload larger than the scratch. A MODEL_OUTPUT that big cannot
+             * be reconstructed; any other kind we skip. */
+            if (record.header.event_kind == SPG_JOURNAL_EVENT_MODEL_OUTPUT) {
+                result = SPG_E_LIMIT;
+                break;
+            }
+            continue;
+        }
+        if (rs != SPG_OK) {
+            result = rs;
+            break;
+        }
+        if (record.header.event_kind != SPG_JOURNAL_EVENT_MODEL_OUTPUT) {
+            continue;
+        }
+        if (n >= max_responses || used + record.payload_used > text_cap) {
+            result = SPG_E_LIMIT;
+            break;
+        }
+        memcpy(text_buf + used, scratch, record.payload_used);
+        responses[n].n    = record.payload_used;
+        responses[n].text = text_buf + used;
+        used += record.payload_used;
+        n += 1u;
+    }
+
+    (void)spg_journal_reader_close(&reader);
+    if (result == SPG_OK) {
+        *count = n;
+    }
+    return result;
 }
