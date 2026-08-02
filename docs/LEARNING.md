@@ -89,6 +89,27 @@ is the honest place to build "learns from use."
   success`) verifying world state, for tasks that produce files rather than
   stdout.
 
+## Hardware verification (2026-08-02, Pi 5 against Gemma 4 E2B)
+
+The model-dependent paths, run live through the whole stack (release build,
+real GGUF, ~1 min/turn):
+
+- **Real-model journaling run** — `agent --config <run>` with no `--fake-script`
+  loads the GGUF and journals; Gemma, untrained for the `(recommend ...)` DSL,
+  emits an invalid form and the loop repairs, exactly the P6 trigger.
+- **P7 verified** — `audit` over the real journal counts the rejection:
+  `{"lesson-rejected":1}`.
+- **P6 verified** — with a kept `lesson-rejected` in the store, the real repair
+  observation LEADS with the earned directive ("Emit exactly one valid
+  recommendation s-expression …") then the generic hint; without the lesson,
+  only the generic hint. Slug-triggered injection into a real context, proven
+  both ways.
+- **P5 veto** — the live guard runner reuses this now-proven real-model path;
+  the gate logic is unit-tested. A live *veto* demonstration needs a task the
+  model can actually complete (so a guard can pass and then be broken by a
+  lesson); the example DSL scenarios are not model-completable by an untrained
+  Gemma, so a contrived breaking task is future work.
+
 ## Not to be confused with geistagent
 
 The sibling [geistagent](https://github.com/geisten/geistagent) runs the same
