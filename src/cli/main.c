@@ -1996,6 +1996,28 @@ static int agent_command(int argc, char **argv) {
     }
     rc = (status == SPG_OK) ? 0 : 1;
 
+    /* Optional success criterion (docs/LEARNING.md P1): judge the real run the
+     * same way the eval loop judges a scripted case — model-free, zero tokens.
+     * The verdict is the ground truth a learning case needs; a FAIL exits
+     * non-zero so a caller (and a future miner) can act on it. */
+    if (run.has_expect && run.expect_observation.length < sizeof observation) {
+        char expect_obs[AGENT_OBS_BYTES];
+        memcpy(expect_obs, run_text.data + run.expect_observation.offset,
+               run.expect_observation.length);
+        expect_obs[run.expect_observation.length] = '\0';
+        const struct spg_eval_expect expect = {
+            .check_termination = true,
+            .termination       = SPG_AGENT_LOOP_FINISHED,
+            .observation       = expect_obs,
+        };
+        const enum spg_eval_outcome verdict =
+            spg_eval_judge(&expect, &loop_result, status, observation);
+        printf("verdict=%s\n", spg_eval_outcome_to_string(verdict));
+        if (verdict != SPG_EVAL_PASS && rc == 0) {
+            rc = 1;
+        }
+    }
+
 done:
     if (journal_open) {
         (void)spg_journal_writer_close(&journal);

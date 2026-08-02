@@ -73,6 +73,47 @@ static int test_valid_run_config(void) {
     return 0;
 }
 
+/* P1 (docs/LEARNING.md): the optional success criterion. Absent is valid and
+ * leaves has_expect false; present parses the substring the finished run's
+ * observation must contain. */
+static int test_expect_absent(void) {
+    struct spg_run_config       config = {};
+    struct spg_run_config_error error  = {};
+    if (load_text(valid_run, &config, &error) != SPG_OK) {
+        return 1;
+    }
+    return config.has_expect ? 1 : 0;
+}
+
+static int test_expect_present(void) {
+    const char *text =
+        "(run"
+        " (model \"models/a.gguf\")"
+        " (policy \"policy/lab.spg\")"
+        " (scenario \"scenarios/lab.spg\")"
+        " (corpus \"corpus/manifest.spg\")"
+        " (journal \"runs/r1/run.sgj\")"
+        " (seed 42)"
+        " (budgets"
+        "  (inference_steps 100)"
+        "  (tokens 4096)"
+        "  (shell_actions 8)"
+        "  (sim_actions 250)"
+        "  (wall_ms 60000)"
+        "  (journal_bytes 1048576)"
+        "  (risk_bp 10000))"
+        " (expect \"report generated\"))";
+    struct spg_run_config       config = {};
+    struct spg_run_config_error error  = {};
+    if (load_text(text, &config, &error) != SPG_OK) {
+        return 1;
+    }
+    if (!config.has_expect) {
+        return 1;
+    }
+    return span_eq(text, config.expect_observation, "report generated") ? 0 : 1;
+}
+
 static int test_missing_required_field(void) {
     const char *text =
         "(run"
@@ -223,6 +264,14 @@ static int test_invalid_args(void) {
 int main(void) {
     if (test_valid_run_config() != 0) {
         fprintf(stderr, "test_valid_run_config failed\n");
+        return 1;
+    }
+    if (test_expect_absent() != 0) {
+        fprintf(stderr, "test_expect_absent failed\n");
+        return 1;
+    }
+    if (test_expect_present() != 0) {
+        fprintf(stderr, "test_expect_present failed\n");
         return 1;
     }
     if (test_missing_required_field() != 0) {
