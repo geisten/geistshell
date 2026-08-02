@@ -47,7 +47,79 @@ static enum spg_status write_fixture(const char *path) {
     return s != SPG_OK ? s : cs;
 }
 
+/* P7: a journal with a rejected recommendation and a policy denial tallies
+ * one of each; an allow decision must NOT count as a denial. */
+static enum spg_status write_recurrence_fixture(const char *path) {
+    struct spg_journal_writer w;
+    enum spg_status s = spg_journal_writer_open(&w, path);
+    if (s != SPG_OK) {
+        return s;
+    }
+    uint64_t seq = 0u;
+    const char rej[] = "(recommendation_rejected (reason syntax))";
+    const char deny[] =
+        "(policy_decision (decision deny) (deny_reason "
+        "SPG_POLICY_DENY_DISABLED_CAPABILITY))";
+    const char allow[] =
+        "(policy_decision (decision allow) (deny_reason SPG_POLICY_DENY_NONE))";
+    s = spg_journal_writer_append(&w, 1u, 0u, SPG_JOURNAL_EVENT_ERROR, SPG_OK,
+                                  sizeof rej - 1u, (const uint8_t *)rej, &seq);
+    if (s == SPG_OK) {
+        s = spg_journal_writer_append(&w, 2u, seq,
+                                      SPG_JOURNAL_EVENT_POLICY_DECISION, SPG_OK,
+                                      sizeof deny - 1u, (const uint8_t *)deny,
+                                      &seq);
+    }
+    if (s == SPG_OK) {
+        s = spg_journal_writer_append(&w, 3u, seq,
+                                      SPG_JOURNAL_EVENT_POLICY_DECISION, SPG_OK,
+                                      sizeof allow - 1u, (const uint8_t *)allow,
+                                      &seq);
+    }
+    const enum spg_status cs = spg_journal_writer_close(&w);
+    return s != SPG_OK ? s : cs;
+}
+
+static int test_recurrence(void) {
+    char path[] = "/tmp/spg_recur_XXXXXX";
+    int  fd     = mkstemp(path);
+    if (fd < 0) {
+        return 1;
+    }
+    close(fd);
+    int rc = 1;
+    if (write_recurrence_fixture(path) != SPG_OK) {
+        goto done;
+    }
+    struct spg_recurrence r = {};
+    /* accumulates: call twice -> counts double */
+    if (spg_journal_recurrence(path, &r) != SPG_OK ||
+        spg_journal_recurrence(path, &r) != SPG_OK) {
+        goto done;
+    }
+    if (r.rejected != 2u || r.denied != 2u) {
+        fprintf(stderr, "recurrence rejected=%zu denied=%zu\n", r.rejected,
+                r.denied);
+        goto done;
+    }
+    /* a missing journal counts nothing and is not an error */
+    struct spg_recurrence z = {};
+    if (spg_journal_recurrence("/tmp/spg_no_such_journal", &z) != SPG_OK ||
+        z.rejected != 0u || z.denied != 0u) {
+        goto done;
+    }
+    rc = 0;
+done:
+    unlink(path);
+    return rc;
+}
+
 int main(void) {
+    if (test_recurrence() != 0) {
+        fprintf(stderr, "test_recurrence failed\n");
+        return 1;
+    }
+
     char path[] = "/tmp/spg_replay_XXXXXX";
     int  fd     = mkstemp(path);
     if (fd < 0) {
