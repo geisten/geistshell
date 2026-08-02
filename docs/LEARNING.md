@@ -89,6 +89,28 @@ is the honest place to build "learns from use."
   success`) verifying world state, for tasks that produce files rather than
   stdout.
 
+## Success-side skill abstraction (geistshell#26, first cut)
+
+The success-side counterpart to reflect: a PASSING trajectory is distilled into
+a reusable `skill-<shape>` procedure, keyed by the P4 capability shape, and
+injected into later same-shape tasks via the mind-palace index the agent
+already renders. Deterministic (a template over the ordered action kinds), and
+OFFLINE — the live agent never self-mints skills (the anti-delusion stance);
+`geistshell distill <passing-journal>` is the explicit mint step.
+
+`eval/bench_skills.sh` shows the before/after over ten shell-script tasks that
+share one shape:
+
+- **before:** skill injected into 0/10 tasks.
+- **after:** a skill distilled from the first pass is injected into 9/10.
+
+Task-success is identical across before/after because a *fake* model ignores
+the injected skill — whether the skill LIFTS success needs a real model
+reacting to it (the #25 numerator, on a model-completable corpus). This proves
+accumulation + injection, not lift. Open follow-ups on #26: model-driven
+distillation, shape-triggered single-skill injection (vs the whole index), and
+a gate on skill acceptance.
+
 ## Context-cost benchmark (2026-08-02, model-free)
 
 `eval/bench_context.sh` measures the load-bearing half of the small-seq-len

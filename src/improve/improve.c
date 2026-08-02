@@ -223,3 +223,27 @@ bool spg_reflect_outcome(const char *shape_token, const char *expected_substring
         expected_substring, observation[0] != '\0' ? observation : "(empty)");
     return true;
 }
+
+bool spg_reflect_skill(const char *shape_token, const char *procedure_summary,
+                       struct spg_lesson *out) {
+    if (out == nullptr || shape_token == nullptr || shape_token[0] == '\0' ||
+        procedure_summary == nullptr || procedure_summary[0] == '\0') {
+        return false;
+    }
+    /* slug = "skill-<shape>": distinct namespace from lesson-*, deduped per
+     * task shape so a later same-shape task recalls this one procedure. */
+    const size_t w = (size_t)snprintf(out->slug, sizeof out->slug, "%s", "skill-");
+    if (slugify_into(out->slug + w, sizeof out->slug - w, shape_token) == 0u) {
+        (void)snprintf(out->slug + w, sizeof out->slug - w, "%s", "x");
+    }
+    (void)snprintf(out->description, sizeof out->description,
+                   "For a %.60s task, a working approach: %.120s.", shape_token,
+                   procedure_summary);
+    (void)snprintf(
+        out->body, sizeof out->body,
+        "A task of shape \"%.120s\" was completed successfully with this "
+        "action sequence: %.400s. Follow the same shape: emit each action as "
+        "one valid (recommend ...) form and finish once the goal is met.",
+        shape_token, procedure_summary);
+    return true;
+}
