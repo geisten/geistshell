@@ -2,6 +2,11 @@
  * Write a journal with known MODEL_OUTPUT events interleaved with other kinds
  * (including an oversized MODEL_INPUT that must be skipped), then reconstruct
  * and assert the script is exactly the model outputs, in order. */
+#define _POSIX_C_SOURCE 200809L /* mkstemp/close/unlink/write */
+#if defined(__APPLE__)
+#    define _DARWIN_C_SOURCE 1
+#endif
+
 #include "geistshell/eval.h"
 #include "geistshell/journal.h"
 
