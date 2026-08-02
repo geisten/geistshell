@@ -89,6 +89,28 @@ is the honest place to build "learns from use."
   success`) verifying world state, for tasks that produce files rather than
   stdout.
 
+## Real-model completion: exemplars are necessary but not sufficient (2026-08-02)
+
+Path B added an `(examples ...)` context slot so a small model gets concrete
+worked recommendation forms, not just the `(contract ...)` grammar. Measured
+on the Pi against Gemma 4 E2B, two runs on the same goal:
+
+- **without exemplars:** terminates `budget`, never a valid form (as before).
+- **with exemplars:** still terminates `budget`; the repair path reports
+  `SPG_RECOMMENDATION_REJECT_SYNTAX` — Gemma emits something, but it does not
+  parse as a valid s-expression form.
+
+Honest conclusion: **few-shot exemplars alone do not make a 2B model
+DSL-completable here.** The exemplar mechanism is correct and merged (it
+renders in context, unit-tested), but a 2B model cannot freely emit a novel
+structured DSL from examples within a few steps. The proven fix for exactly
+this class — a small model emitting a structured call — is
+**grammar-constrained decoding** (geistagent forced tool-call output along the
+grammar and got BitNet/Gemma to emit valid calls). geistshell has no such
+sampler mask. So the real-model LIFT measurement (#25 numerator, #26 benefit)
+is gated on grammar-constrained decoding, an engine-level piece — not on more
+exemplars. Filed separately.
+
 ## Success-side skill abstraction (geistshell#26, first cut)
 
 The success-side counterpart to reflect: a PASSING trajectory is distilled into
