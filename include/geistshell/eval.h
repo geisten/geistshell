@@ -79,6 +79,22 @@ spg_eval_run_case(const struct spg_fake_response *script, size_t script_n,
                   const struct spg_eval_expect *expect,
                   struct spg_eval_case_result *result);
 
+/* Reconstruct a fake-model script from a run's journal (docs/LEARNING.md P3):
+ * each MODEL_OUTPUT event becomes one spg_fake_response, in sequence order.
+ * The response texts are copied into text_buf; each response's `text` points
+ * into it. Replaying the returned script through spg_eval_run_case against the
+ * same inputs reproduces the run deterministically (the journal is
+ * byte-replayable), so a real run becomes a frozen case the mint gate can
+ * re-run without live inference.
+ *
+ * Fills responses[0..*count) and returns SPG_OK. SPG_E_INVALID_ARG on null
+ * args; SPG_E_JOURNAL_CORRUPT / SPG_E_IO on a read failure; SPG_E_LIMIT if the
+ * outputs exceed max_responses or text_cap. */
+[[nodiscard]] enum spg_status spg_eval_script_from_journal(
+    const char *journal_path, size_t max_responses,
+    struct spg_fake_response responses[], size_t text_cap, char text_buf[],
+    size_t *count);
+
 #ifdef __cplusplus
 }
 #endif
