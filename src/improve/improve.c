@@ -157,9 +157,69 @@ bool spg_reflect_case(const struct spg_eval_case_result *result,
             result->steps_taken);
         return true;
     case SPG_AGENT_LOOP_FINISHED:
-        /* Finished cleanly but missed an eval expectation: no agent-level
-         * lesson to learn from the failure mode. */
+        /* Finished cleanly but missed an eval expectation: the failure is in
+         * the outcome, not the termination — spg_reflect_outcome handles it. */
         return false;
     }
     return false;
+}
+
+/* Append a slug-safe rendering of token to dst: [a-z0-9] kept (lowercased),
+ * every other run collapses to a single '-'; no leading/trailing '-';
+ * truncated to cap-1. Returns bytes written (0 if token yields nothing). */
+static size_t slugify_into(char *dst, size_t cap, const char *token) {
+    size_t w            = 0u;
+    bool   pending_dash = false;
+    for (const char *p = token; *p != '\0' && w + 1u < cap; p++) {
+        unsigned char c = (unsigned char)*p;
+        if (c >= 'A' && c <= 'Z') {
+            c = (unsigned char)(c - 'A' + 'a');
+        }
+        if ((c >= 'a' && c <= 'z') || (c >= '0' && c <= '9')) {
+            if (pending_dash && w > 0u && w + 1u < cap) {
+                dst[w++] = '-';
+            }
+            pending_dash = false;
+            if (w + 1u < cap) {
+                dst[w++] = (char)c;
+            }
+        } else {
+            pending_dash = w > 0u; /* no leading dash */
+        }
+    }
+    dst[w] = '\0';
+    return w;
+}
+
+bool spg_reflect_outcome(const char *shape_token, const char *expected_substring,
+                         const char *observation, struct spg_lesson *out) {
+    if (out == nullptr || shape_token == nullptr || shape_token[0] == '\0' ||
+        expected_substring == nullptr || expected_substring[0] == '\0' ||
+        observation == nullptr) {
+        return false;
+    }
+
+    /* slug = "lesson-outcome-<shape>", deduping per task shape. If the token
+     * sanitizes to nothing (e.g. all punctuation), fall back so the slug stays
+     * valid and stable rather than colliding on the bare prefix. */
+    const size_t w =
+        (size_t)snprintf(out->slug, sizeof out->slug, "%s", "lesson-outcome-");
+    if (slugify_into(out->slug + w, sizeof out->slug - w, shape_token) == 0u) {
+        (void)snprintf(out->slug + w, sizeof out->slug - w, "%s", "x");
+    }
+
+    (void)snprintf(out->description, sizeof out->description,
+                   "Finish only when the output shows the expected result; "
+                   "last run missed \"%.80s\".",
+                   expected_substring);
+
+    /* The concrete miss, verbatim — the fact, not an invented correction. */
+    (void)snprintf(
+        out->body, sizeof out->body,
+        "A previous run finished but its output did not meet the success "
+        "criterion. Expected the observation to contain: \"%.200s\". The "
+        "observation was: \"%.400s\". Before emitting (recommend (kind finish) "
+        "...), make sure the required result is actually present.",
+        expected_substring, observation[0] != '\0' ? observation : "(empty)");
+    return true;
 }

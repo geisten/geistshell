@@ -36,6 +36,24 @@ struct spg_lesson {
 [[nodiscard]] bool spg_reflect_case(const struct spg_eval_case_result *result,
                                     struct spg_lesson *out);
 
+/* Distill a lesson from a FINISHED-but-criterion-failed run (docs/LEARNING.md
+ * P2) — the class spg_reflect_case cannot judge, because the failure is in the
+ * outcome, not the loop's termination. The verifier (P1) supplies the ground
+ * truth; this states the concrete miss, it does not invent a fix.
+ *
+ * slug = "lesson-outcome-<shape_token>", so lessons dedup per task shape.
+ * shape_token is the caller's task-shape key (until P4 it may be any stable,
+ * non-empty token; P4 supplies the capability-set key). It is sanitized to a
+ * mind-palace-safe slug ([a-z0-9-], truncated). The description is a terse
+ * directive; the body quotes observed-vs-expected verbatim. Whether stating
+ * the miss helps is decided later by slug-recurrence (P7), never assumed here.
+ *
+ * Returns false (out untouched) on null/empty args. Deterministic. */
+[[nodiscard]] bool spg_reflect_outcome(const char *shape_token,
+                                       const char *expected_substring,
+                                       const char *observation,
+                                       struct spg_lesson *out);
+
 /* The acceptance gate: keep a tentatively-persisted lesson only if the suite's
  * pass count did not drop. Equality keeps (a lesson that neither helps nor hurts
  * is retained, since it may help cases outside the suite). */
