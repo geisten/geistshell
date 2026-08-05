@@ -256,6 +256,45 @@ and choosing to stop are now both handled: the decoder emits valid actions
 (#34), and the loop terminates cleanly when the agent has nothing left to do
 (#40).
 
+## Does an injected lesson lift a model that can now act? (2026-08, Pi/Gemma)
+
+With #34 + #40 the model finally *acts*, so the learning claim can be probed
+directly: seed a lesson into the mind-palace (it renders into every prompt via
+`render_memory_index`) and compare against an empty store, constrained decode,
+greedy (seed 42, deterministic).
+
+**Injected lessons causally steer the acting model — measured.** On the sev=8000
+scenario, a blunt "emit finish immediately" lesson flipped the run from
+`steps=4 finished pass` (control) to `steps=3 denied fail` (learned). The
+directive reached the model through the index and changed its choice. The
+substrate works: a stored lesson is not inert on a model that acts.
+
+**But the effect is unreliable and can regress — which is exactly why the
+eval-gate exists.** That same lesson made success *worse* (pass → denied), and
+on sev=9500 a targeted "finish after patching" lesson had no effect at all
+(denied → denied). A naive lesson sometimes hurts, sometimes does nothing. The
+keep-only-if-no-regression gate (decision 3) is not ceremony — a live lesson
+here would have to be vetoed.
+
+**The security-scenario corpus lacks clean success headroom.** Outcomes are
+mostly decided by the *sim executor's* action selection, not by the model's own
+decisions, so there is little the model freely chooses that a lesson can shape
+toward a reliable positive lift. Free decode still scores ~0 (can't emit the
+DSL), and constrained decode already succeeds where the objective is reachable —
+so the arm that would show lift (control fails, lesson fixes) barely exists on
+this corpus.
+
+Honest conclusion: the learning substrate is **live** (lessons reach and steer
+the acting model) and the gate is **necessary** (lessons can regress), but a
+convincing *positive* learning-LIFT needs a corpus where the **model's own
+decision determines success** — the local_shell command-shape (`bench_skills`),
+where the lesson supplies the command the model must produce, run against the
+real model. That is the next experiment; the security-simulator corpus was the
+wrong instrument for it. The runtime auto-injection path (`lesson-rejected` on
+repair) is separately bypassed by constrained decoding, so a semantic
+lesson's only channel to an acting model is the index — which this probe shows
+does carry, and steer.
+
 Dev-env note: the Mac's deps/geist pointed at a newer checkout lacking
 geist_util.h; switched to the pinned v0.2.1 via `make sync-engine`.
 
