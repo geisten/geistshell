@@ -37,6 +37,7 @@ struct spg_actor_state {
     const char *memory_index;
     const char *observation;
     const char *exemplars;
+    const char *goal;
 };
 
 struct spg_actor_step_config {

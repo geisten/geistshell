@@ -58,6 +58,8 @@ struct spg_orchestrator_state {
     /* Optional concrete worked examples of the recommendation form (context
      * (examples ...) section) — few-shot for a small model. Null = none. */
     const char *exemplars;
+    /* Optional free-text task, rendered as (goal "..."). Null = none. */
+    const char *goal;
 };
 
 struct spg_orchestrator_config {

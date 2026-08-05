@@ -38,6 +38,8 @@ struct spg_agent_run_inputs {
      * in the context's (examples ...) section — few-shot so a small model can
      * imitate the DSL rather than parse the schema grammar. Null = none. */
     const char                     *exemplars;
+    /* Optional free-text task, rendered as (goal "..."). Null = none. */
+    const char                     *goal;
 };
 
 struct spg_agent_run_config {

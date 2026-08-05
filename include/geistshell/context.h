@@ -42,6 +42,9 @@ struct spg_context_sources {
      * model imitates filled-in examples far more reliably than it parses a
      * grammar. Null = none (unchanged behaviour). */
     const char                        *exemplars;
+    /* Optional free-text task, rendered near the top as (goal "..."). Null =
+     * none: the scenario graph is the whole task. */
+    const char                        *goal;
 };
 
 struct spg_context_budget_item {

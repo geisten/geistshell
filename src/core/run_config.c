@@ -57,6 +57,14 @@ static const struct spg_schema_field_rule run_fields[] = {
      .max_values = 1u,
      .required   = false,
      .unique     = true},
+    /* Optional free-text task, rendered as (goal "..."). Absent -> scenario is
+     * the whole task. */
+    {.name       = "goal",
+     .value_kind = SPG_SCHEMA_VALUE_STRING,
+     .min_values = 1u,
+     .max_values = 1u,
+     .required   = false,
+     .unique     = true},
 };
 
 static const struct spg_schema_form_rule run_forms[] = {
@@ -65,7 +73,7 @@ static const struct spg_schema_form_rule run_forms[] = {
      .field_rules          = run_fields,
      .allow_unknown_fields = false,
      .min_fields           = 7u,
-     .max_fields           = 8u},
+     .max_fields           = 9u},
 };
 
 static const struct spg_schema run_schema = {
@@ -258,6 +266,17 @@ enum spg_status spg_run_config_load(
             return status;
         }
         out->has_expect = true;
+    }
+
+    const uint32_t goal_field =
+        find_field(input_n, input, nodes, run_node, "goal");
+    if (goal_field != SPG_SEXPR_INVALID_INDEX) {
+        status = string_value_span(nodes, goal_field, &out->goal);
+        if (status != SPG_OK) {
+            set_error(error, status, goal_field, nodes[goal_field].span.offset);
+            return status;
+        }
+        out->has_goal = true;
     }
 
     return SPG_OK;

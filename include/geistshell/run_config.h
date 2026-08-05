@@ -41,6 +41,13 @@ struct spg_run_config {
      * zero tokens: the world supplies the ground truth. */
     bool                 has_expect;
     struct spg_text_span expect_observation;
+
+    /* Optional free-text task the agent is to accomplish, rendered into the
+     * context as (goal "..."). geistshell's task is otherwise only the scenario;
+     * a goal lets a run state an objective the model decides how to meet — the
+     * headroom a learning lesson can shape. Absent -> no goal line. */
+    bool                 has_goal;
+    struct spg_text_span goal;
 };
 
 struct spg_run_config_error {
