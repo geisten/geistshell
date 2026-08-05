@@ -295,6 +295,48 @@ repair) is separately bypassed by constrained decoding, so a semantic
 lesson's only channel to an acting model is the index — which this probe shows
 does carry, and steer.
 
+### The goal-enabled retest — real headroom, lesson still doesn't lift
+
+The `(goal "...")` field (added next) gave the missing headroom: a goal-directed
+shell task where the *model's own decision* determines success. Goal "Run a
+local shell command that prints READY" steers Gemma cleanly — it emits `(kind
+local_shell) (capability "build.run") (command "echo READY")`, allowed, and
+READY is printed. But then it **repeats** the command and the second `build.run`
+is budget-denied (`build.run` has budget 1 in the policy), so the run ends
+`denied`, never `finished` — a real, reproducible failure with genuine headroom:
+the model must emit `(kind finish)` after achieving the goal.
+
+Control vs learned (a "finish once the goal output is produced" lesson in the
+mind-palace), constrained, greedy:
+
+| | termination | verdict |
+|---|---|---|
+| control | denied | fail |
+| learned | denied | fail |
+
+**No lift.** The index-resident directive did not make greedy Gemma emit
+finish. Combined with the earlier probe (where a lesson *did* bite — negatively),
+the honest conclusion is: on a 2B greedy model the one-line index directive is
+**too weak a channel to reliably steer high-level behaviour** (like choosing to
+stop), and when it does bite it is as likely to regress as to help — which is
+exactly why the keep-only-if-no-regression gate exists.
+
+### Standing conclusion for small models
+
+Across every probe, the pattern holds: **deterministic guardrails carry the
+weight, learned directives do not** on this model. Constrained decoding (#34),
+choice-slot force-completion, the convergence stop (#40), and goals each removed
+a failure mode *reliably*; the same failure modes are what a lesson would target,
+so the guardrails largely **subsume** the learning headroom. The learning
+substrate is real and the gate is necessary, but a convincing positive
+learning-LIFT on a small greedy model would need either a **stronger injection
+channel** (the directive prepended to the observation every step, not buried in
+the index — untried) or a **larger model** that attends to directives. On small
+models, invest in guardrails; keep the eval-gate as the safety net for when a
+lesson does bite. (The goal-directed shell task above would itself pass with a
+deterministic "budget-denied repeat after a success = converged → finish" rule —
+another guardrail, not a lesson.)
+
 Dev-env note: the Mac's deps/geist pointed at a newer checkout lacking
 geist_util.h; switched to the pinned v0.2.1 via `make sync-engine`.
 
