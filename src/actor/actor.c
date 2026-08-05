@@ -147,6 +147,7 @@ spg_actor_step(struct spg_actor_state *state,
         .observation        = state->observation,
         .exemplars            = state->exemplars,
         .goal                 = state->goal,
+        .directive            = state->directive,
     };
 
     enum spg_status status = spg_context_build(

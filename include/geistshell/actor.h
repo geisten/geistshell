@@ -38,6 +38,7 @@ struct spg_actor_state {
     const char *observation;
     const char *exemplars;
     const char *goal;
+    const char *directive;
 };
 
 struct spg_actor_step_config {

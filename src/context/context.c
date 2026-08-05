@@ -695,6 +695,11 @@ enum spg_status spg_context_render(const struct spg_context_sources *sources,
         .dst      = dst,
     };
     render_contract(&state);
+    if (sources->directive != nullptr && sources->directive[0] != '\0') {
+        append_cstr(&state, "(directive ");
+        append_quoted_cstr(&state, sources->directive);
+        append_cstr(&state, ")\n");
+    }
     if (sources->goal != nullptr && sources->goal[0] != '\0') {
         append_cstr(&state, "(goal ");
         append_quoted_cstr(&state, sources->goal);
