@@ -31,7 +31,8 @@ static const char policy_text[] =
     " (capability"
     "  ((name sim.act) (kind simulator) (enabled true) (budget 8))"
     "  ((name build.run) (kind local_shell) (enabled true) (budget 8))"
-    "  ((name mem.write) (kind memory) (enabled true) (budget 8))))";
+    "  ((name mem.write) (kind memory) (enabled true) (budget 8))"
+    "  ((name sim.once) (kind simulator) (enabled true) (budget 1))))";
 
 static const char scenario_text[] =
     "(scenario"
@@ -223,6 +224,32 @@ static int test_finish_terminates(void) {
     const int ok = (out.termination == SPG_AGENT_LOOP_FINISHED &&
                     out.steps_taken == 3u &&
                     strstr(fx.observation, "loop-step-ok") != nullptr)
+                       ? 0
+                       : 1;
+    teardown(&fx);
+    return ok;
+}
+
+static int test_budget_denial_after_progress_finishes(void) {
+    /* #40 (Weg 2): sim.once has budget 1. The first simulator action is allowed
+     * (progress); the second is capability-budget-denied. With
+     * finish_on_no_progress that denial-after-progress is convergence, not
+     * failure -> FINISHED at step 2. A budget denial with no prior progress
+     * would stay DENIED. */
+    static const struct spg_fake_response script[] = {
+        FR("(recommend (kind simulator) (capability \"sim.once\") (cost 1) "
+           "(uses_network false) (confidence_bp 7000) (reason \"a\"))"),
+        FR("(recommend (kind simulator) (capability \"sim.once\") (cost 1) "
+           "(uses_network false) (confidence_bp 7000) (reason \"b\"))"),
+    };
+    struct loop_fixture          fx  = {};
+    struct spg_agent_loop_result out = {};
+    if (run_script(script, 2u, 5u, false, 0u, 0u, true, &fx, &out) != 0) {
+        teardown(&fx);
+        return 1;
+    }
+    const int ok = (out.termination == SPG_AGENT_LOOP_FINISHED &&
+                    out.steps_taken == 2u)
                        ? 0
                        : 1;
     teardown(&fx);
@@ -437,6 +464,10 @@ int main(void) {
     }
     if (test_no_progress_finishes() != 0) {
         fprintf(stderr, "test_no_progress_finishes failed\n");
+        return 1;
+    }
+    if (test_budget_denial_after_progress_finishes() != 0) {
+        fprintf(stderr, "test_budget_denial_after_progress_finishes failed\n");
         return 1;
     }
     if (test_denied() != 0) {
