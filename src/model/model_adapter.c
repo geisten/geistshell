@@ -252,6 +252,34 @@ static enum spg_status decode_choice_slot(
         }
         result->tokens_decoded += 1u;
     }
+    /* Force-complete (#34 robustness): greedy token-by-token can dead-end on a
+     * partial (e.g. "buil" of "build.run") when the tokenizer offers no clean
+     * continuation. If what we have is a prefix of exactly one candidate, append
+     * the rest so the emitted value is a valid, complete name; the following
+     * scaffold literal re-anchors the KV, so output correctness is enough. */
+    if (!spg_choice_complete(names, names_n, out)) {
+        const char *trimmed = out;
+        while (*trimmed == ' ' || *trimmed == '\t') {
+            trimmed += 1;
+        }
+        const size_t tl    = strlen(trimmed);
+        int          match = -1;
+        for (size_t i = 0u; i < names_n; i += 1u) {
+            if (names[i] != nullptr && strncmp(names[i], trimmed, tl) == 0) {
+                match = match < 0 ? (int) i : -2; /* -2 = ambiguous, don't force */
+            }
+        }
+        if (match >= 0) {
+            const char  *suffix = names[(size_t) match] + tl;
+            const size_t sl     = strlen(suffix);
+            if (sl > 0u) {
+                const enum spg_status as = append_bytes(result, sl, suffix);
+                if (as != SPG_OK) {
+                    return as;
+                }
+            }
+        }
+    }
     return SPG_OK;
 }
 
