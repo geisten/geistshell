@@ -220,6 +220,42 @@ gap (e.g. a finish nudge once risk is under threshold, or a terminating corpus)
 is follow-on behaviour work, not a decoder gap — the constrained decoder's job,
 lifting DSL emission and execution from 0 to 100%, is done and measured.
 
+## Convergence stop closes acted -> done (geistshell#40)
+
+The termination gap above, fixed at the loop. A model that emits valid,
+executing actions but never `(kind finish)` used to run to the step cap
+(`termination=budget`), so `verdict=pass` — which needs `FINISHED` — stayed 0
+even when the action executed. `spg_agent_loop_config.finish_on_no_progress`
+(opt-in; the CLI enables it) treats a step that makes no progress as
+completion: a simulator action the executor turned into a **noop**
+(`sim.mutated == false` — nothing left to change) terminates the run FINISHED;
+other actions use a repeated non-empty observation.
+
+Two fixes were needed together, both found on hardware:
+
+- **the no-progress signal.** A first cut compared the observation buffer, but
+  sim actions never write it, so the stall never fired on the sim corpus. The
+  honest signal is `sim.mutated == false`.
+- **the observation channel.** Sim wrote only `sim_payload` + the journal, never
+  the shared observation buffer, so the model acted *blind to its own outcome*
+  and an expect verdict had nothing to match (`fail_observation` even once
+  FINISHED). Mirroring the sim result onto `observation_buf` (as shell/memory
+  already do) both feeds the model its result and lets the verdict see it.
+
+Re-running `bench_lift.sh` with the fix, `done` converts:
+
+| | free valid | constr valid | free acted | constr acted | free done | constr done |
+|---|---|---|---|---|---|---|
+| **total** | 0/4 | 4/4 | 0/4 | 4/4 | **0/4** | **3/4** |
+
+`done` went **0/4 → 3/4**. The one miss is `sev=9500`, the highest-severity
+scenario: it takes more actions to exhaust than the step budget allowed, so the
+sim had not yet returned a noop when the budget ran out — an honest convergence
+depth, not a broken mechanism (a larger budget would finish it). Acting validly
+and choosing to stop are now both handled: the decoder emits valid actions
+(#34), and the loop terminates cleanly when the agent has nothing left to do
+(#40).
+
 Dev-env note: the Mac's deps/geist pointed at a newer checkout lacking
 geist_util.h; switched to the pinned v0.2.1 via `make sync-engine`.
 
