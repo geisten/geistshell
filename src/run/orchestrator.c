@@ -397,7 +397,10 @@ enum spg_status spg_orchestrator_tick(
     if (workspace->observation_buf != nullptr &&
         workspace->observation_capacity > 0u) {
         const size_t cap = workspace->observation_capacity;
-        const size_t n   = strnlen(workspace->sim_payload, cap - 1u);
+        size_t       n   = 0u; /* bounded strlen (no strnlen: strict-libc hides it) */
+        while (n + 1u < cap && workspace->sim_payload[n] != '\0') {
+            n += 1u;
+        }
         memcpy(workspace->observation_buf, workspace->sim_payload, n);
         workspace->observation_buf[n] = '\0';
     }
