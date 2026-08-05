@@ -20,7 +20,9 @@ extern "C" {
  * usage accounting, and termination. */
 
 enum spg_agent_loop_termination {
-    SPG_AGENT_LOOP_FINISHED = 0, /* agent emitted `finish` */
+    SPG_AGENT_LOOP_FINISHED = 0, /* agent emitted `finish`, or (with
+                                    finish_on_no_progress) converged: an executed
+                                    step left the observation unchanged */
     SPG_AGENT_LOOP_MAX_STEPS,    /* hit the step cap */
     SPG_AGENT_LOOP_REJECTED,     /* a step's recommendation was malformed */
     SPG_AGENT_LOOP_DENIED,       /* a step was denied by policy */
@@ -46,6 +48,14 @@ struct spg_agent_loop_config {
      * still count against max_steps. Requires an observation buffer in the
      * workspace (observation_buf). */
     size_t max_repairs;
+
+    /* Convergence stop (geistshell#40): treat an executed step that leaves the
+     * observation byte-identical to the previous executed step's as completion
+     * (FINISHED) — the agent is repeating itself with no effect on the world.
+     * Closes the gap where a constrained model emits valid, executing actions
+     * but never chooses `(kind finish)`, so it acts forever until the step cap.
+     * Off by default (a plain max_steps run is unchanged); the CLI enables it. */
+    bool finish_on_no_progress;
 
     /* Slug-triggered lesson auto-injection budget (docs/LEARNING.md P6): when a
      * step is rejected and a stored lesson names that failure slug, its

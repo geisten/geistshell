@@ -3,6 +3,17 @@
 #include "geistshell/mem_store.h" /* P6: slug-triggered directive injection */
 
 #include <stdio.h>
+#include <string.h>
+
+/* FNV-1a over a C string — enough to spot a repeated observation (#40) without a
+ * second copy of the buffer; the heavy spg_hash is overkill here. */
+static uint64_t obs_hash(const char *s) {
+    uint64_t h = 1469598103934665603ull;
+    for (; s != nullptr && *s != '\0'; s += 1) {
+        h = (h ^ (uint64_t)(unsigned char)*s) * 1099511628211ull;
+    }
+    return h;
+}
 
 static void add_u64(uint64_t *acc, const uint64_t v) {
     if (*acc > UINT64_MAX - v) {
@@ -106,6 +117,8 @@ enum spg_status spg_agent_loop_run(
     }
 
     uint64_t parent_sequence = config->base.parent_sequence;
+    uint64_t prev_obs_hash   = 0u;    /* #40: observation after the last */
+    bool     have_prev_obs   = false; /* executed step, for stall detection */
     for (size_t step = 0u; step < config->max_steps; step += 1u) {
         if ((config->token_budget > 0u &&
              usage->consumed.tokens >= config->token_budget) ||
@@ -180,6 +193,22 @@ enum spg_status spg_agent_loop_run(
                 SPG_POLICY_DECISION_ALLOW) {
             result->termination = SPG_AGENT_LOOP_DENIED;
             return SPG_OK;
+        }
+
+        /* Convergence stop (#40): the step executed an allowed action. If its
+         * observation matches the previous executed step's, the agent is
+         * repeating itself with no effect — treat that as completion so a model
+         * that acts validly but never emits `finish` still terminates cleanly. */
+        if (config->finish_on_no_progress &&
+            workspace->observation_buf != nullptr &&
+            workspace->observation_buf[0] != '\0') {
+            const uint64_t h = obs_hash(workspace->observation_buf);
+            if (have_prev_obs && h == prev_obs_hash) {
+                result->termination = SPG_AGENT_LOOP_FINISHED;
+                return SPG_OK;
+            }
+            prev_obs_hash = h;
+            have_prev_obs = true;
         }
     }
     return SPG_OK;

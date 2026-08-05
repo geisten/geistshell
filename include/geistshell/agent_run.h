@@ -43,6 +43,7 @@ struct spg_agent_run_inputs {
 struct spg_agent_run_config {
     size_t   max_steps;
     size_t   max_repairs;
+    bool     finish_on_no_progress; /* #40: converge -> FINISHED (see agent_loop.h) */
     bool     execution_enabled;
     uint64_t exec_timeout_ms;
     size_t   exec_stdout_cap;

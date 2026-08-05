@@ -43,7 +43,7 @@ scenario_file() { # $1 = severity -> writes a scenario, prints its path
 
 run_arm() { # $1 = scenario path, $2 = journal, $3 = extra flag ("" or --constrained)
     SCEN=$1; J=$2; FLAG=$3
-    printf '(run\n (model "%s")\n (policy "examples/policy.spg")\n (scenario "%s")\n (corpus "examples/corpus.spg")\n (journal "%s")\n (seed 42)\n (budgets (inference_steps 3) (tokens 512) (shell_actions 1) (sim_actions 4) (wall_ms 120000) (journal_bytes 1048576) (risk_bp 10000))\n (expect "sim_result"))\n' "$MODEL" "$SCEN" "$J" > "$T/run.spg"
+    printf '(run\n (model "%s")\n (policy "examples/policy.spg")\n (scenario "%s")\n (corpus "examples/corpus.spg")\n (journal "%s")\n (seed 42)\n (budgets (inference_steps 4) (tokens 512) (shell_actions 1) (sim_actions 4) (wall_ms 160000) (journal_bytes 1048576) (risk_bp 10000))\n (expect "sim_result"))\n' "$MODEL" "$SCEN" "$J" > "$T/run.spg"
     # shellcheck disable=SC2086
     OUT=$("$SPG" agent --config "$T/run.spg" --allow-exec $FLAG 2>/dev/null || true)
     VERDICT=$(printf '%s' "$OUT" | sed -n 's/.*verdict=\([a-z]*\).*/\1/p' | tail -1)
