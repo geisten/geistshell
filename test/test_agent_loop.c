@@ -95,6 +95,7 @@ static int load_sim(struct spg_sim_config *sim) {
 static int run_script(const struct spg_fake_response *resp, const size_t count,
                       const size_t max_steps, const bool exec_enabled,
                       const size_t max_repairs, const uint64_t step_budget,
+                      const bool finish_on_no_progress,
                       struct loop_fixture *fx,
                       struct spg_agent_loop_result *out) {
     *fx = (struct loop_fixture){};
@@ -182,6 +183,7 @@ static int run_script(const struct spg_fake_response *resp, const size_t count,
         .max_steps               = max_steps,
         .max_repairs             = max_repairs,
         .step_budget             = step_budget,
+        .finish_on_no_progress   = finish_on_no_progress,
         .journal_header_capacity = sizeof fx->trajectory / sizeof fx->trajectory[0],
         .journal_headers         = fx->trajectory,
     };
@@ -214,7 +216,7 @@ static int test_finish_terminates(void) {
     };
     struct loop_fixture          fx = {};
     struct spg_agent_loop_result out = {};
-    if (run_script(script, 3u, 5u, true, 0u, 0u, &fx, &out) != 0) {
+    if (run_script(script, 3u, 5u, true, 0u, 0u, false, &fx, &out) != 0) {
         teardown(&fx);
         return 1;
     }
@@ -236,12 +238,44 @@ static int test_max_steps(void) {
     };
     struct loop_fixture          fx = {};
     struct spg_agent_loop_result out = {};
-    if (run_script(script, 2u, 2u, false, 0u, 0u, &fx, &out) != 0) {
+    if (run_script(script, 2u, 2u, false, 0u, 0u, false, &fx, &out) != 0) {
         teardown(&fx);
         return 1;
     }
     const int ok = (out.termination == SPG_AGENT_LOOP_MAX_STEPS &&
                     out.steps_taken == 2u)
+                       ? 0
+                       : 1;
+    teardown(&fx);
+    return ok;
+}
+
+static int test_no_progress_finishes(void) {
+    /* #40: the same local_shell command every step, so each step's observation
+     * (the command's stdout) is byte-identical. With finish_on_no_progress the
+     * loop treats the repeated observation as convergence and terminates
+     * FINISHED at step 2 — the model acts validly but never says finish, yet the
+     * run still ends cleanly. Without the flag the same script runs to the cap. */
+    static const struct spg_fake_response script[] = {
+        FR("(recommend (kind local_shell) (capability \"build.run\") (cost 1) "
+           "(uses_network false) (confidence_bp 7000) (reason \"probe\") "
+           "(command \"echo converge-marker\"))"),
+        FR("(recommend (kind local_shell) (capability \"build.run\") (cost 1) "
+           "(uses_network false) (confidence_bp 7000) (reason \"probe\") "
+           "(command \"echo converge-marker\"))"),
+        FR("(recommend (kind local_shell) (capability \"build.run\") (cost 1) "
+           "(uses_network false) (confidence_bp 7000) (reason \"probe\") "
+           "(command \"echo converge-marker\"))"),
+    };
+    struct loop_fixture          fx  = {};
+    struct spg_agent_loop_result out = {};
+    if (run_script(script, 3u, 5u, true, 0u, 0u, true, &fx, &out) != 0) {
+        teardown(&fx);
+        return 1;
+    }
+    const int ok = (out.termination == SPG_AGENT_LOOP_FINISHED &&
+                    out.steps_taken == 2u &&
+                    strstr(fx.observation, "converge-marker") != nullptr)
                        ? 0
                        : 1;
     teardown(&fx);
@@ -260,7 +294,7 @@ static int test_step_budget(void) {
     };
     struct loop_fixture          fx = {};
     struct spg_agent_loop_result out = {};
-    if (run_script(script, 3u, 10u, false, 0u, 2u, &fx, &out) != 0) {
+    if (run_script(script, 3u, 10u, false, 0u, 2u, false, &fx, &out) != 0) {
         teardown(&fx);
         return 1;
     }
@@ -279,7 +313,7 @@ static int test_denied(void) {
     };
     struct loop_fixture          fx = {};
     struct spg_agent_loop_result out = {};
-    if (run_script(script, 1u, 5u, false, 0u, 0u, &fx, &out) != 0) {
+    if (run_script(script, 1u, 5u, false, 0u, 0u, false, &fx, &out) != 0) {
         teardown(&fx);
         return 1;
     }
@@ -297,7 +331,7 @@ static int test_rejected(void) {
     };
     struct loop_fixture          fx = {};
     struct spg_agent_loop_result out = {};
-    if (run_script(script, 1u, 5u, false, 0u, 0u, &fx, &out) != 0) {
+    if (run_script(script, 1u, 5u, false, 0u, 0u, false, &fx, &out) != 0) {
         teardown(&fx);
         return 1;
     }
@@ -319,7 +353,7 @@ static int test_trajectory_feedback(void) {
     };
     struct loop_fixture          fx = {};
     struct spg_agent_loop_result out = {};
-    if (run_script(script, 2u, 5u, false, 0u, 0u, &fx, &out) != 0) {
+    if (run_script(script, 2u, 5u, false, 0u, 0u, false, &fx, &out) != 0) {
         teardown(&fx);
         return 1;
     }
@@ -343,7 +377,7 @@ static int test_self_repair(void) {
     };
     struct loop_fixture          fx = {};
     struct spg_agent_loop_result out = {};
-    if (run_script(script, 2u, 5u, false, 1u, 0u, &fx, &out) != 0) {
+    if (run_script(script, 2u, 5u, false, 1u, 0u, false, &fx, &out) != 0) {
         teardown(&fx);
         return 1;
     }
@@ -364,7 +398,7 @@ static int test_repair_budget_exhausted(void) {
     };
     struct loop_fixture          fx = {};
     struct spg_agent_loop_result out = {};
-    if (run_script(script, 2u, 5u, false, 0u, 0u, &fx, &out) != 0) {
+    if (run_script(script, 2u, 5u, false, 0u, 0u, false, &fx, &out) != 0) {
         teardown(&fx);
         return 1;
     }
@@ -399,6 +433,10 @@ int main(void) {
     }
     if (test_max_steps() != 0) {
         fprintf(stderr, "test_max_steps failed\n");
+        return 1;
+    }
+    if (test_no_progress_finishes() != 0) {
+        fprintf(stderr, "test_no_progress_finishes failed\n");
         return 1;
     }
     if (test_denied() != 0) {
