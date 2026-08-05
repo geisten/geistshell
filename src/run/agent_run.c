@@ -1,6 +1,7 @@
 #include "geistshell/agent_run.h"
 
 #include "geistshell/graph.h"
+#include "geistshell/mem_store.h" /* #40 follow-up: strong directive channel */
 #include "geistshell/memory.h"
 #include "geistshell/orchestrator.h"
 
@@ -30,6 +31,18 @@ enum spg_status spg_agent_run(const struct spg_agent_run_inputs *inputs,
     spg_memory_init(&memory);
 
     workspace->observation[0] = '\0';
+
+    /* Strong steering channel (#40 follow-up): render a designated lesson's
+     * directive as (directive "...") every step, not buried in the index. Read
+     * once; the state pointer is reused across the loop. */
+    char        directive_buf[SPG_MEM_DESC_MAX + 1u];
+    const char *directive = nullptr;
+    if (config->directive_slug != nullptr && config->directive_slug[0] != '\0' &&
+        inputs->store != nullptr &&
+        spg_mem_directive(inputs->store, config->directive_slug, 0u,
+                          sizeof directive_buf, directive_buf) > 0u) {
+        directive = directive_buf;
+    }
 
     const struct spg_orchestrator_workspace ow = {
         .actor = {.context_capacity      = workspace->context_capacity,
@@ -75,6 +88,7 @@ enum spg_status spg_agent_run(const struct spg_agent_run_inputs *inputs,
         .observation   = workspace->observation,
         .exemplars     = inputs->exemplars,
         .goal          = inputs->goal,
+        .directive     = directive,
     };
 
     const size_t refs = config->context_refs > 0u ? config->context_refs : 8u;

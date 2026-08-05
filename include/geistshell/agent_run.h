@@ -54,6 +54,10 @@ struct spg_agent_run_config {
     const char *exec_working_dir;
     const char *exec_workdir_prefix;
     size_t      context_refs; /* graph/memory/journal-event context limit */
+    /* Slug of a stored lesson whose directive is rendered every step as
+     * (directive "...") — the strong steering channel (vs the mind-palace
+     * index). Null/absent or missing in the store -> no directive line. */
+    const char *directive_slug;
 };
 
 /* Caller-owned scratch. All buffers must be non-null with non-zero capacity

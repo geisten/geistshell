@@ -1774,6 +1774,7 @@ static int agent_command(int argc, char **argv) {
     const char *script_path    = nullptr;
     const char *exemplars_path = nullptr;
     const char *memory_dir     = getenv("GEISTSHELL_MEMORY_DIR");
+    const char *directive_slug = nullptr;
     size_t      max_steps      = 8u;
     size_t      max_repairs    = 2u;
     bool        allow_exec     = false;
@@ -1827,6 +1828,12 @@ static int agent_command(int argc, char **argv) {
             /* #34: force the real model's output to begin with the
              * recommendation opening, then decode freely. */
             constrained = true;
+            continue;
+        }
+        if (strcmp(argv[i], "--directive-slug") == 0 && i + 1 < argc) {
+            /* render this stored lesson's directive every step (strong channel) */
+            directive_slug = argv[i + 1];
+            i += 1;
             continue;
         }
         fprintf(stderr, "agent: unknown or incomplete argument: %s\n", argv[i]);
@@ -2087,6 +2094,7 @@ static int agent_command(int argc, char **argv) {
          * run to the step cap; treat a converged (no-progress) run as done so
          * it terminates FINISHED and an expect verdict can pass. */
         .finish_on_no_progress = true,
+        .directive_slug        = directive_slug,
         .execution_enabled     = allow_exec,
         .exec_timeout_ms   = 5000u,
         .exec_stdout_cap   = sizeof shell_stdout,

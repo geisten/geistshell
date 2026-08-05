@@ -200,6 +200,7 @@ enum spg_status spg_orchestrator_tick(
         .observation        = state->observation,
         .exemplars            = state->exemplars,
         .goal                 = state->goal,
+        .directive            = state->directive,
     };
     const struct spg_actor_step_config actor_config = {
         .actor_id            = config->actor_id,

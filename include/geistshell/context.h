@@ -45,6 +45,11 @@ struct spg_context_sources {
     /* Optional free-text task, rendered near the top as (goal "..."). Null =
      * none: the scenario graph is the whole task. */
     const char                        *goal;
+    /* Optional standing directive (a learned lesson) rendered prominently as
+     * (directive "...") every step — a stronger channel than the mind-palace
+     * index for steering a small model's behaviour (geistshell#40 follow-up).
+     * Null = none. */
+    const char                        *directive;
 };
 
 struct spg_context_budget_item {

@@ -119,6 +119,7 @@ enum spg_status spg_agent_loop_run(
     uint64_t parent_sequence = config->base.parent_sequence;
     uint64_t prev_obs_hash   = 0u;    /* #40: observation after the last */
     bool     have_prev_obs   = false; /* executed step, for stall detection */
+    bool     made_progress   = false; /* an allowed action has executed */
     for (size_t step = 0u; step < config->max_steps; step += 1u) {
         if ((config->token_budget > 0u &&
              usage->consumed.tokens >= config->token_budget) ||
@@ -191,9 +192,23 @@ enum spg_status spg_agent_loop_run(
         if (spg_orchestrator_policy_evaluated(&step_result) &&
             step_result.policy_gate.decision.kind !=
                 SPG_POLICY_DECISION_ALLOW) {
+            /* #40 (Weg 2): a budget denial *after* the agent already made
+             * progress means it has spent its allowance and is repeating a
+             * completed action — converged, not failed. Terminate FINISHED so an
+             * achieved goal (e.g. the command already ran, budget 1 spent) still
+             * passes. A budget denial with no prior progress stays a real DENIED. */
+            const enum spg_policy_deny_reason dr =
+                step_result.policy_gate.decision.deny_reason;
+            if (config->finish_on_no_progress && made_progress &&
+                (dr == SPG_POLICY_DENY_CAPABILITY_BUDGET ||
+                 dr == SPG_POLICY_DENY_GLOBAL_BUDGET)) {
+                result->termination = SPG_AGENT_LOOP_FINISHED;
+                return SPG_OK;
+            }
             result->termination = SPG_AGENT_LOOP_DENIED;
             return SPG_OK;
         }
+        made_progress = true; /* reached only on an allowed, executed step */
 
         /* Convergence stop (#40): the step executed an allowed action but the
          * agent may never emit `finish`. Detect "no progress" and treat it as

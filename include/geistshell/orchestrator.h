@@ -60,6 +60,9 @@ struct spg_orchestrator_state {
     const char *exemplars;
     /* Optional free-text task, rendered as (goal "..."). Null = none. */
     const char *goal;
+    /* Optional standing directive (a learned lesson), rendered every step as
+     * (directive "..."). Null = none. */
+    const char *directive;
 };
 
 struct spg_orchestrator_config {

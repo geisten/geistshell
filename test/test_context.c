@@ -413,6 +413,19 @@ static int test_goal_render(void) {
     if (strstr(buf, "(goal ") != nullptr) {
         return 1;
     }
+
+    /* A standing directive renders prominently as (directive "...") every step. */
+    sources.directive = "emit finish once the goal output is produced";
+    if (spg_context_render(&sources, &view, sizeof buf, buf, &req) != SPG_OK ||
+        strstr(buf, "(directive ") == nullptr ||
+        strstr(buf, "emit finish once") == nullptr) {
+        return 1;
+    }
+    sources.directive = nullptr;
+    (void)spg_context_render(&sources, &view, sizeof buf, buf, &req);
+    if (strstr(buf, "(directive ") != nullptr) {
+        return 1;
+    }
     return 0;
 }
 

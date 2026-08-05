@@ -337,6 +337,30 @@ lesson does bite. (The goal-directed shell task above would itself pass with a
 deterministic "budget-denied repeat after a success = converged → finish" rule —
 another guardrail, not a lesson.)
 
+### The two follow-ups, tested (Pi/Gemma)
+
+Both levers the conclusion named were then built and measured on the
+goal-directed shell task (goal "print READY", `build.run` budget 1):
+
+- **Stronger channel (Weg 1) — failed.** A designated lesson's directive is now
+  rendered prominently as `(directive "...")` at the top of the context *every
+  step* (not the mind-palace index). Confirmed in the prompt — and greedy Gemma
+  still does not emit `(kind finish)`: control and learned both end `denied`,
+  both `fail`. A strong, explicit, always-present directive changes nothing. On
+  a 2B greedy model, directive-based steering of high-level behaviour does not
+  work regardless of channel strength. (The channel ships anyway — it is the
+  right mechanism for a model that *does* follow directives.)
+- **Deterministic guardrail (Weg 2) — works.** When a step is budget-denied
+  (capability or global) *after* the agent already executed an allowed action,
+  it has spent its allowance and is repeating completed work — converged, not
+  failed → FINISHED. The goal task now passes with **no lesson**:
+  `termination=finished, verdict=pass` (control). A budget denial with no prior
+  progress stays a real DENIED.
+
+This is the conclusion made concrete: the learned path was given its strongest
+possible form and still did not lift; the deterministic rule did. On small
+greedy models, build guardrails.
+
 Dev-env note: the Mac's deps/geist pointed at a newer checkout lacking
 geist_util.h; switched to the pinned v0.2.1 via `make sync-engine`.
 
