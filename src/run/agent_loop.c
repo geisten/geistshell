@@ -195,20 +195,28 @@ enum spg_status spg_agent_loop_run(
             return SPG_OK;
         }
 
-        /* Convergence stop (#40): the step executed an allowed action. If its
-         * observation matches the previous executed step's, the agent is
-         * repeating itself with no effect — treat that as completion so a model
-         * that acts validly but never emits `finish` still terminates cleanly. */
-        if (config->finish_on_no_progress &&
-            workspace->observation_buf != nullptr &&
-            workspace->observation_buf[0] != '\0') {
-            const uint64_t h = obs_hash(workspace->observation_buf);
-            if (have_prev_obs && h == prev_obs_hash) {
+        /* Convergence stop (#40): the step executed an allowed action but the
+         * agent may never emit `finish`. Detect "no progress" and treat it as
+         * completion so the run terminates FINISHED. A simulator action that did
+         * not mutate the world (the executor picked a noop — nothing left to do)
+         * is no progress; sim does not write the shared observation channel, so
+         * it needs its own signal. For other actions, a repeated non-empty
+         * observation is the signal. */
+        if (config->finish_on_no_progress) {
+            bool no_progress = false;
+            if (step_result.recommendation.action_kind == SPG_ACTION_SIMULATOR) {
+                no_progress = !step_result.sim.mutated;
+            } else if (workspace->observation_buf != nullptr &&
+                       workspace->observation_buf[0] != '\0') {
+                const uint64_t h = obs_hash(workspace->observation_buf);
+                no_progress       = have_prev_obs && h == prev_obs_hash;
+                prev_obs_hash     = h;
+                have_prev_obs     = true;
+            }
+            if (no_progress) {
                 result->termination = SPG_AGENT_LOOP_FINISHED;
                 return SPG_OK;
             }
-            prev_obs_hash = h;
-            have_prev_obs = true;
         }
     }
     return SPG_OK;
