@@ -376,9 +376,53 @@ static int test_exemplars_render(void) {
     return 0;
 }
 
+/* A free-text goal renders as (goal "...") near the top (after the contract),
+ * so the model reads its objective. Absent -> no goal line. */
+static int test_goal_render(void) {
+    const struct spg_run_config    run   = {.budgets = {.tokens = 100u}};
+    const struct spg_policy_usage  usage = {};
+    struct spg_context_graph_ref   graph_refs[1];
+    struct spg_context_memory_ref  memory_refs[1];
+    struct spg_context_journal_ref journal_refs[1];
+    struct spg_context_view        view = {};
+    spg_context_view_init(&view, 1u, graph_refs, 1u, memory_refs, 1u,
+                          journal_refs);
+    const struct spg_context_limits limits = {
+        .graph_nodes = 1u, .memory_facts = 1u, .journal_events = 1u};
+
+    struct spg_context_sources sources = {
+        .run = &run, .usage = &usage, .goal = "print GOAL-MARK to stdout"};
+    if (spg_context_build(&sources, &limits, &view) != SPG_OK) {
+        return 1;
+    }
+    char   buf[4096];
+    size_t req = 0u;
+    if (spg_context_render(&sources, &view, sizeof buf, buf, &req) != SPG_OK) {
+        return 1;
+    }
+    if (strstr(buf, "(goal ") == nullptr ||
+        strstr(buf, "GOAL-MARK") == nullptr) {
+        return 1;
+    }
+    if (strstr(buf, "(contract") == nullptr ||
+        strstr(buf, "(contract") > strstr(buf, "(goal ")) {
+        return 1; /* goal follows the contract */
+    }
+    sources.goal = nullptr; /* absent -> no goal line */
+    (void)spg_context_render(&sources, &view, sizeof buf, buf, &req);
+    if (strstr(buf, "(goal ") != nullptr) {
+        return 1;
+    }
+    return 0;
+}
+
 int main(void) {
     if (test_exemplars_render() != 0) {
         fprintf(stderr, "test_exemplars_render failed\n");
+        return 1;
+    }
+    if (test_goal_render() != 0) {
+        fprintf(stderr, "test_goal_render failed\n");
         return 1;
     }
     if (test_budget_view() != 0) {

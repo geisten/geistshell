@@ -2064,6 +2064,10 @@ static int agent_command(int argc, char **argv) {
         .memory_index_capacity   = sizeof mem_index,
         .memory_index            = mem_index,
     };
+    char *goal_cstr = nullptr; /* materialized (goal "...") span, or null */
+    if (run.has_goal) {
+        (void)span_to_cstr(run_text.n, run_text.data, run.goal, &goal_cstr);
+    }
     const struct spg_agent_run_inputs inputs = {
         .model         = &model,
         .policy        = &policy,
@@ -2074,6 +2078,7 @@ static int agent_command(int argc, char **argv) {
         .store         = store_open ? &store : nullptr,
         .journal       = &journal,
         .exemplars     = exemplars_text.data, /* null when --exemplars absent */
+        .goal          = goal_cstr,           /* null when (goal ...) absent */
     };
     const struct spg_agent_run_config rcfg = {
         .max_steps         = max_steps,
