@@ -1,5 +1,7 @@
 #include "geistshell/orchestrator.h"
 
+#include <string.h>
+
 static bool workspace_valid(const struct spg_orchestrator_workspace *workspace) {
     if (workspace == nullptr || workspace->policy_payload == nullptr ||
         workspace->policy_payload_capacity == 0u ||
@@ -387,6 +389,17 @@ enum spg_status spg_orchestrator_tick(
                                    &sim_workspace, &result->sim);
     if (status != SPG_OK) {
         return status;
+    }
+    /* Mirror the sim result onto the shared observation channel (sim otherwise
+     * only writes sim_payload + the journal). This gives the model the outcome
+     * of its own action as the next observation — feedback it was flying
+     * without — and lets an expect-based verdict see the result. */
+    if (workspace->observation_buf != nullptr &&
+        workspace->observation_capacity > 0u) {
+        const size_t cap = workspace->observation_capacity;
+        const size_t n   = strnlen(workspace->sim_payload, cap - 1u);
+        memcpy(workspace->observation_buf, workspace->sim_payload, n);
+        workspace->observation_buf[n] = '\0';
     }
     result->stage = SPG_ORCHESTRATOR_STAGE_SIM_EXECUTED;
     return SPG_OK;
