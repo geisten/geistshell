@@ -122,6 +122,13 @@ struct spg_model_adapter {
     const char *api_key;
     float       temperature;
     float       top_p;
+
+    /* Best-of-N (#… verifier-guided sampling): when temperature > 0 the masked
+     * choice slots (kind, capability) sample among the valid tokens instead of
+     * taking the argmax, so different seeds explore different valid decisions
+     * and the verifier can pick the winning run. Own RNG because the mask can't
+     * go through the session sampler. GEIST only. */
+    uint64_t    choice_rng;
 };
 
 struct spg_model_generate_request {
