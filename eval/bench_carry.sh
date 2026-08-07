@@ -36,10 +36,12 @@ run_one() { # $1 goalword $2 exemplar-file-or-empty $3 journal -> prints verdict
         | sed -n 's/.*verdict=\([a-z_]*\).*/\1/p' | tail -1
 }
 
-# extract the emitted (recommend ...) form from a journal, as an exemplar line
+# extract the model's emitted (recommend ...) form — one with a CONCRETE kind,
+# not the (kind <a|b|c>) schema template that also appears in the journal.
 extract_form() { # $1 journal
-    strings "$1" 2>/dev/null | grep -m1 -oE '\(recommend \(kind[^~]{0,220}' \
-        | sed -E 's/\)[^)]*$/))/'  # trim any trailing garbage to a clean close
+    strings "$1" 2>/dev/null | grep -m1 -oE \
+        '\(recommend \(kind[[:space:]]*(local_shell|simulator|ssh_auth_probe|memory_save|memory_delete|memory_read|finish)\)[^~]{0,240}' \
+        | sed -E 's/(.*\)\)).*/\1/'  # trim to the last )) -> a clean closed form
 }
 
 run_seq() { # $1 = carry(1/0) -> prints "pass_count detail"
