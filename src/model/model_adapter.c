@@ -161,9 +161,12 @@ static enum spg_status emit_literal(struct spg_model_adapter *adapter,
 }
 
 /* Free-decode one scaffold string value (#34): the model fills the slot, but we
- * stop at the first character that would close or corrupt the string — the
- * closing quote, a newline, or a paren — so the surrounding scaffold literal
- * supplies the delimiter. Bounded so a runaway slot cannot eat the budget. */
+ * stop at the first character that would close or corrupt the STRING — the
+ * closing quote or a newline (a newline is a hard error inside an s-expr string;
+ * see sexpr.c). Parens are NOT stops: inside a quoted string they are literal,
+ * so the model may emit commands like `awk '{print}'` or `grep (x)`. The
+ * surrounding scaffold literal supplies the closing quote. Bounded so a runaway
+ * slot cannot eat the budget. */
 static enum spg_status decode_string_slot(struct spg_model_adapter *adapter,
                                           struct spg_model_generate_result *result) {
     for (size_t j = 0u; j < 64u; j += 1u) {
@@ -177,7 +180,7 @@ static enum spg_status decode_string_slot(struct spg_model_adapter *adapter,
         if (piece == nullptr || piece[0] == '\0') {
             return SPG_OK; /* eos ends the slot */
         }
-        const size_t stop = strcspn(piece, "\"\n\r()");
+        const size_t stop = strcspn(piece, "\"\n\r");
         if (piece[stop] != '\0') {
             return append_bytes(result, stop, piece); /* delimiter reached */
         }

@@ -448,6 +448,25 @@ it moved the number, and this time the number holds up.
 Dev-env note: the Mac's deps/geist pointed at a newer checkout lacking
 geist_util.h; switched to the pinned v0.2.1 via `make sync-engine`.
 
+## Extending constrained decoding (#1): parens in string values; full acceptor deferred
+
+The per-kind scaffold already takes valid emission from 0 to 100% on the
+recommendation DSL, so a general **token-level grammar acceptor** — masking every
+token against a live parser state — is deferred as YAGNI: its only benefit is
+generality for a *second* grammar (the natural place is the geistagent
+tool-calling path, if/when the two runtimes unify), and it is a large,
+subword-boundary-hard rewrite for no gain on the DSL we have.
+
+The concrete extension that *does* add capability: `decode_string_slot` used to
+stop a string value at `"`, newline, **or a paren**. But inside an s-expr string
+parens are literal (sexpr.c only forbids raw `"`, newline, and stray
+backslash-escapes), so stopping at parens needlessly banned real commands —
+`awk '{print}'`, `grep (x)`. Relaxed the stop set to `"`/newline only; the whole
+string-slot family (command, target, reason, slug, description, body) now admits
+parens. `test_valid_command_with_parens` confirms such a form parses VALID, so
+the relaxation cannot emit an unparseable value. Raw `"` inside a value still
+ends the slot (the model would need `\"`); auto-escaping is a further step.
+
 ## Real-model completion: exemplars are necessary but not sufficient (2026-08-02)
 
 Path B added an `(examples ...)` context slot so a small model gets concrete
