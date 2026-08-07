@@ -25,14 +25,15 @@ D=$(mktemp -d); trap 'rm -rf "$D"' EXIT
 
 mk_scen() { printf '(scenario\n (host (id web) (criticality_bp 8000))\n (host (id db) (criticality_bp 10000))\n (service (id ssh_web) (host web) (name ssh) (port 22) (exposure_bp 5000))\n (account (id root_web) (host web) (username root) (enabled true))\n (credential (id key_root_web) (account root_web) (strength_bp 3000))\n (vulnerability (id cve_demo) (service ssh_web) (severity_bp 8000) (patched false))\n (network_edge (from web) (to db) (reachability_bp 5000)))\n' > "$1"; }
 mk_scen "$D/sc.spg"
-# both simulator and local_shell enabled -> the kind is a real choice
-printf '(policy\n (network deny)\n (budgets (inference_steps 6) (tokens 4096) (shell_actions 2) (sim_actions 6) (wall_ms 240000) (journal_bytes 1048576) (risk_bp 10000) (memory_actions 64))\n (capability\n  ((name sim.act) (kind simulator) (enabled true) (budget 6))\n  ((name build.run) (kind local_shell) (enabled true) (budget 2))))\n' > "$D/pol.spg"
+# examples/policy.spg already enables BOTH simulator (sim.act) and local_shell
+# (build.run) -> the kind is a real choice, no custom (broken) policy needed.
+POL=examples/policy.spg
 
 # one attempt: prints "<endpoint> <sticky>" as 0/1, where sticky = word in journal
 attempt() { # $1 goalword $2 temp $3 seed
     J="$D/j.sgj"
     printf '(run (model "%s") (policy "%s") (scenario "%s") (corpus "examples/corpus.spg") (journal "%s") (seed 1)\n (budgets (inference_steps 6) (tokens 512) (shell_actions 2) (sim_actions 6) (wall_ms 240000) (journal_bytes 1048576) (risk_bp 10000))\n (goal "Run a local shell command that prints the word %s.") (expect "%s"))\n' \
-        "$MODEL" "$D/pol.spg" "$D/sc.spg" "$J" "$1" "$1" > "$D/run.spg"
+        "$MODEL" "$POL" "$D/sc.spg" "$J" "$1" "$1" > "$D/run.spg"
     V=$("$SPG" agent --config "$D/run.spg" --constrained --allow-exec \
             --temperature "$2" --seed "$3" 2>/dev/null | sed -n 's/.*verdict=\([a-z_]*\).*/\1/p' | tail -1 || true)
     ep=0; [ "$V" = "pass" ] && ep=1
