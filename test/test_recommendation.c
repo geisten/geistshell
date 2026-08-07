@@ -53,6 +53,25 @@ static int test_valid_local_shell(void) {
     return 0;
 }
 
+/* A command value with parens parses (parens are literal inside an s-expr
+ * string) — this is why the constrained decoder may leave them unstopped. */
+static int test_valid_command_with_parens(void) {
+    const char text[] =
+        "(recommend (kind local_shell) (capability \"local\") (cost 1) "
+        "(uses_network false) (confidence_bp 5000) "
+        "(reason \"filter\") (command \"awk '{print (1+2)}' (file)\"))";
+    struct spg_recommendation       rec = {};
+    struct spg_recommendation_error err = {};
+    if (parse_text(text, &rec, &err) != SPG_OK) {
+        return 1;
+    }
+    return (rec.state == SPG_RECOMMENDATION_VALID &&
+            rec.action_kind == SPG_ACTION_LOCAL_SHELL && rec.has_command &&
+            rec.command.length == strlen("awk '{print (1+2)}' (file)"))
+               ? 0
+               : 1;
+}
+
 static int test_valid_ssh_probe(void) {
     const char text[] =
         "(recommend (kind ssh_auth_probe) (capability \"ssh\") (cost 1) "
@@ -250,6 +269,10 @@ int main(void) {
     }
     if (test_valid_local_shell() != 0) {
         fprintf(stderr, "test_valid_local_shell failed\n");
+        return 1;
+    }
+    if (test_valid_command_with_parens() != 0) {
+        fprintf(stderr, "test_valid_command_with_parens failed\n");
         return 1;
     }
     if (test_valid_ssh_probe() != 0) {
