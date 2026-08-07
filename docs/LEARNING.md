@@ -371,26 +371,50 @@ choice slots (kind, capability) now take a softmax draw at temperature instead o
 the argmax; different seeds explore different **valid** decisions and the
 verifier keeps the first run that passes (`bench_bestof.sh`, T=0.8, N=4).
 
-Result: **best-of-N 2/5 vs greedy 0/5.**
+**First measurement was contaminated — corrected below.** The initial run
+reported best-of-N 2/5 vs greedy 0/5, but two confounds invalidated it:
+1. **A harness bug.** The competing-capability policy for the shell corpus used
+   `(network deny)` (not `network_default`) and a wrong `budgets` order →
+   `SPG_E_SCHEMA`, so every shell run instant-failed at policy load in ~4 ms.
+   The "shell 0/N" was a broken policy, not a model result.
+2. **A non-quiesced box.** The Pi ran the always-on `geist --serve` home daemon
+   the whole time (the [quiesce-the-box] lesson, ignored). Greedy's outcome on
+   the borderline tasks turned out to depend on the OMP thread count — with the
+   daemon holding a core, geistshell got a different thread count, a different
+   fp reduction order, a different argmax, a different trajectory. Greedy flipped
+   pass↔fail across sessions on identical config.
 
-- **Simulator corpus (2 tasks): 0 → 2.** Greedy's single trajectory wanders
-  between `simulator` and `local_shell` and ends on a shell action (`exit 0`),
-  so the `sim_result` criterion misses; best-of-N samples trajectories and the
-  verifier picks one that ends on a sim action. Real recovery — exactly the
-  unreliability best-of-N exists to absorb.
-- **Shell-goal corpus with a competing capability (3 tasks): 0 → 0.** With both
-  `simulator` and `local_shell` enabled the model has a genuine kind choice and
-  wanders; four samples were not enough to land a passing trajectory. Harder
-  case — more samples, or a less endpoint-sensitive verifier, is the follow-up.
+Fixed both: `examples/policy.spg` already enables both kinds (it *is* the
+competing-capability policy), and the home daemon was stopped and disabled.
+Re-run three times on the quiesced box (`bench_bestof.sh`, N=6, T=0.9):
 
-Two honest caveats. The `expect` criterion is trajectory-*endpoint* sensitive
-(it checks the last observation), so it partly rewards ending on the right
-action rather than doing the right thing — a weakness of the corpus, not of
-best-of-N. And N=4 is small. But the direction is clear and it is the pattern
-this whole exercise endorses: let a fast weak model attempt several times and let
-the verifier — not the model — decide. Best-of-N is the sampling form of the
-same principle as constrained decoding; unlike learned directives, it moved the
-number.
+| | greedy | best-of-6 |
+|---|---|---|
+| simA sev=4000 | fail | pass (attempt 2) |
+| simA sev=8000 | fail | pass (attempt 1) |
+| shellB READY | pass | pass |
+| shellB DONE | pass | pass |
+| shellB OKAY | fail | pass (attempt 2) |
+| **total** | **2/5** | **5/5** |
+
+**Reproducible — three runs byte-identical.** Best-of-N recovers all three greedy
+failures within 1–2 attempts. This is the clean, positive result; the earlier
+number was noise.
+
+Two properties worth stating. (a) The engine's greedy decode is **not
+deterministic across thread counts** — argmax depends on the fp reduction order,
+which depends on how many OMP threads run. It is deterministic within a fixed
+quiesced box (hence the 3× identical runs), which is now the canonical
+measurement state. (b) The `expect` criterion is trajectory-*endpoint* sensitive
+(checks the last observation), so the two simulator failures are partly greedy
+ending on the wrong action, not doing the wrong thing — a corpus weakness, not a
+best-of-N one. The shell `OKAY` failure is a genuine task miss that best-of-N
+recovers.
+
+The direction is clear and reproducible: let a fast weak model attempt several
+times and let the verifier — not the model — decide. Best-of-N is the sampling
+form of the same principle as constrained decoding; unlike learned directives,
+it moved the number, and this time the number holds up.
 
 Dev-env note: the Mac's deps/geist pointed at a newer checkout lacking
 geist_util.h; switched to the pinned v0.2.1 via `make sync-engine`.

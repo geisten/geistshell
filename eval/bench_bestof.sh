@@ -58,9 +58,10 @@ mkrun() { # $1 journal $2 scenario $3 policy $4 goal-line -> writes run.spg, pri
 # --- corpus A: simulator scenarios (rising severity) ---
 mk_scen() { printf '(scenario\n (host (id web) (criticality_bp 8000))\n (host (id db) (criticality_bp 10000))\n (service (id ssh_web) (host web) (name ssh) (port 22) (exposure_bp 5000))\n (account (id root_web) (host web) (username root) (enabled true))\n (credential (id key_root_web) (account root_web) (strength_bp 3000))\n (vulnerability (id cve_demo) (service ssh_web) (severity_bp %s) (patched false))\n (network_edge (from web) (to db) (reachability_bp 5000)))\n' "$1" > "$2"; }
 
-# corpus B policy: BOTH simulator and local_shell enabled -> the kind is a real choice.
-POLB="$T2/policy_both.spg"
-printf '(policy\n (network deny)\n (budgets (inference_steps 6) (tokens 4096) (shell_actions 2) (sim_actions 6) (wall_ms 240000) (journal_bytes 1048576) (risk_bp 10000) (memory_actions 64))\n (capability\n  ((name sim.act) (kind simulator) (enabled true) (budget 6))\n  ((name build.run) (kind local_shell) (enabled true) (budget 2))))\n' > "$POLB"
+# corpus B: examples/policy.spg already enables BOTH simulator and local_shell,
+# so it is the competing-capability policy (an earlier custom one had a schema
+# error and instant-failed every run -> a false 0/N).
+POLB=examples/policy.spg
 
 printf '%-22s | %-6s | %-9s | %-8s\n' task greedy best-of-N attempts
 printf -- '-----------------------+--------+-----------+---------\n'
