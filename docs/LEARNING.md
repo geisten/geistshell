@@ -357,6 +357,35 @@ goal-directed shell task (goal "print READY", `build.run` budget 1):
   `termination=finished, verdict=pass` (control). A budget denial with no prior
   progress stays a real DENIED.
 
+### In-conversation example carry (Hebel 1) — hurts, and here is why
+
+The directive failure suggested a different form of learning that ought to suit
+a small model better: not an abstract lesson but **the model's own verified
+successes carried as few-shot examples** into later turns of the same session
+(imitation of concrete recent examples, the half this project measured as
+*working*). `bench_carry.sh` runs a sequence of same-shape goals (print a word
+via local_shell); each turn the verifier passes contributes its emitted
+`(recommend ...)` form to the `(examples ...)` slot the next turns see. Reuses
+the existing exemplar channel — no engine change.
+
+Measured on the quiesced Pi:
+
+    no-carry: 5/6   READY:P DONE:P OKAY:.  FINE:P GOOD:P SET:P
+    carry:    3/6   READY:P DONE:P OKAY:P  FINE:.  GOOD:. SET:.
+
+**Carry made it worse (5/6 → 3/6), and progressively — every later turn fell
+once the exemplars accumulated.** The mechanism is confirmed directly: with the
+READY/DONE/OKAY forms carried, goal *FINE* emitted `(command "echo READY")` — it
+**copied a prior example's content** instead of following the current goal. A
+small model imitating concrete examples cannot separate "copy the *structure*"
+from "copy the *content*"; the verified example poisons the next task with the
+previous task's answer. (Individual borderline tasks are thread-noisy, so the
+exact count is soft, but the direction and the copy mechanism are clear.)
+
+So even the *right-shaped* learning — concrete, recent, verified — backfires on
+a 2B model. Directives are ignored; examples are over-imitated. Both forms of
+runtime in-context learning fail; the guardrails and best-of-N do not.
+
 This is the conclusion made concrete: the learned path was given its strongest
 possible form and still did not lift; the deterministic rule did. On small
 greedy models, build guardrails.
