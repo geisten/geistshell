@@ -1782,6 +1782,7 @@ static int agent_command(int argc, char **argv) {
     float       sample_temp    = 0.0f; /* >0 lets the free slots vary (best-of-N) */
     bool        has_seed       = false;
     uint64_t    seed_override  = 0u; /* per-attempt seed for best-of-N sampling */
+    size_t      best_of        = 1u; /* #2: verifier-guided best-of-N attempts */
     for (int i = 2; i < argc; i += 1) {
         if ((strcmp(argv[i], "--config") == 0 ||
              strcmp(argv[i], "--run") == 0) &&
@@ -1847,6 +1848,14 @@ static int agent_command(int argc, char **argv) {
         if (strcmp(argv[i], "--seed") == 0 && i + 1 < argc) {
             seed_override = (uint64_t)strtoull(argv[i + 1], nullptr, 10);
             has_seed      = true;
+            i += 1;
+            continue;
+        }
+        if (strcmp(argv[i], "--best-of") == 0 && i + 1 < argc) {
+            best_of = (size_t)strtoull(argv[i + 1], nullptr, 10);
+            if (best_of == 0u) {
+                best_of = 1u;
+            }
             i += 1;
             continue;
         }
@@ -2002,6 +2011,12 @@ static int agent_command(int argc, char **argv) {
         }
     }
 
+    /* Best-of-N needs the choice slots to vary between attempts (#2); if the
+     * caller asked for it without a temperature, sample. */
+    if (best_of > 1u && sample_temp == 0.0f) {
+        sample_temp = 0.8f;
+    }
+
     /* --fake-script -> the scripted fake; otherwise the real model at the
      * config's (model ...) path, run and JOURNALED — the production path P6
      * (directive injection) and P7 (recurrence audit) read. */
@@ -2118,7 +2133,41 @@ static int agent_command(int argc, char **argv) {
     };
     struct spg_policy_usage      usage       = {};
     struct spg_agent_loop_result loop_result = {};
-    status = spg_agent_run(&inputs, &rcfg, &ws, &usage, &loop_result);
+
+    /* Optional success criterion (docs/LEARNING.md P1): judge the real run the
+     * same way the eval loop judges a scripted case — model-free, zero tokens. */
+    const bool have_expect =
+        run.has_expect && run.expect_observation.length < sizeof observation;
+    char                   expect_obs[AGENT_OBS_BYTES];
+    struct spg_eval_expect expect = {};
+    if (have_expect) {
+        memcpy(expect_obs, run_text.data + run.expect_observation.offset,
+               run.expect_observation.length);
+        expect_obs[run.expect_observation.length] = '\0';
+        expect = (struct spg_eval_expect){.check_termination = true,
+                                          .termination = SPG_AGENT_LOOP_FINISHED,
+                                          .observation = expect_obs};
+    }
+
+    /* Verifier-guided best-of-N (#2): up to best_of attempts, model loaded once;
+     * the choice-slot RNG drifts between attempts (temperature > 0), so each
+     * explores different valid decisions, and we keep the first the verifier
+     * passes. Needs an (expect ...) to select on — without it a single run. */
+    const size_t         attempts = have_expect ? best_of : 1u;
+    enum spg_eval_outcome verdict  = SPG_EVAL_PASS;
+    size_t                used     = 0u;
+    for (size_t a = 0u; a < attempts; a += 1u) {
+        used  = a + 1u;
+        usage = (struct spg_policy_usage){}; /* each attempt is independent */
+        status = spg_agent_run(&inputs, &rcfg, &ws, &usage, &loop_result);
+        if (!have_expect) {
+            break;
+        }
+        verdict = spg_eval_judge(&expect, &loop_result, status, observation);
+        if (verdict == SPG_EVAL_PASS) {
+            break;
+        }
+    }
     printf("steps=%zu termination=%s journal=%s\n", loop_result.steps_taken,
            spg_agent_loop_termination_to_string(loop_result.termination),
            journal_path);
@@ -2127,23 +2176,12 @@ static int agent_command(int argc, char **argv) {
     }
     rc = (status == SPG_OK) ? 0 : 1;
 
-    /* Optional success criterion (docs/LEARNING.md P1): judge the real run the
-     * same way the eval loop judges a scripted case — model-free, zero tokens.
-     * The verdict is the ground truth a learning case needs; a FAIL exits
-     * non-zero so a caller (and a future miner) can act on it. */
-    if (run.has_expect && run.expect_observation.length < sizeof observation) {
-        char expect_obs[AGENT_OBS_BYTES];
-        memcpy(expect_obs, run_text.data + run.expect_observation.offset,
-               run.expect_observation.length);
-        expect_obs[run.expect_observation.length] = '\0';
-        const struct spg_eval_expect expect = {
-            .check_termination = true,
-            .termination       = SPG_AGENT_LOOP_FINISHED,
-            .observation       = expect_obs,
-        };
-        const enum spg_eval_outcome verdict =
-            spg_eval_judge(&expect, &loop_result, status, observation);
+    if (have_expect) {
         printf("verdict=%s\n", spg_eval_outcome_to_string(verdict));
+        if (attempts > 1u) {
+            printf("best_of=%zu attempts_used=%zu\n", attempts, used);
+        }
+        /* a FAIL exits non-zero so a caller (and a future miner) can act on it */
         if (verdict != SPG_EVAL_PASS && rc == 0) {
             rc = 1;
         }
