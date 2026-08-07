@@ -1779,6 +1779,9 @@ static int agent_command(int argc, char **argv) {
     size_t      max_repairs    = 2u;
     bool        allow_exec     = false;
     bool        constrained    = false;
+    float       sample_temp    = 0.0f; /* >0 lets the free slots vary (best-of-N) */
+    bool        has_seed       = false;
+    uint64_t    seed_override  = 0u; /* per-attempt seed for best-of-N sampling */
     for (int i = 2; i < argc; i += 1) {
         if ((strcmp(argv[i], "--config") == 0 ||
              strcmp(argv[i], "--run") == 0) &&
@@ -1833,6 +1836,17 @@ static int agent_command(int argc, char **argv) {
         if (strcmp(argv[i], "--directive-slug") == 0 && i + 1 < argc) {
             /* render this stored lesson's directive every step (strong channel) */
             directive_slug = argv[i + 1];
+            i += 1;
+            continue;
+        }
+        if (strcmp(argv[i], "--temperature") == 0 && i + 1 < argc) {
+            sample_temp = (float)atof(argv[i + 1]);
+            i += 1;
+            continue;
+        }
+        if (strcmp(argv[i], "--seed") == 0 && i + 1 < argc) {
+            seed_override = (uint64_t)strtoull(argv[i + 1], nullptr, 10);
+            has_seed      = true;
             i += 1;
             continue;
         }
@@ -2006,9 +2020,10 @@ static int agent_command(int argc, char **argv) {
                   .capabilities     = agent_caps,
                   .capability_count = agent_caps_n,
                   .sampling         = {.max_seq_len = 4096u,
-                                       .temperature = 0.0f,
+                                       .temperature = sample_temp,
                                        .top_p       = 1.0f,
-                                       .random_seed = run.seed},
+                                       .random_seed =
+                                           has_seed ? seed_override : run.seed},
               };
     status = spg_model_adapter_init(&model, &model_config);
     if (status != SPG_OK) {

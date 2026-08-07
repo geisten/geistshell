@@ -361,6 +361,37 @@ This is the conclusion made concrete: the learned path was given its strongest
 possible form and still did not lift; the deterministic rule did. On small
 greedy models, build guardrails.
 
+## Verifier-guided best-of-N (measured, Pi/Gemma)
+
+The one deterministic lever left: geistshell has a verifier (policy gate +
+`expect` + the world) but ran a single greedy trajectory. Best-of-N is the
+sampling counterpart of constrained decoding — stochastic attempts, deterministic
+selection. For it to bite, the model's *decision* must vary, so the masked
+choice slots (kind, capability) now take a softmax draw at temperature instead of
+the argmax; different seeds explore different **valid** decisions and the
+verifier keeps the first run that passes (`bench_bestof.sh`, T=0.8, N=4).
+
+Result: **best-of-N 2/5 vs greedy 0/5.**
+
+- **Simulator corpus (2 tasks): 0 → 2.** Greedy's single trajectory wanders
+  between `simulator` and `local_shell` and ends on a shell action (`exit 0`),
+  so the `sim_result` criterion misses; best-of-N samples trajectories and the
+  verifier picks one that ends on a sim action. Real recovery — exactly the
+  unreliability best-of-N exists to absorb.
+- **Shell-goal corpus with a competing capability (3 tasks): 0 → 0.** With both
+  `simulator` and `local_shell` enabled the model has a genuine kind choice and
+  wanders; four samples were not enough to land a passing trajectory. Harder
+  case — more samples, or a less endpoint-sensitive verifier, is the follow-up.
+
+Two honest caveats. The `expect` criterion is trajectory-*endpoint* sensitive
+(it checks the last observation), so it partly rewards ending on the right
+action rather than doing the right thing — a weakness of the corpus, not of
+best-of-N. And N=4 is small. But the direction is clear and it is the pattern
+this whole exercise endorses: let a fast weak model attempt several times and let
+the verifier — not the model — decide. Best-of-N is the sampling form of the
+same principle as constrained decoding; unlike learned directives, it moved the
+number.
+
 Dev-env note: the Mac's deps/geist pointed at a newer checkout lacking
 geist_util.h; switched to the pinned v0.2.1 via `make sync-engine`.
 

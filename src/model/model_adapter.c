@@ -195,6 +195,17 @@ static enum spg_status decode_string_slot(struct spg_model_adapter *adapter,
  * text so the value carries no spurious space (correct for kind and capability,
  * whose names contain none). The chosen name is written to out[]. Bails (leaving
  * out partial) if no valid continuation exists. */
+/* xorshift64 -> uniform [0,1). The choice-slot best-of-N sampler needs its own
+ * RNG because the mask cannot go through the session's sampler. */
+static double choice_rand(struct spg_model_adapter *adapter) {
+    uint64_t x = adapter->choice_rng ? adapter->choice_rng : 0x9e3779b97f4a7c15ull;
+    x ^= x << 13;
+    x ^= x >> 7;
+    x ^= x << 17;
+    adapter->choice_rng = x;
+    return (double) (x >> 11) * (1.0 / 9007199254740992.0);
+}
+
 static enum spg_status decode_choice_slot(
     struct spg_model_adapter *adapter, struct spg_model_generate_result *result,
     const char *const *names, const size_t names_n, char *out,
@@ -209,23 +220,57 @@ static enum spg_status decode_choice_slot(
         if (logits == nullptr || n_vocab == 0u) {
             break;
         }
-        geist_token_t best       = -1;
-        float         best_logit = -INFINITY;
-        for (size_t t = 0u; t < n_vocab; t += 1u) {
-            if (logits[t] <= best_logit) {
-                continue;
-            }
+        /* Collect the valid tokens once, then pick: argmax (greedy) or a
+         * softmax draw at temperature (best-of-N explores valid decisions).
+         * ponytail: 512-candidate cap — kind/capability prefixes never approach
+         * it; widen if a larger vocabulary of names is ever masked here. */
+        geist_token_t cand[512];
+        float         cand_logit[512];
+        size_t        nc   = 0u;
+        float         maxl = -INFINITY;
+        for (size_t t = 0u; t < n_vocab && nc < 512u; t += 1u) {
             const char *piece =
                 geist_session_token_to_str(adapter->session, (geist_token_t) t);
             if (piece == nullptr ||
                 !spg_choice_prefix_ok(names, names_n, out, piece)) {
                 continue;
             }
-            best       = (geist_token_t) t;
-            best_logit = logits[t];
+            cand[nc]       = (geist_token_t) t;
+            cand_logit[nc] = logits[t];
+            if (logits[t] > maxl) {
+                maxl = logits[t];
+            }
+            nc += 1u;
         }
-        if (best < 0) {
+        if (nc == 0u) {
             break;
+        }
+        geist_token_t best = cand[0];
+        if (adapter->temperature > 0.0f) {
+            double sum = 0.0;
+            for (size_t i = 0u; i < nc; i += 1u) {
+                sum += exp((double) (cand_logit[i] - maxl) /
+                           (double) adapter->temperature);
+            }
+            const double r   = choice_rand(adapter) * sum;
+            double       acc = 0.0;
+            best             = cand[nc - 1u]; /* fp-rounding fallback */
+            for (size_t i = 0u; i < nc; i += 1u) {
+                acc += exp((double) (cand_logit[i] - maxl) /
+                           (double) adapter->temperature);
+                if (r <= acc) {
+                    best = cand[i];
+                    break;
+                }
+            }
+        } else {
+            float best_logit = cand_logit[0];
+            for (size_t i = 1u; i < nc; i += 1u) {
+                if (cand_logit[i] > best_logit) {
+                    best_logit = cand_logit[i];
+                    best       = cand[i];
+                }
+            }
         }
         const char *piece = geist_session_token_to_str(adapter->session, best);
         const char *ap    = piece;
@@ -482,6 +527,12 @@ spg_model_adapter_init(struct spg_model_adapter *adapter,
         spg_model_adapter_destroy(adapter);
         return map_geist_status(geist_status);
     }
+
+    /* Best-of-N: temperature drives whether the masked choice slots sample; a
+     * nonzero RNG seed derived from the sampling seed makes different seeds
+     * explore different valid decisions. */
+    adapter->temperature = config->sampling.temperature;
+    adapter->choice_rng  = config->sampling.random_seed * 2654435761u + 1u;
 
     adapter->initialized = true;
     return SPG_OK;
