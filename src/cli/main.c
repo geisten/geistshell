@@ -36,6 +36,7 @@
 #include <string.h>
 #include <sys/file.h>
 #include <sys/resource.h>
+#include <sys/stat.h> /* stat: the audit dates a run against a lesson's mint */
 #include <time.h>
 #include <unistd.h> /* mkstemp/write/close/unlink: the guard-gate temp suite */
 
@@ -4343,11 +4344,38 @@ static int distill_command(int argc, char **argv) {
     return 0;
 }
 
+/* Modification time in whole seconds; false when the file is unreadable. */
+static bool file_mtime(const char *path, time_t *out) {
+    struct stat st;
+    if (stat(path, &st) != 0) {
+        return false;
+    }
+    *out = st.st_mtime;
+    return true;
+}
+
+/* The k-th counter of a recurrence tally, in the order of audit_slugs below —
+ * C has no pointer-to-member, and two counters do not earn a callback. */
+static size_t recurrence_slot(const struct spg_recurrence *r, const size_t k) {
+    return k == 0u ? r->rejected : r->denied;
+}
+
+static const char *const audit_slugs[] = {"lesson-rejected", "lesson-denied"};
+
 /* Longitudinal benefit audit (docs/LEARNING.md P7): a kept lesson earns its
- * keep only if its failure slug stops recurring in later real runs. Sum the
- * failure-mode events across the given journals and, for each kept lesson in
- * the memory dir, flag whether its slug still recurs (review) or has dropped
- * to zero (kept). Model-free: reads journals only. */
+ * keep only if its failure slug stops recurring in runs that happened AFTER it
+ * was minted. Summing every journal into one bucket cannot show that — the
+ * lesson exists *because* of a failure, so the pre-mint runs guarantee a
+ * non-zero count and the verdict would read "review" forever. One journal file
+ * is one run (the writer truncates on open), so the file count is the run count
+ * and the file's mtime is when that run finished; a lesson's mtime is when it
+ * was saved. Split the journals at the lesson's mtime, count hits per run on
+ * each side, and compare the two rates. Model-free: journals and mtimes only.
+ * ponytail: mtime at one-second granularity, and a run that STARTED before the
+ * mint but finished after it lands on the "after" side. Both only matter if
+ * runs and mints interleave inside a second; the nightly loop this is for is
+ * days apart. Stamping the mint time into the journal's first record would be
+ * exact — wire that when a run can outlive a mint. */
 static int audit_command(int argc, char **argv) {
     const char *memory_dir = nullptr;
     const char *journals[EVAL_MAX_CASES];
@@ -4370,18 +4398,27 @@ static int audit_command(int argc, char **argv) {
         return 2;
     }
 
+    /* Per journal, so the tallies can be re-split at any lesson's mint time
+     * without re-reading the files. */
+    struct spg_recurrence per[EVAL_MAX_CASES] = {};
+    time_t                finished[EVAL_MAX_CASES] = {};
     struct spg_recurrence total = {};
     for (size_t i = 0u; i < njournals; i += 1u) {
-        if (spg_journal_recurrence(journals[i], &total) != SPG_OK) {
+        if (spg_journal_recurrence(journals[i], &per[i]) != SPG_OK) {
             fprintf(stderr, "audit: cannot read journal %s\n", journals[i]);
             return 1;
         }
+        if (!file_mtime(journals[i], &finished[i])) {
+            finished[i] = 0; /* unreadable mtime: counts as an early run */
+        }
+        total.rejected += per[i].rejected;
+        total.denied += per[i].denied;
     }
     printf("{\"journals\":%zu,\"lesson-rejected\":%zu,\"lesson-denied\":%zu}\n",
            njournals, total.rejected, total.denied);
 
-    /* Cross-reference kept lessons: a slug present in memory whose recurrence
-     * is still > 0 is not doing its job. */
+    /* Cross-reference kept lessons: for each one, the failure rate before it
+     * existed against the rate since. */
     if (memory_dir != nullptr) {
         struct spg_mem_store store;
         if (spg_mem_store_open(&store, spg_mem_resolve_dir(memory_dir)) !=
@@ -4390,20 +4427,42 @@ static int audit_command(int argc, char **argv) {
             return 1;
         }
         char probe[SPG_MEM_DESC_MAX + 1u];
-        const struct {
-            const char *slug;
-            size_t      count;
-        } kept[] = {{"lesson-rejected", total.rejected},
-                    {"lesson-denied", total.denied}};
-        for (size_t i = 0u; i < sizeof kept / sizeof kept[0]; i += 1u) {
-            if (spg_mem_directive(&store, kept[i].slug, 0u, sizeof probe,
+        for (size_t k = 0u; k < sizeof audit_slugs / sizeof audit_slugs[0];
+             k += 1u) {
+            if (spg_mem_directive(&store, audit_slugs[k], 0u, sizeof probe,
                                   probe) == 0u) {
                 continue; /* no such lesson kept */
             }
-            printf(
-                "{\"lesson\":\"%s\",\"recurrence\":%zu,\"verdict\":\"%s\"}\n",
-                kept[i].slug, kept[i].count,
-                kept[i].count > 0u ? "review" : "kept");
+            char path[SPG_MEM_PATH_MAX];
+            (void)snprintf(path, sizeof path, "%s/%s.md", store.dir,
+                           audit_slugs[k]);
+            time_t minted = 0;
+            if (!file_mtime(path, &minted)) {
+                continue;
+            }
+
+            size_t before_runs = 0u, after_runs = 0u, before = 0u, after = 0u;
+            for (size_t i = 0u; i < njournals; i += 1u) {
+                if (finished[i] > minted) {
+                    after_runs += 1u;
+                    after += recurrence_slot(&per[i], k);
+                } else {
+                    before_runs += 1u;
+                    before += recurrence_slot(&per[i], k);
+                }
+            }
+            /* Rates compared by cross-multiplication, so no floats and no
+             * divide-by-zero. "pending" is the honest verdict while no run has
+             * yet had the chance to benefit. */
+            const char *verdict =
+                after_runs == 0u ? "pending"
+                : after == 0u    ? "kept"
+                : after * before_runs < before * after_runs ? "improving"
+                                                            : "review";
+            printf("{\"lesson\":\"%s\",\"before\":{\"runs\":%zu,\"hits\":%zu},"
+                   "\"after\":{\"runs\":%zu,\"hits\":%zu},\"verdict\":\"%s\"}\n",
+                   audit_slugs[k], before_runs, before, after_runs, after,
+                   verdict);
         }
     }
     return 0;

@@ -54,6 +54,29 @@ is the honest place to build "learns from use."
    slug keeps recurring, the lesson is flagged for revision or removal. A
    counter reads the journal; the model only ever runs in normal operation.
 
+   `audit <journal>… --memory-dir <d>` does that counting. One journal file is
+   one run, so the file count is the run count and the file's mtime is when the
+   run finished; the lesson file's mtime is when it was minted. The journals
+   split at that mtime and the audit reports hits-per-run on each side:
+
+   ```
+   {"journals":5,"lesson-rejected":8,"lesson-denied":0}
+   {"lesson":"lesson-rejected","before":{"runs":3,"hits":6},
+    "after":{"runs":2,"hits":2},"verdict":"improving"}
+   ```
+
+   The split is the whole point. A lesson exists *because* of a failure, so its
+   pre-mint runs guarantee a non-zero count; a single summed total can only ever
+   say "still recurring", and can never tell a lesson that works from one that
+   does not. Verdicts: `pending` (no run since the mint yet — the honest state
+   right after minting), `kept` (zero hits since), `improving` (a lower rate
+   since), `review` (no better).
+
+   Only the two journalled failure modes are counted, `lesson-rejected` and
+   `lesson-denied`. Budget, max-steps and error terminations mint lessons but
+   leave no marker in the journal, so they cannot be audited until the loop
+   writes one.
+
 ## Sequence-length discipline (small models)
 
 - **Slug-triggered auto-injection**, not model-directed recall: at the moment
