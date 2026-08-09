@@ -306,6 +306,104 @@ static int test_render_unknown(void) {
     return 0;
 }
 
+/* Processes render inside the block, in snapshot order, with the profile id a
+ * phase-6 action would target. */
+static int test_render_processes(void) {
+    struct spg_machine_state s = sample_state();
+    s.n_processes              = 2u;
+    s.processes[0]             = (struct spg_process_sample){
+        .cpu_bp = 5400u, .rss_bytes = 4096u, .role = SPG_PROCESS_ROLE_CRITICAL};
+    memcpy(s.processes[0].profile_id, "critical_app", sizeof "critical_app");
+    /* Unmanaged: no profile id, so the name is shown instead — one shape —
+     * and no role, because a role only ever comes from the profile. */
+    s.processes[1] = (struct spg_process_sample){
+        .cpu_bp = 3100u, .rss_bytes = 8192u, .role = SPG_PROCESS_ROLE_UNKNOWN};
+    memcpy(s.processes[1].name, "python3", sizeof "python3");
+
+    char   buf[SPG_MACHINE_RENDER_CAP];
+    size_t required = 0u;
+    if (spg_machine_state_render(&s, sizeof buf, buf, &required) != SPG_OK) {
+        return 1;
+    }
+    if (strstr(buf, "(process (id \"critical_app\") (role critical)"
+                    " (cpu-bp 5400) (rss-bytes 4096))") == nullptr) {
+        printf("  rendered: %s\n", buf);
+        return 1;
+    }
+    if (strstr(buf, "(process (id \"python3\") (role unknown)") == nullptr) {
+        return 1;
+    }
+    /* Nothing dropped -> no marker at all. */
+    if (strstr(buf, "processes-dropped") != nullptr) {
+        return 1;
+    }
+    s.processes_truncated = true;
+    s.process_count       = 100u;
+    if (spg_machine_state_render(&s, sizeof buf, buf, &required) != SPG_OK ||
+        strstr(buf, "(processes-dropped 98)") == nullptr) {
+        return 1;
+    }
+    /* Unknown total: the marker still appears, without inventing a count. */
+    s.process_count = SPG_MACHINE_UNKNOWN;
+    if (spg_machine_state_render(&s, sizeof buf, buf, &required) != SPG_OK ||
+        strstr(buf, "(processes-dropped unknown)") == nullptr) {
+        return 1;
+    }
+    return 0;
+}
+
+/* A process name is attacker-influenced input by the time it reaches the model
+ * (phase 16, attack 12). Quotes and backslashes must not close the form. */
+static int test_render_escapes_names(void) {
+    struct spg_machine_state s = sample_state();
+    s.n_processes              = 1u;
+    s.processes[0]             = (struct spg_process_sample){.cpu_bp = 1u};
+    memcpy(s.processes[0].name, "ev\"il\\x", sizeof "ev\"il\\x");
+
+    char   buf[SPG_MACHINE_RENDER_CAP];
+    size_t required = 0u;
+    if (spg_machine_state_render(&s, sizeof buf, buf, &required) != SPG_OK) {
+        return 1;
+    }
+    if (strstr(buf, "(id \"ev\\\"il\\\\x\")") == nullptr) {
+        printf("  rendered: %s\n", buf);
+        return 1;
+    }
+    /* Parens must balance: an injected quote could otherwise end the block
+     * early and let the rest read as model instructions. */
+    int depth = 0;
+    for (const char *c = buf; *c != '\0'; c += 1) {
+        if (*c == '(') {
+            depth += 1;
+        } else if (*c == ')') {
+            depth -= 1;
+        }
+        if (depth < 0) {
+            return 1;
+        }
+    }
+    return depth == 0 ? 0 : 1;
+}
+
+/* The declared cap must actually hold a full snapshot, or a caller sizing a
+ * stack buffer from it silently loses the block. */
+static int test_render_cap_holds_full_snapshot(void) {
+    struct spg_machine_state s = sample_state();
+    s.n_processes              = SPG_MACHINE_MAX_PROCESSES;
+    s.processes_truncated      = true;
+    for (size_t i = 0u; i < SPG_MACHINE_MAX_PROCESSES; i += 1u) {
+        s.processes[i] = (struct spg_process_sample){
+            .cpu_bp = 9999u, .rss_bytes = UINT64_MAX - 1u};
+        memcpy(s.processes[i].profile_id, "0123456789abcdef0123456789abcde",
+               32u);
+    }
+    char   buf[SPG_MACHINE_RENDER_CAP];
+    size_t required = 0u;
+    return spg_machine_state_render(&s, sizeof buf, buf, &required) == SPG_OK
+               ? 0
+               : 1;
+}
+
 static int test_render_deterministic(void) {
     const struct spg_machine_state s = sample_state();
     char                           a[512];
@@ -420,6 +518,9 @@ int main(void) {
         {"utilisation", test_utilisation},
         {"render", test_render},
         {"render_unknown", test_render_unknown},
+        {"render_processes", test_render_processes},
+        {"render_escapes_names", test_render_escapes_names},
+        {"render_cap_holds_full_snapshot", test_render_cap_holds_full_snapshot},
         {"render_deterministic", test_render_deterministic},
         {"render_limit", test_render_limit},
         {"null_args", test_null_args},

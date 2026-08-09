@@ -536,11 +536,11 @@ static int test_offer_keeps_best(void) {
  * nobody calls compiles fine and is useless. */
 static int test_sample_with_processes(void) {
     struct spg_machine_state first = {};
-    const enum spg_status    s1 =
-        spg_machine_sample_with_processes(1u, nullptr, 0u, nullptr, &first);
+    const enum spg_status    s1    = spg_machine_sample_with_processes(
+        1u, nullptr, 0u, nullptr, nullptr, &first);
     struct spg_machine_state second = {};
     const enum spg_status    s2     = spg_machine_sample_with_processes(
-        2u, &first.cpu, first.n_processes, first.processes, &second);
+        2u, &first.cpu, first.n_processes, first.processes, nullptr, &second);
     if (second.timestamp_ns != 2u) {
         return 1;
     }
@@ -578,8 +578,8 @@ static int test_sample_with_processes(void) {
     /* A non-empty prev list with a null pointer is a caller bug, not a crash.
      */
     struct spg_machine_state ignored = {};
-    if (spg_machine_sample_with_processes(3u, nullptr, 4u, nullptr, &ignored) !=
-        SPG_E_INVALID_ARG) {
+    if (spg_machine_sample_with_processes(3u, nullptr, 4u, nullptr, nullptr,
+                                          &ignored) != SPG_E_INVALID_ARG) {
         return 1;
     }
     return 0;

@@ -34,23 +34,6 @@ extern "C" {
  * config text (which is what policy_config does): a profile outlives the buffer
  * it was parsed from and is compared against process names every tick. */
 
-#define SPG_PROCESS_ID_CAP 32u
-#define SPG_PROCESS_MATCH_CAP 64u
-#define SPG_PROCESS_PROFILE_CAP 16u
-
-struct spg_process_profile_entry {
-    char                  id[SPG_PROCESS_ID_CAP];
-    char                  match[SPG_PROCESS_MATCH_CAP];
-    enum spg_process_role role;
-    bool                  may_pause;
-    bool                  may_stop;
-};
-
-struct spg_process_profile {
-    size_t                           count;
-    struct spg_process_profile_entry entries[SPG_PROCESS_PROFILE_CAP];
-};
-
 struct spg_process_profile_error {
     enum spg_status status;
     uint32_t        node_index;

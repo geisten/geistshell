@@ -35,6 +35,8 @@ struct spg_orchestrator_state {
     struct spg_graph          *graph;
     struct spg_memory         *memory;
     struct spg_journal_writer *journal;
+    /* Optional machine snapshot for the context (roadmap phase 3). */
+    const struct spg_machine_state *machine;
     struct spg_model_adapter  *model;
     struct spg_sim_config     *sim;
     struct spg_mem_store      *store;
