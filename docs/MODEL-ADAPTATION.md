@@ -295,8 +295,8 @@ Each step is separately measurable or trivial.
 |---|---|---|
 | 0 | `GEIST_REF` 0.2.1 → 0.8.2 *(done)* | No `I2_S`, no BitNet. Not one line — see below. |
 | 1 | libgeist: `geist_model_arch` → STABLE *(PR open)*. geistshell: copy the template table from geistagent, add `system_open` — lands with step 5 | Blocks everything model-specific. |
-| 2 | `eval` and `agent` onto the **same** decoder (finding D); `--temp` for `eval` (finding E) | Otherwise the baseline measures a configuration nobody runs. |
-| 3 | Per-sample fixture isolation + `make bench` | Otherwise every number from cases 2/3/7 is a lie. |
+| 2 | `eval` and `agent` onto the **same** decoder (finding D); `--temperature` for `eval`/`improve` (finding E) *(done)* | Otherwise the baseline measures a configuration nobody runs. |
+| 3 | Per-sample fixture isolation + `make bench` *(done)* | Otherwise every number from cases 2/3/7 is a lie. |
 | 4 | **Baseline: 7+7 cases, ladder metric, BitNet + Gemma, presets** | The zero point. Everything after is measured against it. |
 | 5 | Model profile as s-expression, incl. the `finish_on_no_progress` axis | First hypothesis tested against the zero point. |
 | 6 | Verifier ladder replaces the `have_expect` oracle | Makes `--best-of` honest. |

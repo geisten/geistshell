@@ -9,6 +9,7 @@
 #include "geistshell/agent_run.h"
 #include "geistshell/eval.h"
 #include "geistshell/exec_command.h"
+#include "geistshell/fixture.h"
 #include "geistshell/grammar_mask.h"
 #include "geistshell/guard_ring.h"
 #include "geistshell/improve.h"
@@ -2331,6 +2332,53 @@ struct eval_run_opts {
     float       temperature;
 };
 
+/* #52: one case-sample's sandbox. Big (the store carries an index cache), so
+ * the single instance lives in static storage at the call site. */
+struct eval_sandbox {
+    char                 dir[CLI_PATH_MAX];
+    struct spg_mem_store store;
+    bool                 store_open;
+};
+
+#define EVAL_SANDBOX_ROOT "build/eval"
+
+/* Rebuild sb for (case_name, sample): a pristine copy of fixture_dir, with the
+ * shared mind-palace overlaid into <dir>/mem when there is one.
+ *
+ * The overlay is what lets `improve` keep working: its candidate lesson lives
+ * in the shared store, and a case that simply ignored it would make the mint
+ * gate measure a run that never saw the lesson. Copying instead of sharing
+ * means the agent can also *write* memory without leaking into the next sample.
+ *
+ * Returns false if any step fails; the caller scores that sample as a run
+ * error rather than reporting a result measured against a dirty directory. */
+static bool eval_sandbox_prepare(struct eval_sandbox *sb, const char *case_name,
+                                 const size_t sample, const char *fixture_dir,
+                                 const struct spg_mem_store *shared) {
+    sb->store_open = false;
+    if (spg_fixture_sample_dir(EVAL_SANDBOX_ROOT, case_name, sample,
+                               sizeof sb->dir, sb->dir) != SPG_OK ||
+        spg_fixture_reset(sb->dir) != SPG_OK ||
+        spg_fixture_copy_into(sb->dir, fixture_dir) != SPG_OK) {
+        return false;
+    }
+    char mem[CLI_PATH_MAX];
+    const int n = snprintf(mem, sizeof mem, "%s/mem", sb->dir);
+    if (n < 0 || (size_t)n >= sizeof mem) {
+        return false;
+    }
+    /* The store creates the directory, so it exists before the overlay. */
+    if (spg_mem_store_open(&sb->store, mem) != SPG_OK) {
+        return false;
+    }
+    if (shared != nullptr &&
+        spg_fixture_copy_into(mem, shared->dir) != SPG_OK) {
+        return false;
+    }
+    sb->store_open = true;
+    return true;
+}
+
 /* Load a suite + its shared run/policy/scenario config and run every case with
  * the given mind-palace store (nullable) threaded into each run; fill *report.
  * Returns SPG_OK on a complete run. Prints nothing (the caller reports). */
@@ -2534,6 +2582,18 @@ static enum spg_status eval_run_suite(const char *suite_path,
             }
         }
 
+        /* #52: a case that declares a (fixture ...) runs inside a sandbox,
+         * rebuilt from the pristine fixture before EVERY sample. Without it a
+         * stateful case finds its own previous mutation and passes without
+         * performing the action under test. No fixture -> the historical
+         * behaviour (workdir ".", the shared store), byte for byte. */
+        char        fixture[CLI_PATH_MAX];
+        const bool  has_fixture =
+            eval_str(nod, c, suite_text.n, suite_text.data, "fixture", fixture,
+                     sizeof fixture);
+        static struct eval_sandbox sandbox_state;
+        const char *const          sandbox = sandbox_state.dir;
+
         const struct spg_agent_run_config rcfg = {
             .max_steps         = (size_t)max_steps,
             .max_repairs       = (size_t)max_repairs,
@@ -2542,6 +2602,8 @@ static enum spg_status eval_run_suite(const char *suite_path,
             .exec_stdout_cap   = sizeof sh_out,
             .exec_stderr_cap   = sizeof sh_err,
             .context_refs      = CLI_CONTEXT_REFS,
+            .exec_working_dir    = has_fixture ? sandbox : nullptr,
+            .exec_workdir_prefix = has_fixture ? sandbox : nullptr,
         };
         char       model_kind[16];
         const bool has_model =
@@ -2610,6 +2672,18 @@ static enum spg_status eval_run_suite(const char *suite_path,
                 for (size_t s = 0u; s < samples; s += 1u) {
                     struct spg_agent_run_inputs gin = inputs;
                     gin.model                       = &model;
+                    if (has_fixture) {
+                        if (!eval_sandbox_prepare(&sandbox_state, name, s,
+                                                  fixture, store)) {
+                            last = (struct spg_eval_case_result){
+                                .outcome = SPG_EVAL_FAIL_RUN_ERROR,
+                                .status  = SPG_E_IO};
+                            report->total += 1u;
+                            runs_in_case += 1u;
+                            continue;
+                        }
+                        gin.store = &sandbox_state.store;
+                    }
                     struct spg_policy_usage      usage = {};
                     struct spg_agent_loop_result loop  = {};
                     const enum spg_status        rs =
@@ -2645,9 +2719,22 @@ static enum spg_status eval_run_suite(const char *suite_path,
             const size_t script_n = split_script_lines(
                 script_text.data, script_text.n, script, EVAL_SCRIPT_MAX);
             for (size_t s = 0u; s < samples; s += 1u) {
+                struct spg_agent_run_inputs cin = inputs;
+                if (has_fixture) {
+                    if (!eval_sandbox_prepare(&sandbox_state, name, s,
+                                              fixture, store)) {
+                        last = (struct spg_eval_case_result){
+                            .outcome = SPG_EVAL_FAIL_RUN_ERROR,
+                            .status  = SPG_E_IO};
+                        report->total += 1u;
+                        runs_in_case += 1u;
+                        continue;
+                    }
+                    cin.store = &sandbox_state.store;
+                }
                 struct spg_eval_case_result r  = {};
                 const enum spg_status       cs = spg_eval_run_case(
-                          script, script_n, gate_marker, &inputs, &rcfg, &ws,
+                          script, script_n, gate_marker, &cin, &rcfg, &ws,
                           &expect, &r);
                 if (cs != SPG_OK) {
                     free_file_buffer(&script_text);

@@ -30,6 +30,7 @@ geistshell.**
 ```
 make            # build (host-debug: ASan/UBSan, strict warnings)
 make test       # framework-free C tests + CLI system tests
+make bench      # real-model benchmark (reports "skipped" when no GGUF is present)
 ./build/host-debug/bin/geistshell            # CLI: agent / eval / improve / run / exec / memory / replay / seal-journal / ...
 ./build/host-debug/bin/geistshell-chat       # governed chat REPL
 ```
@@ -144,6 +145,16 @@ Sampling has to be **asked for**, though: a local `(model "geist")` case is
 greedy by default, so `--samples 5` alone yields five identical runs. Pass
 `--temperature <t>` for the variance `k of N` is supposed to measure. A
 `(model "remote")` case varies on its own, server‑side.
+
+A case may declare `(fixture "<dir>")`. That directory is copied into
+`build/eval/<case>-<sample>/` **before every sample**, and the run's working
+directory and mind‑palace point there. Without it a stateful case finds its own
+previous mutation already in place and passes *without performing the action
+under test* — with `--samples N` that is N‑1 fabricated successes. A `mem/`
+subdirectory inside the fixture seeds the mind‑palace, so a case can be given
+memories to recall; when `improve` supplies a store, its contents are overlaid
+on top so a candidate lesson stays visible. Cases without a `(fixture ...)`
+behave exactly as before.
 
 `--constrained` runs `(model "geist")` cases through the *same* decoder as
 `geistshell agent --constrained` — forced prefix, kind and capability masked

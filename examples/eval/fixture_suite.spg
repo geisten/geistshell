@@ -1,0 +1,14 @@
+(eval_suite
+ (config "examples/eval/fixture_run.spg")
+ ;; #52: each sample runs in its own sandbox, rebuilt from the fixture.
+ (case (name "iso-write") (script "examples/eval/fixture_mutate.txt")
+       (fixture "examples/eval/fixtures/workdir") (allow_exec true) (max_steps 4)
+       (expect (termination finished)))
+ ;; A different case must not see iso-write's mutation.
+ (case (name "iso-probe") (script "examples/eval/fixture_probe.txt")
+       (fixture "examples/eval/fixtures/workdir") (allow_exec true) (max_steps 4)
+       (expect (termination finished) (observation "report.md")))
+ ;; A fixture may seed the mind-palace: mem/ is opened as the case's store.
+ (case (name "iso-mem") (script "examples/eval/fixture_recall.txt")
+       (fixture "examples/eval/fixtures/memory") (max_steps 4)
+       (expect (termination finished) (observation "8443"))))

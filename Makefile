@@ -85,6 +85,7 @@ SPG_SOURCES := \
     src/dsl/schema.c \
     src/dsl/sexpr.c \
     src/eval/eval.c \
+    src/eval/fixture.c \
     src/eval/guard_ring.c \
     src/exec/cmd_executor.c \
     src/exec/cmd_registry.c \
@@ -129,7 +130,7 @@ CHAT_OBJECTS := $(patsubst %.c,$(OBJ_DIR)/%.o,$(CHAT_SOURCES))
 TEST_BINS := $(patsubst test/%.c,$(TEST_DIR)/%,$(TEST_SOURCES))
 DEPS := $(SPG_OBJECTS:.o=.d) $(CLI_OBJECTS:.o=.d) $(CHAT_OBJECTS:.o=.d)
 
-.PHONY: all build-mode host-debug host-release sync-engine update-engine lib test clean distclean help
+.PHONY: all build-mode host-debug host-release sync-engine update-engine lib test bench clean distclean help
 
 all: host-debug
 
@@ -195,12 +196,18 @@ test: $(TEST_BINS) $(SPG_BIN)
 	done; \
 	exit $$status
 
+# Real-model benchmark. Deliberately NOT part of `test`: it needs a GGUF and
+# minutes, so a fresh checkout would be red. A missing model reports "skipped"
+# and exits 0 — see examples/eval/bench/model_bench.sh.
+bench: $(SPG_BIN)
+	@SPG_BIN="$(SPG_BIN)" sh examples/eval/bench/model_bench.sh
+
 $(TEST_DIR)/%: test/%.c $(SPG_LIB) $(GEIST_LIB)
 	@mkdir -p $(@D)
 	$(CC) $(CFLAGS) $(SPG_LD_FLAGS) -o $@ $< $(SPG_LIB) $(GEIST_LIB) $(LDLIBS)
 
 clean:
-	rm -rf build/host-debug build/host-release dist
+	rm -rf build/host-debug build/host-release build/eval build/test-fixture dist
 
 distclean: clean
 	rm -rf $(DEPS_DIR)
@@ -211,6 +218,7 @@ help:
 	@echo "  make host-debug      build ASan/UBSan host binary"
 	@echo "  make host-release    build optimized host binary"
 	@echo "  make test            build and run standalone tests"
+	@echo "  make bench           real-model benchmark (skips when no GGUF)"
 	@echo "  make REMOTE=1 ...     build with the libcurl remote model adapter"
 	@echo "  make sync-engine     clone deps/geist from GitHub if missing"
 	@echo "  make update-engine   checkout the pinned GEIST_REF in deps/geist"

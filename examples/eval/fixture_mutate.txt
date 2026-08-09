@@ -1,0 +1,2 @@
+(recommend (kind local_shell) (capability "build.run") (cost 1) (uses_network false) (confidence_bp 6000) (reason "mutate the workdir") (command "cp report.md mutated.md"))
+(recommend (kind finish) (reason "done"))
