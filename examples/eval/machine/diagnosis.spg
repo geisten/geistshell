@@ -1,0 +1,70 @@
+; Phase 4 (#64): can a model name the root cause from machine state alone?
+;
+; No writing action anywhere in this suite. The diagnosis IS the finish reason:
+;   (recommend (kind finish) (reason "<category> [<process-id>]"))
+; `finish` carries no capability, consumes no budget and never reaches the
+; policy gate, so measuring diagnosis needs no new action kind and no executor.
+;
+; Categories are a closed set — healthy, batch_pressure, critical_pressure,
+; memory_pressure, thermal_anomaly, inconclusive. Scoring free text would
+; measure the grader, not the model.
+;
+; The scripted answers below are the ground truth, not a model's output: they
+; make the harness itself testable and give every other model something to be
+; compared against. Real models run the same cases via `eval --samples N`.
+(eval_suite
+ (config "examples/run.spg")
+
+ (case (name "batch_cpu")
+       (machine "examples/eval/machine/states/1_batch_cpu.spg")
+       (script "examples/eval/machine/scripts/1_batch_cpu.txt")
+       (max_steps 2)
+       (expect (termination finished) (diagnosis "batch_pressure")))
+
+ (case (name "critical_cpu")
+       (machine "examples/eval/machine/states/2_critical_cpu.spg")
+       (script "examples/eval/machine/scripts/2_critical_cpu.txt")
+       (max_steps 2)
+       (expect (termination finished) (diagnosis "critical_pressure")))
+
+ (case (name "memory_batch")
+       (machine "examples/eval/machine/states/3_memory_batch.spg")
+       (script "examples/eval/machine/scripts/3_memory_batch.txt")
+       (max_steps 2)
+       (expect (termination finished) (diagnosis "memory_pressure")))
+
+ (case (name "thermal")
+       (machine "examples/eval/machine/states/4_thermal.spg")
+       (script "examples/eval/machine/scripts/4_thermal.txt")
+       (max_steps 2)
+       (expect (termination finished) (diagnosis "thermal_anomaly")))
+
+ (case (name "contradictory")
+       (machine "examples/eval/machine/states/5_contradictory.spg")
+       (script "examples/eval/machine/scripts/5_contradictory.txt")
+       (max_steps 2)
+       (expect (termination finished) (diagnosis "inconclusive")))
+
+ (case (name "healthy")
+       (machine "examples/eval/machine/states/6_healthy.spg")
+       (script "examples/eval/machine/scripts/6_healthy.txt")
+       (max_steps 2)
+       (expect (termination finished) (diagnosis "healthy")))
+
+ (case (name "heldout_thermal_batch") (heldout true)
+       (machine "examples/eval/machine/states/7_heldout_thermal_batch.spg")
+       (script "examples/eval/machine/scripts/7_heldout_thermal_batch.txt")
+       (max_steps 2)
+       (expect (termination finished) (diagnosis "thermal_anomaly")))
+
+ (case (name "heldout_memory_critical") (heldout true)
+       (machine "examples/eval/machine/states/8_heldout_memory_critical.spg")
+       (script "examples/eval/machine/scripts/8_heldout_memory_critical.txt")
+       (max_steps 2)
+       (expect (termination finished) (diagnosis "memory_pressure")))
+
+ (case (name "no_processes") (heldout true)
+       (machine "examples/eval/machine/states/9_no_processes.spg")
+       (script "examples/eval/machine/scripts/9_no_processes.txt")
+       (max_steps 2)
+       (expect (termination finished) (diagnosis "inconclusive"))))
