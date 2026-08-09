@@ -3,10 +3,87 @@
 #include "geistshell/recommendation.h"
 
 #include <stdio.h>
+#include <string.h>
 
 static int fail(const char *m) {
     fprintf(stderr, "FAIL: %s\n", m);
     return 1;
+}
+
+/* The capability mask table both `agent --constrained` and `eval --constrained`
+ * build from (#51). Pure: policy config in, borrowed names out, no engine. */
+static int check_caps_from_policy(void) {
+    /* Offsets into this text are what the policy config stores as name spans. */
+    static const char text[] = "sim.act build.run off.cap mem.rw";
+    struct spg_policy_config policy = {
+        .capability_count = 4u,
+        .capabilities =
+            {
+                {.name    = {.offset = 0u, .length = 7u}, /* sim.act   */
+                 .kind    = SPG_POLICY_CAP_SIMULATOR,
+                 .enabled = true},
+                {.name    = {.offset = 8u, .length = 9u}, /* build.run */
+                 .kind    = SPG_POLICY_CAP_LOCAL_SHELL,
+                 .enabled = true},
+                {.name    = {.offset = 18u, .length = 7u}, /* off.cap  */
+                 .kind    = SPG_POLICY_CAP_LOCAL_SHELL,
+                 .enabled = false},
+                {.name    = {.offset = 26u, .length = 6u}, /* mem.rw   */
+                 .kind    = SPG_POLICY_CAP_MEMORY,
+                 .enabled = true},
+            },
+    };
+
+    struct spg_model_capability out[SPG_MODEL_CAPABILITY_MAX];
+    char                        names[128];
+    size_t n = spg_model_capabilities_from_policy(&policy, sizeof text - 1u,
+                                                  text, sizeof names, names,
+                                                  sizeof out / sizeof out[0],
+                                                  out);
+    /* 1 simulator + 1 local_shell + 3 memory kinds; the disabled cap is gone. */
+    if (n != 5u) {
+        return fail("capability expansion count");
+    }
+    if (out[0].kind != SPG_ACTION_SIMULATOR ||
+        strcmp(out[0].name, "sim.act") != 0) {
+        return fail("simulator capability");
+    }
+    if (out[1].kind != SPG_ACTION_LOCAL_SHELL ||
+        strcmp(out[1].name, "build.run") != 0) {
+        return fail("local_shell capability");
+    }
+    if (out[2].kind != SPG_ACTION_MEMORY_SAVE ||
+        out[3].kind != SPG_ACTION_MEMORY_DELETE ||
+        out[4].kind != SPG_ACTION_MEMORY_READ) {
+        return fail("memory capability expands per kind");
+    }
+    /* One capability, one stored name: the three memory entries share it. */
+    if (out[2].name != out[3].name || out[3].name != out[4].name ||
+        strcmp(out[2].name, "mem.rw") != 0) {
+        return fail("memory entries share one borrowed name");
+    }
+    for (size_t i = 0u; i < n; i += 1u) {
+        if (strcmp(out[i].name, "off.cap") == 0) {
+            return fail("disabled capability leaked into the mask");
+        }
+    }
+
+    /* A name buffer too small truncates to a NARROWER mask, never a malformed
+     * one — the decoder then free-decodes that slot and the policy gate still
+     * decides. */
+    char tiny[8]; /* fits "sim.act" and nothing more */
+    n = spg_model_capabilities_from_policy(&policy, sizeof text - 1u, text,
+                                           sizeof tiny, tiny,
+                                           sizeof out / sizeof out[0], out);
+    if (n != 1u || strcmp(out[0].name, "sim.act") != 0) {
+        return fail("name-buffer overflow narrows the mask");
+    }
+
+    if (spg_model_capabilities_from_policy(nullptr, sizeof text - 1u, text,
+                                           sizeof names, names, 8u, out) != 0u) {
+        return fail("null policy rejected");
+    }
+    return 0;
 }
 
 /* Concatenate (recommend (kind <name> + the scaffold, with a placeholder in
@@ -144,6 +221,10 @@ int main(void) {
         if (check_scaffold_valid(kinds[i]) != 0) {
             return 1;
         }
+    }
+
+    if (check_caps_from_policy() != 0) {
+        return 1;
     }
 
     printf("test_grammar_mask ok\n");

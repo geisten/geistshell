@@ -9,6 +9,7 @@
 #include "geistshell/agent_run.h"
 #include "geistshell/eval.h"
 #include "geistshell/exec_command.h"
+#include "geistshell/grammar_mask.h"
 #include "geistshell/guard_ring.h"
 #include "geistshell/improve.h"
 #include "geistshell/mem_command.h"
@@ -17,6 +18,7 @@
 #include <geist.h>
 
 #include <errno.h>
+#include <math.h> /* isfinite: --temperature validation */
 #include <stdbool.h>
 #include <stdio.h>
 #include <stdint.h>
@@ -31,6 +33,10 @@
 #define CLI_PAYLOAD_BYTES 8192u
 #define CLI_CONTEXT_REFS 64u
 #define CLI_JOURNAL_VERIFY_PAYLOAD_BYTES 8192u
+/* Backing store for the constrained decoder's capability names: 32 caps of a
+ * plausible length with room to spare. Overflow narrows the mask, never
+ * corrupts it (see spg_model_capabilities_from_policy). */
+#define CLI_CAP_NAMES_BYTES 2048u
 #define CLI_REPLAY_PAYLOAD_BYTES CLI_CONTEXT_BYTES
 #define CLI_REPLAY_PREVIEW_BYTES 96u
 
@@ -617,6 +623,22 @@ static bool parse_size(const char *text, size_t *out) {
 
 static bool parse_positive_size(const char *text, size_t *out) {
     return parse_size(text, out) && *out > 0u;
+}
+
+/* Sampling temperature: finite and >= 0 (0 = greedy). Validated here rather
+ * than letting a typo reach the adapter as a NaN, where it surfaces as an
+ * opaque model-init failure. */
+static bool parse_temperature(const char *text, float *out) {
+    if (text == nullptr || out == nullptr || text[0] == '\0') {
+        return false;
+    }
+    char        *end = nullptr;
+    const double v   = strtod(text, &end);
+    if (end == text || *end != '\0' || !isfinite(v) || v < 0.0) {
+        return false;
+    }
+    *out = (float)v;
+    return true;
 }
 
 static void add_budget_u64(uint64_t *value, const uint64_t delta) {
@@ -1852,7 +1874,10 @@ static int agent_command(int argc, char **argv) {
             continue;
         }
         if (strcmp(argv[i], "--temperature") == 0 && i + 1 < argc) {
-            sample_temp = (float)atof(argv[i + 1]);
+            if (!parse_temperature(argv[i + 1], &sample_temp)) {
+                fprintf(stderr, "agent: invalid --temperature value\n");
+                return 2;
+            }
             i += 1;
             continue;
         }
@@ -1976,51 +2001,18 @@ static int agent_command(int argc, char **argv) {
     }
     journal_open = true;
 
-    /* Constrained-decode capability table (#34): enabled policy caps only,
-     * names materialized to cstrings (heap, outlive the adapter), memory caps
-     * expanded to one entry per memory_* action kind. Empty unless --constrained. */
-    static struct spg_model_capability agent_caps[SPG_POLICY_MAX_CAPABILITIES *
-                                                  3u];
-    size_t agent_caps_n = 0u;
-    if (constrained) {
-        for (size_t i = 0u; i < policy.capability_count; i += 1u) {
-            const struct spg_policy_capability *cap = &policy.capabilities[i];
-            if (!cap->enabled) {
-                continue;
-            }
-            char *name = nullptr;
-            if (span_to_cstr(policy_text.n, policy_text.data, cap->name,
-                             &name) != SPG_OK) {
-                continue;
-            }
-            enum spg_action_kind kinds[3];
-            size_t               nk = 0u;
-            switch (cap->kind) {
-            case SPG_POLICY_CAP_LOCAL_SHELL:
-                kinds[nk++] = SPG_ACTION_LOCAL_SHELL;
-                break;
-            case SPG_POLICY_CAP_SSH_AUTH_PROBE:
-                kinds[nk++] = SPG_ACTION_SSH_AUTH_PROBE;
-                break;
-            case SPG_POLICY_CAP_SIMULATOR:
-                kinds[nk++] = SPG_ACTION_SIMULATOR;
-                break;
-            case SPG_POLICY_CAP_MEMORY:
-                kinds[nk++] = SPG_ACTION_MEMORY_SAVE;
-                kinds[nk++] = SPG_ACTION_MEMORY_DELETE;
-                kinds[nk++] = SPG_ACTION_MEMORY_READ;
-                break;
-            }
-            for (size_t k = 0u;
-                 k < nk &&
-                 agent_caps_n < sizeof agent_caps / sizeof agent_caps[0];
-                 k += 1u) {
-                agent_caps[agent_caps_n].name = name;
-                agent_caps[agent_caps_n].kind = kinds[k];
-                agent_caps_n += 1u;
-            }
-        }
-    }
+    /* Constrained-decode capability table (#34). Built through the shared
+     * helper so `eval` decodes identically (#51) — the two having their own
+     * copies is how they ended up on different decoders. Empty unless
+     * --constrained. */
+    static struct spg_model_capability agent_caps[SPG_MODEL_CAPABILITY_MAX];
+    static char                        agent_cap_names[CLI_CAP_NAMES_BYTES];
+    const size_t                       agent_caps_n =
+        constrained ? spg_model_capabilities_from_policy(
+                          &policy, policy_text.n, policy_text.data,
+                          sizeof agent_cap_names, agent_cap_names,
+                          sizeof agent_caps / sizeof agent_caps[0], agent_caps)
+                                            : 0u;
 
     /* Best-of-N needs the choice slots to vary between attempts (#2); if the
      * caller asked for it without a temperature, sample. */
@@ -2329,6 +2321,14 @@ struct eval_run_opts {
     const char *remote_url;   /* nullable: enables (model "remote") cases      */
     const char *remote_model; /* nullable: model name for remote cases         */
     size_t      samples;      /* 0/1 => run each case once                     */
+    /* #51: run (model "geist") cases through the SAME decoder as
+     * `agent --constrained`. Off by default so the shipped scripted-fake
+     * suites keep their recorded free-decode behaviour. */
+    bool        constrained;
+    /* #51: sampling temperature for real-model cases. 0.0 (the default) is
+     * greedy — which makes --samples N produce N identical runs, so a suite
+     * that wants variance must ask for it. */
+    float       temperature;
 };
 
 /* Load a suite + its shared run/policy/scenario config and run every case with
@@ -2397,6 +2397,16 @@ static enum spg_status eval_run_suite(const char *suite_path,
         rc = SPG_E_FORMAT;
         goto done;
     }
+
+    /* #51: the constrained decoder's capability mask, built through the same
+     * helper the agent uses. Both buffers must outlive every adapter built
+     * below, hence static. */
+    static struct spg_model_capability eval_caps[SPG_MODEL_CAPABILITY_MAX];
+    static char                        eval_cap_names[CLI_CAP_NAMES_BYTES];
+    const size_t                       eval_caps_n =
+        spg_model_capabilities_from_policy(
+                                  &policy, policy_text.n, policy_text.data, sizeof eval_cap_names,
+                                  eval_cap_names, sizeof eval_caps / sizeof eval_caps[0], eval_caps);
 
     static struct spg_context_graph_ref   graph_refs[CLI_CONTEXT_REFS];
     static struct spg_context_memory_ref  memory_refs[CLI_CONTEXT_REFS];
@@ -2552,7 +2562,7 @@ static enum spg_status eval_run_suite(const char *suite_path,
             struct spg_model_adapter        model = {};
             struct spg_model_adapter_config mc    = {
                    .sampling = {.max_seq_len = 4096u,
-                                .temperature = 0.0f,
+                                .temperature = o->temperature,
                                 .top_p       = 1.0f,
                                 .top_k       = 0,
                                 .random_seed = run.seed},
@@ -2560,6 +2570,14 @@ static enum spg_status eval_run_suite(const char *suite_path,
             if (geist_case) {
                 mc.kind       = SPG_MODEL_ADAPTER_GEIST;
                 mc.model_path = model_path;
+                /* #51: the same decoder `agent --constrained` runs. Without
+                 * this the suite measures free decode — a configuration
+                 * nobody ships, and the one a tool-less model cannot pass. */
+                if (o->constrained) {
+                    mc.force_prefix     = "(recommend (kind ";
+                    mc.capabilities     = eval_caps;
+                    mc.capability_count = eval_caps_n;
+                }
             } else {
                 mc.kind         = SPG_MODEL_ADAPTER_REMOTE;
                 mc.endpoint_url = remote_url; /* may be null -> handled below */
@@ -2689,6 +2707,8 @@ static int eval_command(int argc, char **argv) {
     const char *remote_url   = nullptr;
     const char *remote_model = nullptr;
     size_t      samples      = 1u;
+    bool        constrained  = false;
+    float       temperature  = 0.0f;
     for (int i = 2; i < argc; i += 1) {
         if (strcmp(argv[i], "--remote-url") == 0 && i + 1 < argc) {
             remote_url = argv[++i];
@@ -2705,6 +2725,17 @@ static int eval_command(int argc, char **argv) {
             }
             continue;
         }
+        if (strcmp(argv[i], "--constrained") == 0) {
+            constrained = true;
+            continue;
+        }
+        if (strcmp(argv[i], "--temperature") == 0 && i + 1 < argc) {
+            if (!parse_temperature(argv[++i], &temperature)) {
+                fprintf(stderr, "eval: invalid --temperature value\n");
+                return 2;
+            }
+            continue;
+        }
         if (suite_path == nullptr && argv[i][0] != '-') {
             suite_path = argv[i];
             continue;
@@ -2715,14 +2746,17 @@ static int eval_command(int argc, char **argv) {
     if (suite_path == nullptr) {
         fprintf(stderr,
                 "usage: %s eval <suite.spg> [--remote-url <url>] "
-                "[--remote-model <name>] [--samples <N>]\n",
+                "[--remote-model <name>] [--samples <N>] [--constrained] "
+                "[--temperature <t>]\n",
                 argv[0]);
         return 2;
     }
     static struct eval_run_report report;
     const struct eval_run_opts    opts = {.remote_url   = remote_url,
                                           .remote_model = remote_model,
-                                          .samples      = samples};
+                                          .samples      = samples,
+                                          .constrained  = constrained,
+                                          .temperature  = temperature};
     const enum spg_status status = eval_run_suite(suite_path, nullptr, &opts,
                                                   &report);
     if (status != SPG_OK) {
@@ -2981,6 +3015,8 @@ static int improve_command(int argc, char **argv) {
     const char *remote_model  = nullptr;
     const char *validate_path = nullptr;
     size_t      samples       = 1u;
+    bool        constrained   = false;
+    float       temperature   = 0.0f;
     struct spg_guard_ring guards;
     spg_guard_ring_init(&guards);
     for (int i = 2; i < argc; i += 1) {
@@ -3007,6 +3043,19 @@ static int improve_command(int argc, char **argv) {
             }
             continue;
         }
+        /* #51: the gate must measure the decoder the agent actually runs — a
+         * lesson kept under free decode says nothing about a constrained one. */
+        if (strcmp(argv[i], "--constrained") == 0) {
+            constrained = true;
+            continue;
+        }
+        if (strcmp(argv[i], "--temperature") == 0 && i + 1 < argc) {
+            if (!parse_temperature(argv[++i], &temperature)) {
+                fprintf(stderr, "improve: invalid --temperature value\n");
+                return 2;
+            }
+            continue;
+        }
         if (strcmp(argv[i], "--guard") == 0 && i + 1 < argc) {
             /* a real run config re-run live to gate lessons (P5, Weg 2);
              * repeatable, deduped by shape=path in the ring */
@@ -3026,7 +3075,7 @@ static int improve_command(int argc, char **argv) {
                 "usage: %s improve <suite.spg> [--validate <holdout.spg>] "
                 "[--guard <run.spg>]... "
                 "[--memory-dir <d>] [--remote-url <url>] [--remote-model <name>] "
-                "[--samples <N>]\n",
+                "[--samples <N>] [--constrained] [--temperature <t>]\n",
                 argv[0]);
         return 2;
     }
@@ -3040,7 +3089,9 @@ static int improve_command(int argc, char **argv) {
 
     const struct eval_run_opts opts = {.remote_url   = remote_url,
                                        .remote_model = remote_model,
-                                       .samples      = samples};
+                                       .samples      = samples,
+                                       .constrained  = constrained,
+                                       .temperature  = temperature};
     static struct eval_run_report baseline;
     if (eval_run_suite(suite_path, &store, &opts, &baseline) != SPG_OK) {
         fprintf(stderr, "improve: baseline run failed\n");

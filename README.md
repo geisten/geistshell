@@ -134,12 +134,23 @@ through the remote adapter (`eval`/`improve` take `--remote-url`/`--remote-model
 key from `GEISTSHELL_API_KEY`) — so the *same* governed, journaled measurement
 now works against a strong model.
 
-Because a real model is non‑deterministic, `--samples N` runs each case N times
-and the per‑case verdict reports `k of N`; the self‑improvement gate compares the
-**summed** pass counts and still keeps a lesson only when the total does not drop
-(no net regression — larger N just lowers the variance). Each individual run
-stays byte‑identical‑replayable from its journal; only *which* run you get
-varies.
+`--samples N` runs each case N times and the per‑case verdict reports `k of N`;
+the self‑improvement gate compares the **summed** pass counts and still keeps a
+lesson only when the total does not drop (no net regression — larger N just
+lowers the variance). Each individual run stays byte‑identical‑replayable from
+its journal; only *which* run you get varies.
+
+Sampling has to be **asked for**, though: a local `(model "geist")` case is
+greedy by default, so `--samples 5` alone yields five identical runs. Pass
+`--temperature <t>` for the variance `k of N` is supposed to measure. A
+`(model "remote")` case varies on its own, server‑side.
+
+`--constrained` runs `(model "geist")` cases through the *same* decoder as
+`geistshell agent --constrained` — forced prefix, kind and capability masked
+against the policy. Without it the suite measures free decode, which is not a
+configuration anyone ships. Off by default so the scripted‑fake suites stay
+byte‑identical. Both flags also exist on `improve`, so the learning gate can
+measure the decoder the agent actually runs.
 
 ```
 $ geistshell improve examples/eval/improve_gated.spg --memory-dir ./mem

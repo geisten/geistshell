@@ -30,4 +30,22 @@ if "$SPG_BIN" eval "$T/bad.spg" > "$T/bad.out" 2>&1; then
 fi
 grep -q '"name":"wrong","outcome":"fail_termination"' "$T/bad.out"
 
+# #51: --constrained / --temperature exist and leave scripted-fake suites
+# byte-identical. They only reach (model "geist") cases, so a fake suite must
+# produce exactly the same report with and without them — that is what makes it
+# safe to turn them on by default in a bench preset later.
+OUT2=$("$SPG_BIN" eval examples/eval/suite.spg --constrained --temperature 0.8)
+[ "$OUT" = "$OUT2" ] || {
+    echo "--constrained/--temperature changed a scripted-fake suite" >&2
+    printf 'without:\n%s\nwith:\n%s\n' "$OUT" "$OUT2" >&2
+    exit 1
+}
+
+# a bad temperature is rejected, not silently coerced to NaN inside the adapter
+if "$SPG_BIN" eval examples/eval/suite.spg --temperature abc > "$T/temp.out" 2>&1; then
+    echo "expected non-zero exit for an invalid --temperature" >&2
+    exit 1
+fi
+grep -q 'invalid --temperature' "$T/temp.out"
+
 echo "test_cli_eval: PASS"
