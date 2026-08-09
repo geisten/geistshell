@@ -289,7 +289,7 @@ the same governed loop** rather than compete on local‑model capability.
 | `src/eval/`, `src/improve/`             | evaluation harness + self‑improvement loop             |
 | `src/journal/`, `src/core/`, `src/dsl/` | hash‑chained journal, primitives, s‑expression DSL     |
 | `src/cli/`, `src/chat/`                 | CLI and chat REPL surfaces                             |
-| `deps/geist/`                           | the external inference engine (pinned `v0.3.1`)        |
+| `deps/geist/`                           | the external inference engine (pinned `v0.8.2`)        |
 
 ## Constraints
 

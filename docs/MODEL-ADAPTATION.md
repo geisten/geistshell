@@ -20,8 +20,8 @@ Seven things found in the tree, in the order they bite:
 
 | | Finding | Where |
 |---|---|---|
-| A | The engine pin is stale: `GEIST_REF ?= v0.2.1`, but `v0.3.1` is what ships ternary `I2_S` and `geist_model_arch()`. No BitNet without the bump. | `Makefile:9` |
-| B | Per-family chat framing already exists — in geistlib, not here. `geist_chat_template_for_model()` auto-detects Gemma / Llama-3 (which covers BitNet 2B-4T) / generic. geistshell hardcodes Gemma in the chat REPL and sends the **agent** prompt with no framing at all. | `deps/geist/tools/agent.h:238` vs `src/chat/chat_template.c:5`, `src/actor/actor.c:186` |
+| A | The engine pin was stale by six releases: `GEIST_REF ?= v0.2.1` against an upstream at **v0.8.2**. Ternary `I2_S` and `geist_model_arch()` arrived in 0.3.1; the agent-runtime API contract arrived in 0.6.0. No BitNet without the bump. | `Makefile:9` |
+| B | Per-family chat framing exists — but **not** in geistlib. `geist_chat_template_for_model()` (auto-detects Gemma / Llama-3, which covers BitNet 2B-4T / generic) was deleted from geistlib in v0.7.0 and now lives in [geistagent](https://github.com/geisten/geistagent) `include/agent.h`. geistshell hardcodes Gemma in the chat REPL and sends the **agent** prompt with no framing at all. | `src/chat/chat_template.c:5`, `src/actor/actor.c:186` |
 | C | The constant prefix (`contract` → `directive` → `goal` → `examples`) is already rendered first — and re-prefilled every tick, because `reset_model_session = true` at every call site. ~350 tokens × every step. `geist_session_pin_prefix` exists for exactly this. | `src/context/context.c:696`, `src/cli/main.c:1278` |
 | D | `eval` and `agent` run **different decoders**. The `(model "geist")` case path builds the adapter with no `force_prefix` and no `capabilities` — free decode. The suite measures a configuration nobody ships. | `src/cli/main.c:2541` vs `src/cli/main.c:2034` |
 | E | `--samples N` is inert on local models: temperature pinned to `0.0f`, one fixed seed, session reset per run → N byte-identical runs. The k-of-N variance story only holds for `(model "remote")`. | `src/cli/main.c:2544` |
@@ -40,21 +40,45 @@ constrained structural decode works. The remote adapter sends no `grammar`,
 no `json_schema`, no `logit_bias` — remote is free decode, which is precisely
 what a tool-less model cannot do.
 
-### 2. The chat-template table is promoted to libgeist public API
+### 2. geistshell owns its chat-template table; geistlib owns only the key
 
-`geist_chat_template_for_model()`, `geist_model_arch()`, `pin_prefix` and
-`peek_logits` move from `tools/` (app code) to `include/` and become STABLE.
-"Which turn markers does this GGUF want" is a property of the **model**, not
-of the agent; two copies of that table mean the next model works in one repo
-and hallucinates in the other.
+**This decision was reversed during step 1.** The first version of this document
+said the table should be promoted into geistlib's public API, on the grounds
+that "which turn markers does this GGUF want" is a property of the model. That
+reasoning is not wrong, but it lost to a stronger one that was already settled
+upstream and that this document had not read.
+
+geistlib `c2bf151` (v0.7.0, `feat!: geistlib becomes a pure inference engine`)
+deleted the entire agent layer — 24 files, 8309 lines — into
+[geistagent](https://github.com/geisten/geistagent), with the chat-template
+table among them. Its stated reason applies to a second consumer exactly as it
+did to the first:
+
+> Shipping them from both repositories would have put the security boundary on
+> two include paths, which is an invitation to audit one and compile the other.
+
+So: **geistshell keeps its own ~40-line table**, taken from geistagent's
+`include/agent.h`, covered by a unit test that needs no GGUF. Two copies do
+drift — but they *should*: geistagent frames JSON tool calls, geistshell frames
+s-expressions, and the two will want different system-turn handling.
 
 The table gains a fourth field, `system_open` (nullable → fall back to
 `user_open`, which is what Gemma needs — it has no system role).
 
-geistlib's **router** is *not* imported. It selects from a flat tool-name list;
-geistshell selects an `enum spg_action_kind` and then runs a kind-dependent
-scaffold, which is the stronger mechanism (the bureaucratic fields are never
-decoded at all). Only the **PMI calibration** is adopted — see step 8.
+What geistlib does owe, and now does: `docs/API_CONTRACT.md` (added in 0.6.0)
+pins `peek_logits`, `pin_prefix` and `tokenize` as STABLE for exactly this
+out-of-tree runtime, enforced in CI by `scripts/check-api-contract.sh` and
+`examples/agent_contract_smoke.c`. That is a stronger guarantee than the
+promotion this document originally asked for. The one gap was
+`geist_model_arch` — the key the template is selected *by*, still
+`EXPERIMENTAL` — promoted in
+[geistlib#226](https://github.com/geisten/geistlib/pull/226).
+
+The **router** from the old `tools/agent.h` is *not* copied. It selects from a
+flat tool-name list; geistshell selects an `enum spg_action_kind` and then runs
+a kind-dependent scaffold, which is the stronger mechanism (the bureaucratic
+fields are never decoded at all). Only the **PMI calibration** is adopted — see
+step 8.
 
 ### 3. Prompt framing: system turn + user turn
 
@@ -269,8 +293,8 @@ Each step is separately measurable or trivial.
 
 | # | Step | Why here |
 |---|---|---|
-| 0 | `GEIST_REF` 0.2.1 → 0.3.1 *(done)* | No `I2_S`, no BitNet. Not one line — see below. |
-| 1 | Template table + `pin_prefix` / `peek_logits` / `model_arch` promoted to libgeist `include/`, STABLE; add `system_open` | Blocks everything model-specific. |
+| 0 | `GEIST_REF` 0.2.1 → 0.8.2 *(done)* | No `I2_S`, no BitNet. Not one line — see below. |
+| 1 | libgeist: `geist_model_arch` → STABLE *(PR open)*. geistshell: copy the template table from geistagent, add `system_open` — lands with step 5 | Blocks everything model-specific. |
 | 2 | `eval` and `agent` onto the **same** decoder (finding D); `--temp` for `eval` (finding E) | Otherwise the baseline measures a configuration nobody runs. |
 | 3 | Per-sample fixture isolation + `make bench` | Otherwise every number from cases 2/3/7 is a lie. |
 | 4 | **Baseline: 7+7 cases, ladder metric, BitNet + Gemma, presets** | The zero point. Everything after is measured against it. |
@@ -311,9 +335,19 @@ Rather than add an include path for the new location, the coupling was removed:
 Net: 2 files deleted, ~60 lines removed, one cross-repo coupling gone. Full
 `make test` green under ASan/UBSan.
 
-The lesson generalises to step 1: the engine boundary was never enforced by the
-build, so it drifted. Promoting the template table to `include/` is worth
-nothing if `-I$(GEIST_DIR)` comes back.
+The lesson generalises: the engine boundary was never enforced by the build, so
+it drifted.
+
+**And the bump itself was wrong the first time.** It went to `v0.3.1` — the tag
+that happened to be checked out in `deps/geist`, mistaken for the upstream
+state. Upstream was at **v0.8.2**, six releases further on, including the
+0.6.0 API contract and the 0.7.0 agent-layer removal that reversed decision 2
+above. Corrected to `v0.8.2`; `make test` green.
+
+Two failures with one shape: a local artefact was read as the state of the
+world. The build directory said which engine version existed; `deps/geist`
+said which one upstream had. Neither was a source of truth, and neither
+announced that it wasn't.
 
 ## What is not on the list
 

@@ -5,7 +5,7 @@ GEIST_DIR := $(DEPS_DIR)/geist
 # Official upstream engine. Pin GEIST_REF to a commit/tag for reproducible
 # builds; override either on the command line to track a fork or branch.
 GEIST_REPO ?= https://github.com/geisten/geistlib.git
-GEIST_REF  ?= v0.3.1
+GEIST_REF  ?= v0.8.2
 
 BUILD_MODE ?= host-debug
 
