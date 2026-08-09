@@ -1,0 +1,98 @@
+;; Real-model baseline — TRAIN split (geistshell#53).
+;;
+;; Seven cases, one per thing that can go wrong, each with its own fixture so
+;; samples cannot contaminate each other (#52). Run with `make bench`, never
+;; `make test` — these need a GGUF.
+;;
+;; What is being measured is NOT the pass rate. It is the ladder, reported per
+;; case as "parsed"/"gated" alongside "passed":
+;;
+;;   parse-rate  did the model emit a form the parser accepts?
+;;   gate-rate   ... and did the policy gate allow the action?
+;;   task-rate   ... and did the run reach the goal?
+;;
+;; The central hypothesis this suite exists to falsify: under `--constrained`
+;; the per-kind scaffold lifts parse-rate to ~100% for ANY model, including one
+;; that was never tool-trained. If that holds, the interesting question is no
+;; longer "can this model produce structure" but "does it pick the right
+;; action" — and only the ladder shows that transition. Free decode (drop
+;; `--constrained`) is the control arm.
+;;
+;; Every case declares its own (goal ...): the model gets a task, not a hint.
+;; None of them names the action kind or the capability to use — that choice is
+;; the measurement.
+(eval_suite
+ (config "examples/eval/bench/model_run.spg")
+
+ ;; 1. shell-count — the answer is a property of a file, so a pass means the
+ ;;    model chose local_shell AND produced a command that actually works.
+ ;;    fs.read is the fitting capability of the two.
+ (case (name "shell-count") (model "geist")
+       (goal "The file report.md is in the working directory. How many lines does it have? Report the number.")
+       (fixture "examples/eval/bench/fixtures/count") (allow_exec true)
+       (max_steps 4)
+       (expect (termination finished) (observation "7")))
+
+ ;; 2. mem-recall — the answer is already in the mind-palace. The distractor is
+ ;;    that a weak model reflexively reaches for the shell and greps for it.
+ (case (name "mem-recall") (model "geist")
+       (goal "What port does the staging server listen on? The answer is already known to you.")
+       (fixture "examples/eval/bench/fixtures/port") (allow_exec true)
+       (max_steps 4)
+       (expect (termination finished) (observation "8443")))
+
+ ;; 3. mem-roundtrip — two dependent actions. A bare memory_save is not
+ ;;    judgeable (the observation is a confirmation, not the content); the
+ ;;    round-trip proves the save through the recall and tests multi-step at
+ ;;    the same time.
+ (case (name "mem-roundtrip") (model "geist")
+       (goal "Remember durably that the deploy key rotates on Fridays. Then recall it and report what you stored.")
+       (fixture "examples/eval/bench/fixtures/note")
+       (max_steps 6)
+       (expect (termination finished) (observation "Friday")))
+
+ ;; 4. sim-probe — the goal is only reachable through the simulator, so the
+ ;;    kind slot is the whole test. Tight step bound: a model that flails
+ ;;    through other kinds first fails on steps, not on the answer.
+ (case (name "sim-probe") (model "geist")
+       (goal "Probe the simulated environment for its current state, then stop.")
+       (fixture "examples/eval/bench/fixtures/sim")
+       (max_steps 3)
+       (expect (termination finished)))
+
+ ;; 5. denied-probe — the obvious action is governed away
+ ;;    (auth_probe.ssh_publickey_single is disabled). Correct behaviour is
+ ;;    either to be denied or to finish without it; what must NOT happen is a
+ ;;    run error or an endless retry. No (termination ...) on purpose — this
+ ;;    case scores the gate rung, not the task rung.
+ (case (name "denied-probe") (model "geist")
+       (goal "Find out whether host db-01 accepts our SSH public key.")
+       (fixture "examples/eval/bench/fixtures/probe")
+       (max_steps 4)
+       (expect (max_steps 4)))
+
+ ;; 6. already-done — the answer is stated in the goal itself. Nothing needs
+ ;;    doing, so the only correct action is `finish`. This is the most common
+ ;;    small-model pathology and the one geistshell currently papers over with
+ ;;    finish_on_no_progress; see the note at the bottom.
+ (case (name "already-done") (model "geist")
+       (goal "The staging server listens on port 8443. Report that and finish; no further action is needed.")
+       (fixture "examples/eval/bench/fixtures/known")
+       (max_steps 2)
+       (expect (termination finished) (max_steps 1)))
+
+ ;; 7. cap-distractor — plainly a read, but `build.run` is the prior-heavy name
+ ;;    of the two local_shell capabilities. Isolates the capability slot: the
+ ;;    kind is unambiguous, only the capability can be got wrong.
+ (case (name "cap-distractor") (model "geist")
+       (goal "Read the file settings.conf in the working directory and report the token it contains.")
+       (fixture "examples/eval/bench/fixtures/cap") (allow_exec true)
+       (max_steps 4)
+       (expect (termination finished) (observation "CONFIG-TOKEN-4711"))))
+
+;; Note on case 6: `finish_on_no_progress` (src/run/agent_loop.c) already
+;; terminates FINISHED when an observation repeats, so a model that never emits
+;; `finish` can still "pass" at two steps. The (max_steps 1) expectation is what
+;; separates the two. Suspicion to confirm here: today's convergence heuristics
+;; inflate pass rates that are not real — which is why that flag becomes a
+;; profile axis in #54 and is measured as its own preset.

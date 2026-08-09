@@ -2314,7 +2314,36 @@ struct eval_run_report {
     struct spg_eval_case_result results[EVAL_MAX_CASES]; /* last sample/case   */
     size_t                      runs[EVAL_MAX_CASES];        /* samples per case */
     size_t                      case_passed[EVAL_MAX_CASES]; /* k passed of N    */
+    /* #53 ladder, per case and summed. Monotone by construction:
+     * task <= gate <= parse. A pass-rate alone cannot tell "the model cannot
+     * produce the form" from "it produces a valid form and picks the wrong
+     * action", and those want opposite fixes. */
+    size_t                      case_parsed[EVAL_MAX_CASES];
+    size_t                      case_gated[EVAL_MAX_CASES];
+    size_t                      parsed; /* runs whose form was accepted        */
+    size_t                      gated;  /* ... and the policy gate allowed it  */
 };
+
+/* One run's rungs. REJECTED means the loop ran out of repairs on a malformed
+ * reply — the form never parsed. DENIED means it parsed and the policy gate
+ * refused it. Anything else got past both, whether or not it reached the goal. */
+static void eval_tally_ladder(struct eval_run_report *report,
+                              const size_t case_idx,
+                              const struct spg_eval_case_result *r) {
+    if (r->outcome == SPG_EVAL_FAIL_RUN_ERROR) {
+        return; /* the harness failed, not the model — no rung is earned */
+    }
+    if (r->termination == SPG_AGENT_LOOP_REJECTED) {
+        return;
+    }
+    report->case_parsed[case_idx] += 1u;
+    report->parsed += 1u;
+    if (r->termination == SPG_AGENT_LOOP_DENIED) {
+        return;
+    }
+    report->case_gated[case_idx] += 1u;
+    report->gated += 1u;
+}
 
 /* Per-invocation knobs. A null pointer (or zeroed struct) reproduces the
  * historical behaviour: one sample per case, no remote endpoint. */
@@ -2587,6 +2616,12 @@ static enum spg_status eval_run_suite(const char *suite_path,
          * stateful case finds its own previous mutation and passes without
          * performing the action under test. No fixture -> the historical
          * behaviour (workdir ".", the shared store), byte for byte. */
+        /* #53: a real-model baseline needs a task per case; without this every
+         * case would inherit the one goal in the shared run config. */
+        static char case_goal[1024];
+        const bool  has_goal =
+            eval_str(nod, c, suite_text.n, suite_text.data, "goal", case_goal,
+                     sizeof case_goal);
         char        fixture[CLI_PATH_MAX];
         const bool  has_fixture =
             eval_str(nod, c, suite_text.n, suite_text.data, "fixture", fixture,
@@ -2672,6 +2707,9 @@ static enum spg_status eval_run_suite(const char *suite_path,
                 for (size_t s = 0u; s < samples; s += 1u) {
                     struct spg_agent_run_inputs gin = inputs;
                     gin.model                       = &model;
+                    if (has_goal) {
+                        gin.goal = case_goal;
+                    }
                     if (has_fixture) {
                         if (!eval_sandbox_prepare(&sandbox_state, name, s,
                                                   fixture, store)) {
@@ -2696,6 +2734,7 @@ static enum spg_status eval_run_suite(const char *suite_path,
                         .repairs_used = loop.repairs_used,
                         .status       = rs,
                     };
+                    eval_tally_ladder(report, case_idx, &last);
                     if (last.outcome == SPG_EVAL_PASS) {
                         passed_in_case += 1u;
                         report->passed += 1u;
@@ -2720,6 +2759,9 @@ static enum spg_status eval_run_suite(const char *suite_path,
                 script_text.data, script_text.n, script, EVAL_SCRIPT_MAX);
             for (size_t s = 0u; s < samples; s += 1u) {
                 struct spg_agent_run_inputs cin = inputs;
+                if (has_goal) {
+                    cin.goal = case_goal;
+                }
                 if (has_fixture) {
                     if (!eval_sandbox_prepare(&sandbox_state, name, s,
                                               fixture, store)) {
@@ -2742,6 +2784,7 @@ static enum spg_status eval_run_suite(const char *suite_path,
                     goto done;
                 }
                 last = r;
+                eval_tally_ladder(report, case_idx, &r);
                 if (r.outcome == SPG_EVAL_PASS) {
                     passed_in_case += 1u;
                     report->passed += 1u;
@@ -2783,10 +2826,15 @@ static void eval_print_report(const char *suite_path,
             printf(",\"runs\":%zu,\"passed\":%zu", report->runs[i],
                    report->case_passed[i]);
         }
+        /* #53: the ladder, appended so existing consumers keep matching. */
+        printf(",\"parsed\":%zu,\"gated\":%zu", report->case_parsed[i],
+               report->case_gated[i]);
         printf("}\n");
     }
-    printf("{\"suite\":\"%s\",\"total\":%zu,\"passed\":%zu}\n", suite_path,
-           report->total, report->passed);
+    printf("{\"suite\":\"%s\",\"total\":%zu,\"passed\":%zu"
+           ",\"parsed\":%zu,\"gated\":%zu}\n",
+           suite_path, report->total, report->passed, report->parsed,
+           report->gated);
 }
 
 static int eval_command(int argc, char **argv) {

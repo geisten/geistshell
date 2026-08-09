@@ -17,7 +17,7 @@
 set -eu
 
 SPG_BIN=${SPG_BIN:-build/host-debug/bin/geistshell}
-SUITE=${BENCH_SUITE:-examples/eval/bench/model_suite.spg}
+SUITE=${BENCH_SUITE:-examples/eval/bench/model_train.spg}
 RUN_CFG=${BENCH_RUN:-examples/eval/bench/model_run.spg}
 SAMPLES=${BENCH_SAMPLES:-3}
 TEMP=${BENCH_TEMP:-0.8}

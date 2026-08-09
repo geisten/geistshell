@@ -156,6 +156,23 @@ memories to recall; when `improve` supplies a store, its contents are overlaid
 on top so a candidate lesson stays visible. Cases without a `(fixture ...)`
 behave exactly as before.
 
+Each case may carry its own `(goal "...")`, so a suite is a set of *tasks*
+rather than one task repeated — and no goal in the shipped baseline names an
+action kind or a capability, because that choice is the thing being measured.
+
+Verdicts report a **ladder**, not just a pass rate: `parsed` (the model emitted
+a form the parser accepts) → `gated` (…and the policy gate allowed the action)
+→ `passed` (…and the run reached the goal). The rungs are monotone, and they
+separate two failures that want opposite fixes — "cannot produce the form" and
+"produces a valid form, picks the wrong action".
+
+The real‑model baseline lives in `examples/eval/bench/`: seven `model_train.spg`
+cases and seven structurally varied `model_holdout.spg` twins (different
+fixture, different value, and where the kind allows it the other capability), so
+`improve --validate` judges a lesson on cases it was never derived from. Run
+them with `make bench`; they need a GGUF and are deliberately absent from
+`make test`, which instead checks that the suite is *structurally* sound.
+
 `--constrained` runs `(model "geist")` cases through the *same* decoder as
 `geistshell agent --constrained` — forced prefix, kind and capability masked
 against the policy. Without it the suite measures free decode, which is not a

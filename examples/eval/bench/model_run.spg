@@ -1,6 +1,6 @@
 (run
  (model "gguf_artifacts/gemma4-e2b-Q4_K_M.gguf")
- (policy "examples/eval/fixture_policy.spg")
+ (policy "examples/eval/bench/model_policy.spg")
  (scenario "examples/scenario.spg")
  (corpus "examples/corpus.spg")
  (journal "build/eval/bench.sgj")
