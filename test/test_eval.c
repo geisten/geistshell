@@ -213,7 +213,47 @@ static int test_memory_index_injected(void) {
     return ok;
 }
 
+/* #55: the answer-free selector for best-of-N. */
+static int test_run_rank(void) {
+    /* Strictly ordered, and the order follows the parse/gate/task ladder:
+     * a max_steps run PARSED and was ALLOWED and executed real actions; a
+     * denied run parsed but never got past the gate. max_steps got further.
+     * (#55's issue text had these the other way round — this is the fix.) */
+    const int finished = spg_run_rank(SPG_OK, SPG_AGENT_LOOP_FINISHED);
+    const int max_steps = spg_run_rank(SPG_OK, SPG_AGENT_LOOP_MAX_STEPS);
+    const int budget   = spg_run_rank(SPG_OK, SPG_AGENT_LOOP_BUDGET);
+    const int denied   = spg_run_rank(SPG_OK, SPG_AGENT_LOOP_DENIED);
+    const int rejected = spg_run_rank(SPG_OK, SPG_AGENT_LOOP_REJECTED);
+    const int error    = spg_run_rank(SPG_OK, SPG_AGENT_LOOP_ERROR);
+
+    if (!(finished > max_steps && max_steps > budget && budget > denied &&
+          denied > rejected && rejected > error)) {
+        fprintf(stderr,
+                "rank order: finished=%d max_steps=%d budget=%d denied=%d "
+                "rejected=%d error=%d\n",
+                finished, max_steps, budget, denied, rejected, error);
+        return 1;
+    }
+    /* A harness failure is never a measurement of the model, whatever the
+     * termination says — otherwise a crashed attempt could out-rank a real
+     * one and best-of-N would select the broken run. */
+    if (spg_run_rank(SPG_E_IO, SPG_AGENT_LOOP_FINISHED) >= rejected ||
+        spg_run_rank(SPG_E_MODEL, SPG_AGENT_LOOP_FINISHED) >= rejected) {
+        return 1;
+    }
+    /* Every enumerator is covered: no termination may fall through to the
+     * error value by accident. */
+    if (error != spg_run_rank(SPG_E_IO, SPG_AGENT_LOOP_FINISHED)) {
+        return 1;
+    }
+    return 0;
+}
+
 int main(void) {
+    if (test_run_rank() != 0) {
+        fprintf(stderr, "test_run_rank failed\n");
+        return 1;
+    }
     if (test_memory_index_injected() != 0) {
         fprintf(stderr, "test_memory_index_injected failed\n");
         return 1;

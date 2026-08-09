@@ -24,6 +24,28 @@ const char *spg_eval_outcome_to_string(const enum spg_eval_outcome o) {
     return "unknown";
 }
 
+int spg_run_rank(const enum spg_status                 status,
+                 const enum spg_agent_loop_termination termination) {
+    if (status != SPG_OK) {
+        return -1;
+    }
+    switch (termination) {
+    case SPG_AGENT_LOOP_FINISHED:
+        return 4;
+    case SPG_AGENT_LOOP_MAX_STEPS:
+        return 3;
+    case SPG_AGENT_LOOP_BUDGET:
+        return 2;
+    case SPG_AGENT_LOOP_DENIED:
+        return 1;
+    case SPG_AGENT_LOOP_REJECTED:
+        return 0;
+    case SPG_AGENT_LOOP_ERROR:
+        break;
+    }
+    return -1;
+}
+
 enum spg_eval_outcome spg_eval_judge(const struct spg_eval_expect *expect,
                                      const struct spg_agent_loop_result *loop,
                                      const enum spg_status status,

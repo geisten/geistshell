@@ -55,6 +55,32 @@ struct spg_eval_case_result {
 
 [[nodiscard]] const char *spg_eval_outcome_to_string(enum spg_eval_outcome o);
 
+/* Answer-free run quality, for selecting among N sampled attempts when nobody
+ * knows the right answer (geistshell#55).
+ *
+ * `--best-of N` used to select with spg_eval_judge, which needs a declared
+ * (expect ...) — i.e. the answer. Without one the feature silently collapsed to
+ * a single attempt, so in production, where nobody has the expected
+ * observation, it was off. This is the selector that needs no oracle: the
+ * information is already in every run's termination, and nothing read it.
+ *
+ * Higher is better. The order follows the parse/gate/task ladder (#53), NOT the
+ * ordering originally written into #55 — which put `denied` above `max_steps`
+ * and is wrong: a denied run parsed but never got past the policy gate, while a
+ * max_steps run parsed, WAS allowed, and executed real actions. It got strictly
+ * further; it simply ran out of room.
+ *
+ *   4  finished   reached a terminal state on its own
+ *   3  max_steps  acted validly, ran out of steps
+ *   2  budget     acted validly, ran out of budget
+ *   1  denied     produced a valid action the gate refused
+ *   0  rejected   never produced a valid form
+ *  -1  error      the harness failed; not a measurement of the model at all
+ *
+ * A non-OK run status is always -1 regardless of termination. */
+[[nodiscard]] int spg_run_rank(enum spg_status                 status,
+                               enum spg_agent_loop_termination termination);
+
 /* Judge a finished run against expectations (termination, step bounds, an
  * observation substring). Exposed so callers that drive the run themselves —
  * e.g. a real-model task case via spg_agent_run — score it the same way. */
