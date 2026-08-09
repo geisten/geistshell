@@ -35,7 +35,7 @@ hängt von CPU-Last, Temperatur oder Plattform der CI-Maschine ab.
 | `swap-used-bytes` | Bytes | `SwapTotal − SwapFree` | eines der beiden fehlt |
 | `temperature-mc` | Milligrad Celsius | `/sys/class/thermal/thermal_zone0/temp` | kein Thermal-Zone-Sensor |
 | `cpu-freq-khz` | kHz | `.../cpu0/cpufreq/scaling_cur_freq` | kein cpufreq-Treiber |
-| `throttle` | `none`/`active`/`past`/`unknown` | `.../soc:firmware/get_throttled` | kein Pi-Firmware-Interface |
+| `throttle` | `none`/`active`/`past`/`unknown` | hwmon `rpi_volt`, sonst `.../soc:firmware/get_throttled` | weder hwmon-Gerät noch Firmware-Node |
 | `process-count` | Anzahl | numerische Einträge in `/proc` | `/proc` nicht lesbar |
 
 Alle Werte sind **Ganzzahlen im Fixpunkt**. Keine Floats: deren Formatierung
@@ -84,9 +84,15 @@ kann, ohne `/proc/stat` zweimal zu lesen.
   Felder `unknown`, `timestamp_ns` gesetzt. Der Aufrufer kann weiterlaufen; ein
   Agent-Run darf daran nicht scheitern.
 
-Kein `vcgencmd`. Das Throttling-Bit kommt aus dem sysfs-Firmware-Interface, und
-wenn es fehlt, ist der Zustand `unknown` — keine Abhängigkeit von einem
-Raspberry-Pi-Userland-Tool.
+Kein `vcgencmd`. Das Throttling-Bit kommt primär aus dem hwmon-Gerät
+`rpi_volt` (`in0_lcrit_alarm`), ersatzweise aus dem sysfs-Firmware-Interface.
+
+Die Reihenfolge stammt aus einem Hardwaretest: auf einem Pi 5 mit Kernel 6.18
+existiert `/sys/devices/platform/soc/soc:firmware/get_throttled` **nicht**, das
+Feld wäre also auf genau der Zielhardware dauerhaft `unknown` geblieben.
+`vcgencmd get_throttled` meldete dort `0xe0000` — Ereignisse seit Boot. Diese
+Historie liefert nur `vcgencmd`, und das bleibt bewusst keine Abhängigkeit;
+`past` ist deshalb nur dort erreichbar, wo der Firmware-Node existiert.
 
 ## Robustheit der Parser
 
@@ -105,6 +111,17 @@ NUL, `MemAvailable > MemTotal` (Clamp statt Wrap), Δt = 0, rückwärts laufende
 Counter, Load ohne Dezimalpunkt, mehr als zwei Nachkommastellen (Trunkierung,
 keine Rundung), Nicht-Hex im Throttle-Feld, Renderpuffer exakt ein Byte zu
 klein.
+
+## Auf Hardware verifiziert
+
+Pi 5 Model B (aarch64, Kernel 6.18, Debian): `make test` grün, gemessener
+Snapshot plausibel — CPU 6,2 %, Load 0,45, 4,2 GB Total / 1,68 GB Used,
+Temperatur 47,95 °C, 1,5 GHz, 167 Prozesse.
+
+Zwei Fehler fand erst dieser Lauf:
+- `sysconf` war ohne `<unistd.h>` deklariert; macOS zieht den Header über
+  `dirent.h` transitiv mit, glibc nicht.
+- Der Throttling-Pfad existierte auf Pi 5 nicht (siehe oben).
 
 ## Was Phase 1 nicht tut
 

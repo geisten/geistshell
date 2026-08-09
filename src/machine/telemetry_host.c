@@ -39,6 +39,8 @@ static void state_init(struct spg_machine_state *out,
 #if defined(__linux__)
 
 #    include <dirent.h>
+#    include <string.h>
+#    include <unistd.h> /* sysconf: not pulled in transitively on glibc */
 
 /* Caller-provided buffer, no allocation. Returns the byte count read, or 0 when
  * the file is missing — a missing sysfs file is normal, not an error. */
@@ -52,40 +54,120 @@ static size_t read_file(const char *path, const size_t cap, char buf[cap]) {
     return n;
 }
 
-/* /proc entries whose name is all digits are processes. */
-static uint64_t count_processes(void) {
+/* Under-voltage on a Pi 5 is an hwmon alarm, not a firmware sysfs node: the
+ * /sys/devices/platform/soc/soc:firmware/get_throttled path this first used
+ * does not exist on current kernels, which left the field permanently unknown
+ * on the very hardware the roadmap targets. vcgencmd would also report events
+ * since boot, but it stays a non-dependency by design, so "past" is only
+ * reachable where the firmware node does exist. */
+static enum spg_throttle_state read_throttle(const size_t cap, char buf[cap]) {
+    size_t n = read_file("/sys/devices/platform/soc/soc:firmware/get_throttled",
+                         cap, buf);
+    if (n > 0u) {
+        return spg_telemetry_parse_throttle(n, buf);
+    }
+    char path[96];
+    for (unsigned i = 0u; i < 16u; i += 1u) {
+        if (snprintf(path, sizeof path, "/sys/class/hwmon/hwmon%u/name", i) <
+            0) {
+            continue;
+        }
+        n = read_file(path, cap, buf);
+        if (n < 8u || memcmp(buf, "rpi_volt", 8u) != 0) {
+            continue;
+        }
+        if (snprintf(path, sizeof path,
+                     "/sys/class/hwmon/hwmon%u/in0_lcrit_alarm", i) < 0) {
+            continue;
+        }
+        n = read_file(path, cap, buf);
+        if (n == 0u) {
+            return SPG_THROTTLE_UNKNOWN;
+        }
+        return buf[0] == '0' ? SPG_THROTTLE_NONE : SPG_THROTTLE_ACTIVE;
+    }
+    return SPG_THROTTLE_UNKNOWN;
+}
+
+/* Read /proc/<pid>/stat for every numeric entry, then select the bounded set
+ * that reaches the snapshot. Returns the total number seen, which is not the
+ * number kept — the snapshot is deliberately smaller than the machine. */
+static uint64_t enumerate_processes(const size_t                    prev_n,
+                                    const struct spg_process_sample prev[],
+                                    const uint64_t                  total_delta,
+                                    struct spg_machine_state       *out) {
     DIR *dir = opendir("/proc");
     if (dir == nullptr) {
         return SPG_MACHINE_UNKNOWN;
     }
-    uint64_t             count = 0u;
+    const long     page_size  = sysconf(_SC_PAGESIZE);
+    const uint64_t page_bytes = page_size > 0 ? (uint64_t)page_size : 0u;
+
+    struct spg_process_sample all[SPG_MACHINE_MAX_PROCESSES];
+    size_t                    n_all = 0u;
+    uint64_t                  total = 0u;
+    char                      path[64];
+    char                      buf[2048];
+
     const struct dirent *entry;
     while ((entry = readdir(dir)) != nullptr) {
         bool numeric = entry->d_name[0] != '\0';
         for (size_t i = 0u; numeric && entry->d_name[i] != '\0'; i += 1u) {
             numeric = entry->d_name[i] >= '0' && entry->d_name[i] <= '9';
         }
-        if (numeric) {
-            count += 1u;
+        if (!numeric) {
+            continue;
         }
+        total += 1u;
+        if (snprintf(path, sizeof path, "/proc/%s/stat", entry->d_name) < 0) {
+            continue;
+        }
+        const size_t n = read_file(path, sizeof buf, buf);
+        if (n == 0u) {
+            continue; /* the process exited between readdir and open */
+        }
+        struct spg_process_sample sample = {};
+        if (spg_process_parse_stat(n, buf, page_bytes, &sample) != SPG_OK) {
+            continue;
+        }
+        const struct spg_process_sample *before =
+            spg_process_find(prev_n, prev, sample.pid, sample.start_identity);
+        sample.cpu_bp =
+            spg_process_utilisation_bp(before, &sample, total_delta);
+        (void)spg_process_offer(SPG_MACHINE_MAX_PROCESSES, all, &n_all,
+                                &sample);
     }
     (void)closedir(dir);
-    return count;
+
+    (void)spg_process_select(n_all, all, SPG_MACHINE_MAX_PROCESSES,
+                             out->processes, &out->n_processes,
+                             &out->processes_truncated);
+    /* Every process was considered; the ones that did not make the cut are
+     * still dropped, and the consumer must know the list is not the machine. */
+    if (total > (uint64_t)out->n_processes) {
+        out->processes_truncated = true;
+    }
+    return total;
 }
 
-enum spg_status spg_machine_sample(const uint64_t               timestamp_ns,
-                                   const struct spg_cpu_sample *prev,
-                                   struct spg_machine_state    *out) {
-    if (out == nullptr) {
+enum spg_status spg_machine_sample_with_processes(
+    const uint64_t timestamp_ns, const struct spg_cpu_sample *prev,
+    const size_t prev_n, const struct spg_process_sample prev_procs[],
+    struct spg_machine_state *out) {
+    if (out == nullptr || (prev_n > 0u && prev_procs == nullptr)) {
         return SPG_E_INVALID_ARG;
     }
     state_init(out, timestamp_ns);
 
     /* One buffer, reused: /proc/meminfo is the largest of these by far. */
-    char   buf[4096];
-    size_t n = read_file("/proc/stat", sizeof buf, buf);
+    char     buf[4096];
+    uint64_t total_delta = 0u;
+    size_t   n           = read_file("/proc/stat", sizeof buf, buf);
     if (n > 0u && spg_telemetry_parse_stat(n, buf, &out->cpu) == SPG_OK) {
         out->cpu_utilisation_bp = spg_telemetry_utilisation_bp(prev, &out->cpu);
+        if (prev != nullptr && out->cpu.total >= prev->total) {
+            total_delta = out->cpu.total - prev->total;
+        }
     }
     n = read_file("/proc/meminfo", sizeof buf, buf);
     if (n > 0u) {
@@ -113,23 +195,21 @@ enum spg_status spg_machine_sample(const uint64_t               timestamp_ns,
             out->cpu_freq_khz = (uint64_t)khz;
         }
     }
-    /* Pi-specific and optional by design: no vcgencmd dependency. */
-    n = read_file("/sys/devices/platform/soc/soc:firmware/get_throttled",
-                  sizeof buf, buf);
-    if (n > 0u) {
-        out->throttle = spg_telemetry_parse_throttle(n, buf);
-    }
-    out->process_count = count_processes();
+    out->throttle = read_throttle(sizeof buf, buf);
+    out->process_count =
+        enumerate_processes(prev_n, prev_procs, total_delta, out);
     return SPG_OK;
 }
 
 #else /* not Linux */
 
-enum spg_status spg_machine_sample(const uint64_t               timestamp_ns,
-                                   const struct spg_cpu_sample *prev,
-                                   struct spg_machine_state    *out) {
+enum spg_status spg_machine_sample_with_processes(
+    const uint64_t timestamp_ns, const struct spg_cpu_sample *prev,
+    const size_t prev_n, const struct spg_process_sample prev_procs[],
+    struct spg_machine_state *out) {
     (void)prev;
-    if (out == nullptr) {
+    (void)prev_procs;
+    if (out == nullptr || (prev_n > 0u && prev_procs == nullptr)) {
         return SPG_E_INVALID_ARG;
     }
     state_init(out, timestamp_ns);
@@ -137,3 +217,11 @@ enum spg_status spg_machine_sample(const uint64_t               timestamp_ns,
 }
 
 #endif
+/* Convenience for callers with no previous tick, e.g. the first sample and the
+ * tests. */
+enum spg_status spg_machine_sample(const uint64_t               timestamp_ns,
+                                   const struct spg_cpu_sample *prev,
+                                   struct spg_machine_state    *out) {
+    return spg_machine_sample_with_processes(timestamp_ns, prev, 0u, nullptr,
+                                             out);
+}

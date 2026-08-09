@@ -50,6 +50,48 @@ struct spg_load_sample {
     uint64_t avg_15_cbp;
 };
 
+/* Kernel comm is TASK_COMM_LEN (16) including the NUL — names are truncated by
+ * the kernel itself, which the profile matcher has to account for. */
+#define SPG_PROCESS_NAME_CAP 16u
+
+/* Hard ceiling on the processes carried in one snapshot. Selection decides
+ * which ones survive; see spg_process_select. */
+#define SPG_MACHINE_MAX_PROCESSES 64u
+
+/* profile_index of a process no profile entry matched. */
+#define SPG_PROCESS_NO_PROFILE UINT32_MAX
+
+/* Semantic role, supplied by the process profile — never guessed from the
+ * name. Phase 6 turns may_pause/may_stop into policy decisions, so these are
+ * typed fields and not prompt text. */
+enum spg_process_role {
+    SPG_PROCESS_ROLE_UNKNOWN = 0,
+    SPG_PROCESS_ROLE_CRITICAL,
+    SPG_PROCESS_ROLE_BATCH,
+};
+
+/* One process. No command line, no environment, no user name — those can carry
+ * secrets and would be prompt-injection surface once this reaches the model. */
+struct spg_process_sample {
+    uint64_t pid;
+    /* Kernel start time in clock ticks since boot. Together with pid this is
+     * the process identity: a recycled pid gets a different start time, which
+     * is what stops phase 6 from signalling the wrong process. */
+    uint64_t start_identity;
+    char     name[SPG_PROCESS_NAME_CAP];
+    char     state; /* R, S, D, Z, T, ... as the kernel reports it */
+    int64_t  nice;
+    uint64_t cpu_time; /* raw utime+stime ticks, for the next delta */
+    uint64_t cpu_bp;   /* share of one tick's total CPU, UNKNOWN without prev */
+    uint64_t rss_bytes;
+
+    /* Filled from the profile by spg_process_apply_profile. */
+    uint32_t              profile_index;
+    enum spg_process_role role;
+    bool                  may_pause;
+    bool                  may_stop;
+};
+
 /* Raspberry Pi exposes a throttling bitmask; most hosts expose nothing. */
 enum spg_throttle_state {
     SPG_THROTTLE_UNKNOWN = 0,
@@ -73,6 +115,14 @@ struct spg_machine_state {
 
     struct spg_cpu_sample cpu; /* raw counters, so the caller can feed the
                                 * next call without re-reading /proc/stat */
+
+    /* Bounded and already selected: the snapshot never carries every process
+     * on the host. n_processes <= SPG_MACHINE_MAX_PROCESSES, and
+     * processes_truncated says whether anything was dropped — a consumer must
+     * not read a short list as "this is all that runs". */
+    size_t                    n_processes;
+    bool                      processes_truncated;
+    struct spg_process_sample processes[SPG_MACHINE_MAX_PROCESSES];
 };
 
 /* --- layer 2: parsers, pure, no I/O ------------------------------------- */
@@ -109,6 +159,59 @@ spg_telemetry_parse_int(size_t n, const char buf[], int64_t *out);
 [[nodiscard]] enum spg_throttle_state
 spg_telemetry_parse_throttle(size_t n, const char buf[]);
 
+/* One /proc/<pid>/stat line. page_bytes converts the RSS page count the kernel
+ * reports; the caller supplies it so this stays a pure function.
+ *
+ * The comm field is the reason this is not a naive field split: the kernel
+ * writes it in parentheses without escaping, so it can contain spaces and
+ * ')' — "(my app) (weird)" is a legal name. Fields are read after the LAST
+ * ')' in the line. */
+[[nodiscard]] enum spg_status
+spg_process_parse_stat(size_t n, const char buf[], uint64_t page_bytes,
+                       struct spg_process_sample *out);
+
+/* Share of one tick's total CPU time, in basis points. total_delta is the
+ * delta of spg_cpu_sample.total across the same interval. Returns UNKNOWN
+ * when prev is null (first sighting), when the identity does not match (pid
+ * reuse), when nothing advanced, or when a counter went backwards. */
+[[nodiscard]] uint64_t
+spg_process_utilisation_bp(const struct spg_process_sample *prev,
+                           const struct spg_process_sample *cur,
+                           uint64_t                         total_delta);
+
+/* Find a process by identity — pid AND start_identity, never pid alone.
+ * Returns null when absent. */
+[[nodiscard]] const struct spg_process_sample *
+spg_process_find(size_t n, const struct spg_process_sample procs[],
+                 uint64_t pid, uint64_t start_identity);
+
+/* Offer one candidate to a running best-of buffer, replacing the weakest entry
+ * once it is full. Returns whether the candidate was kept.
+ *
+ * This exists because the enumerator cannot hold every process on a real host —
+ * a Pi 5 idles at ~170. Without it, selection only ever saw the first `cap`
+ * processes /proc happened to list, so the busiest process could be invisible
+ * while kernel threads at 0% filled the snapshot. Ranking is the same as
+ * spg_process_select's. */
+[[nodiscard]] bool spg_process_offer(
+    size_t cap, struct spg_process_sample buf[], size_t *n,
+    const struct spg_process_sample *candidate);
+
+/* Pick which processes reach the snapshot, in a fixed order:
+ *   1. profile-managed processes  2. CPU descending
+ *   3. RSS descending             4. pid ascending
+ * The last rung makes the result independent of the order the OS enumerated
+ * them in — /proc has no ordering guarantee, and an unstable context would
+ * break byte-identical replay. Sets *out_truncated when anything was dropped.
+ * in[] rather than in[static n_in]: an empty process list is legitimate. */
+[[nodiscard]] enum spg_status
+spg_process_select(size_t n_in, const struct spg_process_sample in[],
+                   size_t out_cap, struct spg_process_sample out[],
+                   size_t *out_n, bool *out_truncated);
+
+[[nodiscard]] const char *
+spg_process_role_to_string(enum spg_process_role role);
+
 /* Utilisation between two samples. Returns SPG_MACHINE_UNKNOWN when prev is
  * null, the counters did not advance, or they went backwards (a counter reset
  * across suspend/resume) — never a wrong number and never a division by zero.
@@ -126,6 +229,15 @@ spg_telemetry_utilisation_bp(const struct spg_cpu_sample *prev,
 [[nodiscard]] enum spg_status
 spg_machine_sample(uint64_t timestamp_ns, const struct spg_cpu_sample *prev,
                    struct spg_machine_state *out);
+
+/* Same, plus the previous tick's process list so per-process CPU can be a
+ * delta. Processes are matched by pid AND start identity: a recycled pid does
+ * not inherit the old process's counters, it reports unknown. prev_procs may
+ * be null when prev_n is 0. */
+[[nodiscard]] enum spg_status spg_machine_sample_with_processes(
+    uint64_t timestamp_ns, const struct spg_cpu_sample *prev, size_t prev_n,
+    const struct spg_process_sample prev_procs[],
+    struct spg_machine_state       *out);
 
 /* --- layer 3: serialisation --------------------------------------------- */
 
