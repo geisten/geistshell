@@ -220,14 +220,19 @@ geistshell is arguably **ahead** of them.
 
 ### Where we are honestly behind
 
-- **Reasoning capability.** geistshell is *not* a smart agent. It runs a single
-  small local model with no constrained/grammar‑guided decoding (the engine does
-  not expose logit masking), so the model must emit a custom s‑expression
-  grammar from free text — which small models do unreliably. Real‑model runs
-  today frequently end in `rejected`. Frontier‑model agents with native
-  function‑calling and explicit planning are far ahead here. A **remote model
+- **Reasoning capability.** geistshell is *not* a smart agent. Structure is no
+  longer the bottleneck: `--constrained` decodes the recommendation form by
+  construction (forced opening, `kind` and `capability` masked against the
+  engine's logits via `geist_session_peek_logits`, the rest of the form emitted
+  as a per‑kind scaffold), so a model that was never tool‑trained still produces
+  a schema‑valid action. What remains behind is *choosing the right* action, and
+  the model adaptation around it — one hardcoded prompt shape for every model
+  family, no planner, no per‑model profile. Frontier agents with native
+  function‑calling and explicit planning are ahead here. A **remote model
   adapter** (shipped — see Roadmap) lets the *same* governed loop drive a
-  frontier model, closing this gap without touching the spine.
+  frontier model, closing that gap without touching the spine — at the cost of
+  the constrained decoder, which needs in‑process logit access. See
+  [docs/MODEL-ADAPTATION.md](docs/MODEL-ADAPTATION.md).
 - **Memory.** The mind‑palace is recency/keyword‑ranked Markdown — no embeddings
   or semantic retrieval. Behind SOTA agent memory.
 - **No planner / multi‑agent.** One action per tick; the loop is multi‑step but
@@ -284,7 +289,7 @@ the same governed loop** rather than compete on local‑model capability.
 | `src/eval/`, `src/improve/`             | evaluation harness + self‑improvement loop             |
 | `src/journal/`, `src/core/`, `src/dsl/` | hash‑chained journal, primitives, s‑expression DSL     |
 | `src/cli/`, `src/chat/`                 | CLI and chat REPL surfaces                             |
-| `deps/geist/`                           | the external inference engine (pinned `v0.2.1`)        |
+| `deps/geist/`                           | the external inference engine (pinned `v0.3.1`)        |
 
 ## Constraints
 

@@ -5,7 +5,7 @@ GEIST_DIR := $(DEPS_DIR)/geist
 # Official upstream engine. Pin GEIST_REF to a commit/tag for reproducible
 # builds; override either on the command line to track a fork or branch.
 GEIST_REPO ?= https://github.com/geisten/geistlib.git
-GEIST_REF  ?= v0.2.1
+GEIST_REF  ?= v0.3.1
 
 BUILD_MODE ?= host-debug
 
@@ -62,7 +62,10 @@ else
     GEIST_LINK_FLAGS :=
 endif
 
-CPPFLAGS := -Iinclude -Iinclude/geistshell -I$(GEIST_DIR)/include -I$(GEIST_DIR) -I$(DEPS_DIR)/jsmn
+# Only the engine's PUBLIC headers. -I$(GEIST_DIR) (the repo root, which reached
+# private headers like src/base/heap.h) was dropped with the arena wrapper in
+# v0.3.1 — geistshell must not depend on libgeist internals.
+CPPFLAGS := -Iinclude -Iinclude/geistshell -I$(GEIST_DIR)/include -I$(DEPS_DIR)/jsmn
 WARNINGS := -Wall -Wextra -Wpedantic -Wconversion -Wshadow -Wstrict-prototypes
 CFLAGS := -std=c23 $(WARNINGS) $(SPG_OPT_FLAGS) $(CPPFLAGS) $(REMOTE_DEFS)
 LDLIBS := $(GEIST_LINK_FLAGS) -lm -lpthread $(REMOTE_LIBS)
@@ -73,7 +76,6 @@ SPG_SOURCES := \
     src/actor/recommendation.c \
     src/chat/chat_template.c \
     src/chat/chat_tools.c \
-    src/core/allocator.c \
     src/core/budget_config.c \
     src/core/hash.c \
     src/core/hmac.c \

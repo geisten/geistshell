@@ -1009,11 +1009,22 @@ static int sim_validate_command(const char *path) {
     return 0;
 }
 
+/* free + null the caller's pointer. Was geist's safe_free, reached through a
+ * PRIVATE engine header (deps/geist/src/base/heap.h) that moved in v0.3.1; the
+ * CLI already mixed it with plain free(), so this is the same behaviour without
+ * the cross-repo coupling. */
+static void free_ptr(void **ptr) {
+    if (ptr != nullptr && *ptr != nullptr) {
+        free(*ptr);
+        *ptr = nullptr;
+    }
+}
+
 static void free_file_buffer(struct file_buffer *buffer) {
     if (buffer == nullptr) {
         return;
     }
-    safe_free((void **)&buffer->data);
+    free_ptr((void **)&buffer->data);
     buffer->n = 0u;
 }
 
@@ -1044,18 +1055,18 @@ static enum spg_status read_file(const char *path, struct file_buffer *out) {
         return SPG_E_IO;
     }
     const size_t n = (size_t)end;
-    char *data = heap_alloc_aligned(n + 1u, alignof(char));
+    char *data = malloc(n + 1u);
     if (data == nullptr) {
         (void)fclose(file);
         return SPG_E_OOM;
     }
     if (n > 0u && fread(data, 1u, n, file) != n) {
-        safe_free((void **)&data);
+        free_ptr((void **)&data);
         (void)fclose(file);
         return SPG_E_IO;
     }
     if (fclose(file) != 0) {
-        safe_free((void **)&data);
+        free_ptr((void **)&data);
         return SPG_E_IO;
     }
     data[n] = '\0';
@@ -1072,7 +1083,7 @@ static enum spg_status span_to_cstr(const size_t input_n, const char input[],
         return SPG_E_INVALID_ARG;
     }
     *out = nullptr;
-    char *text = heap_alloc_aligned(span.length + 1u, alignof(char));
+    char *text = malloc(span.length + 1u);
     if (text == nullptr) {
         return SPG_E_OOM;
     }
@@ -1331,9 +1342,9 @@ done:
     if (model_open) {
         spg_model_adapter_destroy(&model);
     }
-    safe_free((void **)&policy_path);
-    safe_free((void **)&scenario_path);
-    safe_free((void **)&journal_path);
+    free_ptr((void **)&policy_path);
+    free_ptr((void **)&scenario_path);
+    free_ptr((void **)&journal_path);
     free_file_buffer(&run_text);
     free_file_buffer(&policy_text);
     free_file_buffer(&scenario_text);
@@ -1636,10 +1647,10 @@ done:
     if (model_open) {
         spg_model_adapter_destroy(&model);
     }
-    safe_free((void **)&policy_path);
-    safe_free((void **)&scenario_path);
-    safe_free((void **)&journal_path);
-    safe_free((void **)&model_path);
+    free_ptr((void **)&policy_path);
+    free_ptr((void **)&scenario_path);
+    free_ptr((void **)&journal_path);
+    free_ptr((void **)&model_path);
     free_file_buffer(&run_text);
     free_file_buffer(&policy_text);
     free_file_buffer(&scenario_text);
