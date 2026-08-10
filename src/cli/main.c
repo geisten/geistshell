@@ -31,6 +31,8 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <sys/resource.h>
+#include <time.h>
 #include <sys/file.h>
 #include <unistd.h> /* mkstemp/write/close/unlink: the guard-gate temp suite */
 
@@ -749,6 +751,29 @@ static int lock_machine_journal(const char *journal_path) {
         return -1;
     }
     return fd;
+}
+
+/* Wall clock for measurement only — never for anything the journal records.
+ * A benchmark has to know how long a thing took; the runtime still must not. */
+static uint64_t bench_now_ms(void) {
+    struct timespec ts = {};
+    (void)clock_gettime(CLOCK_MONOTONIC, &ts);
+    return (uint64_t)ts.tv_sec * 1000u + (uint64_t)(ts.tv_nsec / 1000000);
+}
+
+/* Peak resident set of this process, in kilobytes. Linux reports ru_maxrss in
+ * KB and macOS in bytes — a difference that would otherwise show up as a
+ * thousandfold jump between hosts in the results table. */
+static uint64_t bench_peak_rss_kb(void) {
+    struct rusage usage = {};
+    if (getrusage(RUSAGE_SELF, &usage) != 0) {
+        return 0u;
+    }
+#if defined(__APPLE__)
+    return (uint64_t)usage.ru_maxrss / 1024u;
+#else
+    return (uint64_t)usage.ru_maxrss;
+#endif
 }
 
 static void update_run_usage(struct spg_policy_usage              *usage,
@@ -2526,6 +2551,20 @@ struct eval_run_report {
      * action", and those want opposite fixes. */
     size_t case_parsed[EVAL_MAX_CASES];
     size_t case_gated[EVAL_MAX_CASES];
+    /* Phase 10 (#70): wall time per case and peak RSS for the whole suite.
+     *
+     * Measured here and nowhere else. The runtime reads no clock — that is what
+     * keeps replay byte-identical — but a benchmark that cannot say how long
+     * something took is not a benchmark. This never enters a journal or a
+     * context; it is the harness observing itself. */
+    uint64_t case_latency_ms[EVAL_MAX_CASES];
+    uint64_t suite_latency_ms;
+    uint64_t peak_rss_kb;
+    /* Off by default, and that is not laziness: two identical eval runs must
+     * produce byte-identical reports, and a wall-clock number in the default
+     * output breaks every diff and every fixture test that relies on it.
+     * A measurement belongs behind a switch; a report is for comparing. */
+    bool report_timing;
     /* Phase 9: the objective verdict per case, reported alongside the outcome
      * so a reader can see WHY a run that finished cleanly still failed. */
     enum spg_goal_verdict goal_verdicts[EVAL_MAX_CASES];
@@ -2935,7 +2974,8 @@ static enum spg_status eval_run_suite(const char                 *suite_path,
                                     nod[head].span, "case")) {
             continue;
         }
-        const size_t case_idx = report->ncases;
+        const size_t   case_idx  = report->ncases;
+        const uint64_t case_start = bench_now_ms();
         char        *name     = report->names[case_idx];
         (void)snprintf(name, sizeof report->names[0], "case");
         char script_path[CLI_PATH_MAX];
@@ -3407,7 +3447,8 @@ static enum spg_status eval_run_suite(const char                 *suite_path,
             free_file_buffer(&script_text);
         }
 
-        report->results[case_idx]     = last;
+        report->case_latency_ms[case_idx] = bench_now_ms() - case_start;
+        report->results[case_idx]         = last;
         report->runs[case_idx]        = runs_in_case;
         report->case_passed[case_idx] = passed_in_case;
         report->ncases += 1u;
@@ -3424,6 +3465,7 @@ done:
     return rc;
 }
 
+
 static void eval_print_report(const char                   *suite_path,
                               const struct eval_run_report *report) {
     for (size_t i = 0u; i < report->ncases; i += 1u) {
@@ -3435,6 +3477,10 @@ static void eval_print_report(const char                   *suite_path,
                r->steps_taken, r->actions_executed,
                spg_goal_verdict_to_string(report->goal_verdicts[i]),
                r->repairs_used);
+        if (report->report_timing) {
+            printf(",\"latency_ms\":%llu",
+                   (unsigned long long)report->case_latency_ms[i]);
+        }
         /* With --samples N>1, aggregate k-of-N; N==1 stays byte-identical. */
         if (report->runs[i] > 1u) {
             printf(",\"runs\":%zu,\"passed\":%zu", report->runs[i],
@@ -3461,6 +3507,11 @@ static void eval_print_report(const char                   *suite_path,
            ",\"parsed\":%zu,\"gated\":%zu",
            suite_path, report->total, report->passed, report->parsed,
            report->gated);
+    if (report->report_timing) {
+        printf(",\"latency_ms\":%llu,\"peak_rss_kb\":%llu",
+               (unsigned long long)report->suite_latency_ms,
+               (unsigned long long)report->peak_rss_kb);
+    }
     if (report->diagnosis_suite) {
         size_t known_runs = 0u, known_ok = 0u, held_runs = 0u, held_ok = 0u;
         size_t halluc = 0u, actions = 0u;
@@ -3496,7 +3547,16 @@ static int eval_command(int argc, char **argv) {
     size_t      samples      = 1u;
     bool        constrained  = false;
     float       temperature  = 0.0f;
+    bool report_timing = false;
     for (int i = 2; i < argc; i += 1) {
+        if (strcmp(argv[i], "--timing") == 0) {
+            /* Adds wall-clock and peak RSS to the report. Off by default so
+             * two identical runs stay byte-identical — the property the
+             * fixture test relies on, and the one that makes a report worth
+             * diffing at all. */
+            report_timing = true;
+            continue;
+        }
         if (strcmp(argv[i], "--remote-url") == 0 && i + 1 < argc) {
             remote_url = argv[++i];
             continue;
@@ -3539,6 +3599,7 @@ static int eval_command(int argc, char **argv) {
         return 2;
     }
     static struct eval_run_report report;
+    const uint64_t                suite_start_ms = bench_now_ms();
     const struct eval_run_opts    opts = {.remote_url   = remote_url,
                                           .remote_model = remote_model,
                                           .samples      = samples,
@@ -3551,6 +3612,9 @@ static int eval_command(int argc, char **argv) {
                 spg_status_to_string(status));
         return 1;
     }
+    report.suite_latency_ms = bench_now_ms() - suite_start_ms;
+    report.peak_rss_kb      = bench_peak_rss_kb();
+    report.report_timing    = report_timing;
     eval_print_report(suite_path, &report);
     return (report.total > 0u && report.passed == report.total) ? 0 : 1;
 }
