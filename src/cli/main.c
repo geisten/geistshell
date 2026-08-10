@@ -1,4 +1,5 @@
-#define _POSIX_C_SOURCE 200809L /* mkstemp/write/unlink: the guard-gate temp suite */
+#define _POSIX_C_SOURCE                                                        \
+    200809L /* mkstemp/write/unlink: the guard-gate temp suite */
 #if defined(__APPLE__)
 #    define _DARWIN_C_SOURCE 1
 #endif
@@ -15,14 +16,15 @@
 #include "geistshell/improve.h"
 #include "geistshell/mem_command.h"
 #include "geistshell/mem_store.h"
+#include "geistshell/process_profile.h"
 
 #include <geist.h>
 
 #include <errno.h>
 #include <math.h> /* isfinite: --temperature validation */
 #include <stdbool.h>
-#include <stdio.h>
 #include <stdint.h>
+#include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
 #include <unistd.h> /* mkstemp/write/close/unlink: the guard-gate temp suite */
@@ -46,34 +48,35 @@ struct file_buffer {
     char  *data;
 };
 
-static void free_file_buffer(struct file_buffer *buffer);
-static enum spg_status load_policy_file(const char *path,
-                                        struct file_buffer *policy_text,
+static void            free_file_buffer(struct file_buffer *buffer);
+static enum spg_status load_policy_file(const char               *path,
+                                        struct file_buffer       *policy_text,
                                         struct spg_policy_config *policy);
-static enum spg_status load_scenario_file(const char *path,
-                                          struct file_buffer *scenario_text,
+static enum spg_status load_scenario_file(const char            *path,
+                                          struct file_buffer    *scenario_text,
                                           struct spg_sim_config *sim);
 
 static void print_usage(const char *argv0) {
-    fprintf(stderr,
-            "usage: %s <command> [args]\n"
-            "\n"
-            "commands:\n"
-            "  version          print geistshell and libgeist versions\n"
-            "  exec             run a guarded local command and capture output\n"
-            "  memory           store/recall Markdown long-term memories\n"
-            "  tick             run one fake-model orchestrator tick\n"
-            "  run              run fake-model orchestrator ticks\n"
-            "  agent            run a governed multi-step agent loop "
-            "(scripted)\n"
-            "  eval             score a scripted agent suite (JSONL report)\n"
-            "  improve          learn lessons from eval failures into memory\n"
-            "  replay           print a journal timeline as JSONL\n"
-            "  verify-journal   verify a journal (+ --key <f> checks the seal)\n"
-            "  seal-journal     write a keyed HMAC seal over a journal\n"
-            "  policy-check     validate and summarize a policy file\n"
-            "  sim-validate     validate and summarize a scenario file\n",
-            argv0);
+    fprintf(
+        stderr,
+        "usage: %s <command> [args]\n"
+        "\n"
+        "commands:\n"
+        "  version          print geistshell and libgeist versions\n"
+        "  exec             run a guarded local command and capture output\n"
+        "  memory           store/recall Markdown long-term memories\n"
+        "  tick             run one fake-model orchestrator tick\n"
+        "  run              run fake-model orchestrator ticks\n"
+        "  agent            run a governed multi-step agent loop "
+        "(scripted)\n"
+        "  eval             score a scripted agent suite (JSONL report)\n"
+        "  improve          learn lessons from eval failures into memory\n"
+        "  replay           print a journal timeline as JSONL\n"
+        "  verify-journal   verify a journal (+ --key <f> checks the seal)\n"
+        "  seal-journal     write a keyed HMAC seal over a journal\n"
+        "  policy-check     validate and summarize a policy file\n"
+        "  sim-validate     validate and summarize a scenario file\n",
+        argv0);
 }
 
 static void print_tick_usage(const char *argv0) {
@@ -86,24 +89,25 @@ static void print_tick_usage(const char *argv0) {
 }
 
 static void print_run_usage(const char *argv0) {
-    fprintf(stderr,
-            "usage: %s run --config <run.spg> [--fake '<recommendation>'] "
-            "[--ticks <n>] [--write-sim-state <build/final.spg>] "
-            "[--write-run-state <build/run-state.json>] "
-            "[--remote-url <url>] [--remote-model <name>]\n"
-            "\n"
-            "Runs orchestrator ticks with one mutable in-process "
-            "simulator state.\n"
-            "Without --fake, the model path from the run config is loaded via "
-            "libgeist.\n"
-            "With --remote-url (or GEISTSHELL_API_URL) and a REMOTE=1 build, an "
-            "OpenAI-compatible\nendpoint drives the loop; the key is read from "
-            "GEISTSHELL_API_KEY.\n"
-            "Shell and network recommendations stop after recommendation and "
-            "policy gating.\n"
-            "If requested, writes the final simulator state as a scenario "
-            "S-expression.\n",
-            argv0);
+    fprintf(
+        stderr,
+        "usage: %s run --config <run.spg> [--fake '<recommendation>'] "
+        "[--ticks <n>] [--write-sim-state <build/final.spg>] "
+        "[--write-run-state <build/run-state.json>] "
+        "[--remote-url <url>] [--remote-model <name>]\n"
+        "\n"
+        "Runs orchestrator ticks with one mutable in-process "
+        "simulator state.\n"
+        "Without --fake, the model path from the run config is loaded via "
+        "libgeist.\n"
+        "With --remote-url (or GEISTSHELL_API_URL) and a REMOTE=1 build, an "
+        "OpenAI-compatible\nendpoint drives the loop; the key is read from "
+        "GEISTSHELL_API_KEY.\n"
+        "Shell and network recommendations stop after recommendation and "
+        "policy gating.\n"
+        "If requested, writes the final simulator state as a scenario "
+        "S-expression.\n",
+        argv0);
 }
 
 static void print_verify_journal_usage(const char *argv0) {
@@ -125,8 +129,8 @@ static void print_sim_validate_usage(const char *argv0) {
     fprintf(stderr, "usage: %s sim-validate <scenario.spg>\n", argv0);
 }
 
-static const char *policy_capability_kind_name(
-    const enum spg_policy_capability_kind kind) {
+static const char *
+policy_capability_kind_name(const enum spg_policy_capability_kind kind) {
     switch (kind) {
     case SPG_POLICY_CAP_LOCAL_SHELL:
         return "local_shell";
@@ -140,8 +144,8 @@ static const char *policy_capability_kind_name(
     return "unknown";
 }
 
-static const char *policy_network_default_name(
-    const enum spg_policy_network_default value) {
+static const char *
+policy_network_default_name(const enum spg_policy_network_default value) {
     switch (value) {
     case SPG_POLICY_NETWORK_DENY:
         return "deny";
@@ -189,7 +193,7 @@ static const char *journal_event_kind_name(const uint32_t kind) {
 
 static bool replay_span_eq_cstr(const size_t input_n, const char input[],
                                 const struct spg_text_span span,
-                                const char *expected) {
+                                const char                *expected) {
     if (input == nullptr || expected == nullptr || span.offset > input_n ||
         span.length > input_n - span.offset) {
         return false;
@@ -202,7 +206,7 @@ static bool replay_span_eq_cstr(const size_t input_n, const char input[],
 static bool replay_field_value(const size_t input_n, const char input[],
                                const struct spg_sexpr_node nodes[static 1],
                                const size_t node_count, const char *form_name,
-                               const char *field_name,
+                               const char           *field_name,
                                struct spg_text_span *out) {
     if (input == nullptr || nodes == nullptr || node_count == 0u ||
         form_name == nullptr || field_name == nullptr || out == nullptr) {
@@ -233,19 +237,20 @@ static bool replay_field_value(const size_t input_n, const char input[],
     return false;
 }
 
-static bool replay_payload_field(const size_t payload_n, const uint8_t payload[],
-                                 const char *form_name, const char *field_name,
+static bool replay_payload_field(const size_t  payload_n,
+                                 const uint8_t payload[], const char *form_name,
+                                 const char           *field_name,
                                  struct spg_text_span *out) {
     if (payload == nullptr || out == nullptr) {
         return false;
     }
     struct spg_sexpr_token tokens[CLI_TOKEN_CAPACITY];
     struct spg_sexpr_node  nodes[CLI_NODE_CAPACITY];
-    struct spg_sexpr_error error = {};
-    size_t token_count = 0u;
-    size_t node_count = 0u;
-    const char *text = (const char *)payload;
-    const enum spg_status status = spg_sexpr_parse_text(
+    struct spg_sexpr_error error       = {};
+    size_t                 token_count = 0u;
+    size_t                 node_count  = 0u;
+    const char            *text        = (const char *)payload;
+    const enum spg_status  status      = spg_sexpr_parse_text(
         payload_n, text, CLI_TOKEN_CAPACITY, tokens, CLI_NODE_CAPACITY, nodes,
         &token_count, &node_count, &error);
     if (status != SPG_OK) {
@@ -256,13 +261,13 @@ static bool replay_payload_field(const size_t payload_n, const uint8_t payload[]
                               field_name, out);
 }
 
-static bool payload_span_valid(const size_t payload_n,
+static bool payload_span_valid(const size_t               payload_n,
                                const struct spg_text_span span) {
     return span.offset <= payload_n && span.length <= payload_n - span.offset;
 }
 
-static bool payload_span_is_uint(const size_t payload_n,
-                                 const uint8_t payload[],
+static bool payload_span_is_uint(const size_t               payload_n,
+                                 const uint8_t              payload[],
                                  const struct spg_text_span span) {
     if (payload == nullptr || !payload_span_valid(payload_n, span) ||
         span.length == 0u) {
@@ -277,10 +282,11 @@ static bool payload_span_is_uint(const size_t payload_n,
     return true;
 }
 
-static bool payload_span_is_bool(const size_t payload_n,
-                                 const uint8_t payload[],
+static bool payload_span_is_bool(const size_t               payload_n,
+                                 const uint8_t              payload[],
                                  const struct spg_text_span span) {
-    return replay_span_eq_cstr(payload_n, (const char *)payload, span, "true") ||
+    return replay_span_eq_cstr(payload_n, (const char *)payload, span,
+                               "true") ||
            replay_span_eq_cstr(payload_n, (const char *)payload, span, "false");
 }
 
@@ -307,8 +313,8 @@ static void print_json_bytes(const size_t bytes_n, const uint8_t bytes[]) {
     printf("\"");
 }
 
-static void print_json_span_string(const size_t payload_n,
-                                   const uint8_t payload[],
+static void print_json_span_string(const size_t               payload_n,
+                                   const uint8_t              payload[],
                                    const struct spg_text_span span) {
     if (payload == nullptr || !payload_span_valid(payload_n, span)) {
         printf("null");
@@ -317,8 +323,8 @@ static void print_json_span_string(const size_t payload_n,
     print_json_bytes(span.length, payload + span.offset);
 }
 
-static void print_json_span_value(const size_t payload_n,
-                                  const uint8_t payload[],
+static void print_json_span_value(const size_t               payload_n,
+                                  const uint8_t              payload[],
                                   const struct spg_text_span span) {
     if (payload == nullptr || !payload_span_valid(payload_n, span)) {
         printf("null");
@@ -332,9 +338,11 @@ static void print_json_span_value(const size_t payload_n,
     print_json_span_string(payload_n, payload, span);
 }
 
-static void print_json_preview(const size_t payload_n, const uint8_t payload[]) {
-    const size_t n =
-        payload_n < CLI_REPLAY_PREVIEW_BYTES ? payload_n : CLI_REPLAY_PREVIEW_BYTES;
+static void print_json_preview(const size_t  payload_n,
+                               const uint8_t payload[]) {
+    const size_t n = payload_n < CLI_REPLAY_PREVIEW_BYTES
+                         ? payload_n
+                         : CLI_REPLAY_PREVIEW_BYTES;
     print_json_bytes(n, payload);
 }
 
@@ -344,25 +352,25 @@ static int verify_journal_command(const char *path) {
     }
 
     struct spg_journal_reader reader = {};
-    enum spg_status status = spg_journal_reader_open(&reader, path);
+    enum spg_status           status = spg_journal_reader_open(&reader, path);
     if (status != SPG_OK) {
         fprintf(stderr, "verify-journal: open failed: %s\n",
                 spg_status_to_string(status));
         return 1;
     }
 
-    uint8_t payload[CLI_JOURNAL_VERIFY_PAYLOAD_BYTES];
-    uint64_t counts[SPG_JOURNAL_EVENT_ERROR + 1u] = {};
-    uint64_t total = 0u;
-    uint64_t truncated_payloads = 0u;
-    uint64_t status_failures = 0u;
-    uint64_t payload_bytes = 0u;
-    uint64_t last_sequence = 0u;
-    struct spg_journal_record record = {};
+    uint8_t                   payload[CLI_JOURNAL_VERIFY_PAYLOAD_BYTES];
+    uint64_t                  counts[SPG_JOURNAL_EVENT_ERROR + 1u] = {};
+    uint64_t                  total                                = 0u;
+    uint64_t                  truncated_payloads                   = 0u;
+    uint64_t                  status_failures                      = 0u;
+    uint64_t                  payload_bytes                        = 0u;
+    uint64_t                  last_sequence                        = 0u;
+    struct spg_journal_record record                               = {};
 
     for (;;) {
-        status = spg_journal_reader_next(&reader, sizeof payload, payload,
-                                         &record);
+        status =
+            spg_journal_reader_next(&reader, sizeof payload, payload, &record);
         if (status == SPG_E_NOT_FOUND) {
             break;
         }
@@ -404,8 +412,7 @@ static int verify_journal_command(const char *path) {
     printf("last_sequence=%llu\n", (unsigned long long)last_sequence);
     printf("payload_bytes=%llu\n", (unsigned long long)payload_bytes);
     printf("status_failures=%llu\n", (unsigned long long)status_failures);
-    printf("truncated_payloads=%llu\n",
-           (unsigned long long)truncated_payloads);
+    printf("truncated_payloads=%llu\n", (unsigned long long)truncated_payloads);
     for (uint32_t i = 0u; i <= (uint32_t)SPG_JOURNAL_EVENT_ERROR; i += 1u) {
         if (counts[i] == 0u) {
             continue;
@@ -423,9 +430,9 @@ static void print_replay_common_json(const struct spg_journal_record *record,
            (unsigned long long)record->header.parent_sequence);
     printf(",\"ts\":%llu", (unsigned long long)record->header.timestamp_ns);
     printf(",\"event\":");
-    print_json_bytes(strlen(journal_event_kind_name(record->header.event_kind)),
-                     (const uint8_t *)journal_event_kind_name(
-                         record->header.event_kind));
+    print_json_bytes(
+        strlen(journal_event_kind_name(record->header.event_kind)),
+        (const uint8_t *)journal_event_kind_name(record->header.event_kind));
     printf(",\"status\":");
     print_json_bytes(
         strlen(spg_status_to_string((enum spg_status)record->header.status)),
@@ -436,10 +443,10 @@ static void print_replay_common_json(const struct spg_journal_record *record,
     printf(",\"truncated\":%s", truncated ? "true" : "false");
 }
 
-static void print_replay_field_json(const size_t payload_n,
+static void print_replay_field_json(const size_t  payload_n,
                                     const uint8_t payload[],
-                                    const char *form_name,
-                                    const char *field_name) {
+                                    const char   *form_name,
+                                    const char   *field_name) {
     struct spg_text_span value = {};
     if (!replay_payload_field(payload_n, payload, form_name, field_name,
                               &value)) {
@@ -449,17 +456,17 @@ static void print_replay_field_json(const size_t payload_n,
     print_json_span_value(payload_n, payload, value);
 }
 
-static void print_replay_policy_json(const size_t payload_n,
+static void print_replay_policy_json(const size_t  payload_n,
                                      const uint8_t payload[]) {
-    const char *fields[] = {"decision", "deny_reason", "action_kind",
-                            "cost", "uses_network", "confidence_bp"};
+    const char *fields[] = {"decision", "deny_reason",  "action_kind",
+                            "cost",     "uses_network", "confidence_bp"};
     for (size_t i = 0u; i < sizeof fields / sizeof fields[0]; i += 1u) {
         print_replay_field_json(payload_n, payload, "policy_decision",
                                 fields[i]);
     }
 }
 
-static void print_replay_sim_json(const size_t payload_n,
+static void print_replay_sim_json(const size_t  payload_n,
                                   const uint8_t payload[]) {
     const char *fields[] = {"action", "selected_index", "mutated",
                             "risk_before", "risk_after"};
@@ -474,19 +481,19 @@ static int replay_command(const char *path) {
     }
 
     struct spg_journal_reader reader = {};
-    enum spg_status status = spg_journal_reader_open(&reader, path);
+    enum spg_status           status = spg_journal_reader_open(&reader, path);
     if (status != SPG_OK) {
         fprintf(stderr, "replay: open failed: %s\n",
                 spg_status_to_string(status));
         return 1;
     }
 
-    uint8_t payload[CLI_REPLAY_PAYLOAD_BYTES];
+    uint8_t                   payload[CLI_REPLAY_PAYLOAD_BYTES];
     struct spg_journal_record record = {};
 
     for (;;) {
-        status = spg_journal_reader_next(&reader, sizeof payload, payload,
-                                         &record);
+        status =
+            spg_journal_reader_next(&reader, sizeof payload, payload, &record);
         if (status == SPG_E_NOT_FOUND) {
             break;
         }
@@ -507,7 +514,7 @@ static int replay_command(const char *path) {
             print_json_preview(available_payload, payload);
             printf(",\"preview_truncated\":%s",
                    available_payload > CLI_REPLAY_PREVIEW_BYTES ? "true"
-                                                                 : "false");
+                                                                : "false");
             break;
         case SPG_JOURNAL_EVENT_POLICY_DECISION:
             if (!truncated) {
@@ -561,9 +568,10 @@ static int policy_check_command(const char *path) {
     if (path == nullptr) {
         return 2;
     }
-    struct file_buffer policy_text = {};
-    struct spg_policy_config policy = {};
-    const enum spg_status status = load_policy_file(path, &policy_text, &policy);
+    struct file_buffer       policy_text = {};
+    struct spg_policy_config policy      = {};
+    const enum spg_status    status =
+        load_policy_file(path, &policy_text, &policy);
     if (status != SPG_OK) {
         fprintf(stderr, "policy-check: load failed: %s\n",
                 spg_status_to_string(status));
@@ -611,8 +619,8 @@ static bool parse_size(const char *text, size_t *out) {
     if (text == nullptr || out == nullptr || text[0] == '\0') {
         return false;
     }
-    errno     = 0;
-    char *end = nullptr;
+    errno                          = 0;
+    char                    *end   = nullptr;
     const unsigned long long value = strtoull(text, &end, 10);
     if (errno == ERANGE || end == text || *end != '\0' ||
         value > (unsigned long long)SIZE_MAX) {
@@ -653,9 +661,9 @@ static void add_budget_u64(uint64_t *value, const uint64_t delta) {
     *value += delta;
 }
 
-static uint64_t latest_result_sequence(
-    const struct spg_orchestrator_result *result,
-    const uint64_t fallback_sequence) {
+static uint64_t
+latest_result_sequence(const struct spg_orchestrator_result *result,
+                       const uint64_t fallback_sequence) {
     if (result == nullptr) {
         return fallback_sequence;
     }
@@ -686,7 +694,7 @@ static uint64_t latest_result_sequence(
     return fallback_sequence;
 }
 
-static void update_run_usage(struct spg_policy_usage *usage,
+static void update_run_usage(struct spg_policy_usage              *usage,
                              const struct spg_orchestrator_result *result) {
     if (usage == nullptr || result == nullptr) {
         return;
@@ -704,17 +712,17 @@ static void update_run_usage(struct spg_policy_usage *usage,
     }
 }
 
-static void print_run_tick_summary(
-    const size_t tick_index, const struct spg_orchestrator_result *result,
-    const struct spg_policy_usage *usage) {
+static void print_run_tick_summary(const size_t tick_index,
+                                   const struct spg_orchestrator_result *result,
+                                   const struct spg_policy_usage *usage) {
     printf("tick=%zu", tick_index);
     printf(" stage=%s", spg_orchestrator_stage_to_string(result->stage));
-    printf(" recommendation=%s",
-           spg_orchestrator_recommendation_valid(result) ? "valid" : "rejected");
+    printf(" recommendation=%s", spg_orchestrator_recommendation_valid(result)
+                                     ? "valid"
+                                     : "rejected");
     if (!spg_orchestrator_recommendation_valid(result)) {
-        printf(" reject_reason=%s",
-               spg_recommendation_reject_reason_to_string(
-                   result->recommendation.reject_reason));
+        printf(" reject_reason=%s", spg_recommendation_reject_reason_to_string(
+                                        result->recommendation.reject_reason));
     } else {
         printf(" action=%s",
                spg_action_kind_to_string(result->recommendation.action_kind));
@@ -738,14 +746,13 @@ static void print_run_tick_summary(
     }
     printf(" consumed.inference_steps=%llu",
            (unsigned long long)usage->consumed.inference_steps);
-    printf(" consumed.tokens=%llu",
-           (unsigned long long)usage->consumed.tokens);
+    printf(" consumed.tokens=%llu", (unsigned long long)usage->consumed.tokens);
     printf(" consumed.sim_actions=%llu",
            (unsigned long long)usage->consumed.sim_actions);
     printf("\n");
 }
 
-static bool file_span_valid(const size_t text_n,
+static bool file_span_valid(const size_t               text_n,
                             const struct spg_text_span span) {
     return span.offset <= text_n && span.length <= text_n - span.offset;
 }
@@ -758,7 +765,7 @@ static enum spg_status write_file_text(FILE *file, const char *text) {
 }
 
 static enum spg_status write_file_span(FILE *file, const size_t text_n,
-                                       const char text[],
+                                       const char                 text[],
                                        const struct spg_text_span span) {
     if (file == nullptr || text == nullptr || !file_span_valid(text_n, span)) {
         return SPG_E_INVALID_ARG;
@@ -790,9 +797,9 @@ static enum spg_status write_file_bool(FILE *file, const bool value) {
     return write_file_text(file, value ? "true" : "false");
 }
 
-static enum spg_status write_sim_state_file(const char *path,
+static enum spg_status write_sim_state_file(const char  *path,
                                             const size_t source_n,
-                                            const char source[],
+                                            const char   source[],
                                             const struct spg_sim_config *sim) {
     if (path == nullptr || source == nullptr || sim == nullptr) {
         return SPG_E_INVALID_ARG;
@@ -1000,8 +1007,8 @@ static int sim_validate_command(const char *path) {
     if (path == nullptr) {
         return 2;
     }
-    struct file_buffer scenario_text = {};
-    struct spg_sim_config sim = {};
+    struct file_buffer    scenario_text = {};
+    struct spg_sim_config sim           = {};
     enum spg_status status = load_scenario_file(path, &scenario_text, &sim);
     if (status != SPG_OK) {
         fprintf(stderr, "sim-validate: load failed: %s\n",
@@ -1010,7 +1017,7 @@ static int sim_validate_command(const char *path) {
         return 1;
     }
     struct spg_risk_score risk = {};
-    status = spg_risk_evaluate(&sim, &risk);
+    status                     = spg_risk_evaluate(&sim, &risk);
     if (status != SPG_OK) {
         fprintf(stderr, "sim-validate: risk failed: %s\n",
                 spg_status_to_string(status));
@@ -1055,7 +1062,7 @@ static enum spg_status read_file(const char *path, struct file_buffer *out) {
     if (path == nullptr || out == nullptr) {
         return SPG_E_INVALID_ARG;
     }
-    *out = (struct file_buffer){};
+    *out       = (struct file_buffer){};
     FILE *file = fopen(path, "rb");
     if (file == nullptr) {
         return SPG_E_IO;
@@ -1077,8 +1084,8 @@ static enum spg_status read_file(const char *path, struct file_buffer *out) {
         (void)fclose(file);
         return SPG_E_IO;
     }
-    const size_t n = (size_t)end;
-    char *data = malloc(n + 1u);
+    const size_t n    = (size_t)end;
+    char        *data = malloc(n + 1u);
     if (data == nullptr) {
         (void)fclose(file);
         return SPG_E_OOM;
@@ -1092,55 +1099,55 @@ static enum spg_status read_file(const char *path, struct file_buffer *out) {
         free_ptr((void **)&data);
         return SPG_E_IO;
     }
-    data[n] = '\0';
-    out->n = n;
+    data[n]   = '\0';
+    out->n    = n;
     out->data = data;
     return SPG_OK;
 }
 
 static enum spg_status span_to_cstr(const size_t input_n, const char input[],
                                     const struct spg_text_span span,
-                                    char **out) {
+                                    char                     **out) {
     if (input == nullptr || out == nullptr || span.offset > input_n ||
         span.length > input_n - span.offset) {
         return SPG_E_INVALID_ARG;
     }
-    *out = nullptr;
+    *out       = nullptr;
     char *text = malloc(span.length + 1u);
     if (text == nullptr) {
         return SPG_E_OOM;
     }
     memcpy(text, input + span.offset, span.length);
     text[span.length] = '\0';
-    *out = text;
+    *out              = text;
     return SPG_OK;
 }
 
-static enum spg_status load_run_file(const char *path,
-                                     struct file_buffer *run_text,
+static enum spg_status load_run_file(const char            *path,
+                                     struct file_buffer    *run_text,
                                      struct spg_run_config *run) {
     enum spg_status status = read_file(path, run_text);
     if (status != SPG_OK) {
         return status;
     }
-    struct spg_sexpr_token tokens[CLI_TOKEN_CAPACITY];
-    struct spg_sexpr_node  nodes[CLI_NODE_CAPACITY];
+    struct spg_sexpr_token      tokens[CLI_TOKEN_CAPACITY];
+    struct spg_sexpr_node       nodes[CLI_NODE_CAPACITY];
     struct spg_run_config_error error = {};
-    status = spg_run_config_load(run_text->n, run_text->data,
-                                 CLI_TOKEN_CAPACITY, tokens,
-                                 CLI_NODE_CAPACITY, nodes, run, &error);
+    status =
+        spg_run_config_load(run_text->n, run_text->data, CLI_TOKEN_CAPACITY,
+                            tokens, CLI_NODE_CAPACITY, nodes, run, &error);
     return status;
 }
 
-static enum spg_status load_policy_file(const char *path,
-                                        struct file_buffer *policy_text,
+static enum spg_status load_policy_file(const char               *path,
+                                        struct file_buffer       *policy_text,
                                         struct spg_policy_config *policy) {
     enum spg_status status = read_file(path, policy_text);
     if (status != SPG_OK) {
         return status;
     }
-    struct spg_sexpr_token tokens[CLI_TOKEN_CAPACITY];
-    struct spg_sexpr_node  nodes[CLI_NODE_CAPACITY];
+    struct spg_sexpr_token         tokens[CLI_TOKEN_CAPACITY];
+    struct spg_sexpr_node          nodes[CLI_NODE_CAPACITY];
     struct spg_policy_config_error error = {};
     status = spg_policy_config_load(policy_text->n, policy_text->data,
                                     CLI_TOKEN_CAPACITY, tokens,
@@ -1148,19 +1155,19 @@ static enum spg_status load_policy_file(const char *path,
     return status;
 }
 
-static enum spg_status load_scenario_file(const char *path,
-                                          struct file_buffer *scenario_text,
+static enum spg_status load_scenario_file(const char            *path,
+                                          struct file_buffer    *scenario_text,
                                           struct spg_sim_config *sim) {
     enum spg_status status = read_file(path, scenario_text);
     if (status != SPG_OK) {
         return status;
     }
-    struct spg_sexpr_token tokens[CLI_TOKEN_CAPACITY];
-    struct spg_sexpr_node  nodes[CLI_NODE_CAPACITY];
+    struct spg_sexpr_token      tokens[CLI_TOKEN_CAPACITY];
+    struct spg_sexpr_node       nodes[CLI_NODE_CAPACITY];
     struct spg_sim_config_error error = {};
     status = spg_sim_config_load(scenario_text->n, scenario_text->data,
-                                 CLI_TOKEN_CAPACITY, tokens,
-                                 CLI_NODE_CAPACITY, nodes, sim, &error);
+                                 CLI_TOKEN_CAPACITY, tokens, CLI_NODE_CAPACITY,
+                                 nodes, sim, &error);
     return status;
 }
 
@@ -1169,27 +1176,27 @@ static int run_tick_fake(const char *run_path, const char *fake_output) {
         return 2;
     }
 
-    int rc = 1;
-    struct file_buffer run_text = {};
-    struct file_buffer policy_text = {};
-    struct file_buffer scenario_text = {};
-    char *policy_path = nullptr;
-    char *scenario_path = nullptr;
-    char *journal_path = nullptr;
-    struct spg_journal_writer journal = {};
-    bool journal_open = false;
-    struct spg_model_adapter model = {};
-    bool model_open = false;
+    int                       rc            = 1;
+    struct file_buffer        run_text      = {};
+    struct file_buffer        policy_text   = {};
+    struct file_buffer        scenario_text = {};
+    char                     *policy_path   = nullptr;
+    char                     *scenario_path = nullptr;
+    char                     *journal_path  = nullptr;
+    struct spg_journal_writer journal       = {};
+    bool                      journal_open  = false;
+    struct spg_model_adapter  model         = {};
+    bool                      model_open    = false;
 
-    struct spg_run_config run = {};
-    enum spg_status status = load_run_file(run_path, &run_text, &run);
+    struct spg_run_config run    = {};
+    enum spg_status       status = load_run_file(run_path, &run_text, &run);
     if (status != SPG_OK) {
         fprintf(stderr, "tick: load run failed: %s\n",
                 spg_status_to_string(status));
         goto done;
     }
-    status = span_to_cstr(run_text.n, run_text.data, run.policy_path,
-                          &policy_path);
+    status =
+        span_to_cstr(run_text.n, run_text.data, run.policy_path, &policy_path);
     if (status != SPG_OK) {
         fprintf(stderr, "tick: policy path failed: %s\n",
                 spg_status_to_string(status));
@@ -1247,34 +1254,35 @@ static int run_tick_fake(const char *run_path, const char *fake_output) {
     }
     model_open = true;
 
-    struct spg_graph graph = {};
+    struct spg_graph  graph  = {};
     struct spg_memory memory = {};
     spg_graph_init(&graph);
     spg_memory_init(&memory);
 
-    struct spg_context_graph_ref graph_refs[CLI_CONTEXT_REFS];
-    struct spg_context_memory_ref memory_refs[CLI_CONTEXT_REFS];
+    struct spg_context_graph_ref   graph_refs[CLI_CONTEXT_REFS];
+    struct spg_context_memory_ref  memory_refs[CLI_CONTEXT_REFS];
     struct spg_context_journal_ref journal_refs[CLI_CONTEXT_REFS];
-    char context[CLI_CONTEXT_BYTES];
-    char model_output[CLI_MODEL_OUTPUT_BYTES];
-    struct spg_sexpr_token rec_tokens[CLI_TOKEN_CAPACITY];
-    struct spg_sexpr_node rec_nodes[CLI_NODE_CAPACITY];
-    char policy_payload[CLI_PAYLOAD_BYTES];
-    char sim_payload[CLI_PAYLOAD_BYTES];
+    char                           context[CLI_CONTEXT_BYTES];
+    char                           model_output[CLI_MODEL_OUTPUT_BYTES];
+    struct spg_sexpr_token         rec_tokens[CLI_TOKEN_CAPACITY];
+    struct spg_sexpr_node          rec_nodes[CLI_NODE_CAPACITY];
+    char                           policy_payload[CLI_PAYLOAD_BYTES];
+    char                           sim_payload[CLI_PAYLOAD_BYTES];
 
     const struct spg_orchestrator_workspace workspace = {
-        .actor = {
-            .context_capacity      = sizeof context,
-            .context               = context,
-            .model_output_capacity = sizeof model_output,
-            .model_output          = model_output,
-            .graph_ref_capacity    = CLI_CONTEXT_REFS,
-            .graph_refs            = graph_refs,
-            .memory_ref_capacity   = CLI_CONTEXT_REFS,
-            .memory_refs           = memory_refs,
-            .journal_ref_capacity  = CLI_CONTEXT_REFS,
-            .journal_refs          = journal_refs,
-        },
+        .actor =
+            {
+                .context_capacity      = sizeof context,
+                .context               = context,
+                .model_output_capacity = sizeof model_output,
+                .model_output          = model_output,
+                .graph_ref_capacity    = CLI_CONTEXT_REFS,
+                .graph_refs            = graph_refs,
+                .memory_ref_capacity   = CLI_CONTEXT_REFS,
+                .memory_refs           = memory_refs,
+                .journal_ref_capacity  = CLI_CONTEXT_REFS,
+                .journal_refs          = journal_refs,
+            },
         .recommendation_token_capacity = CLI_TOKEN_CAPACITY,
         .recommendation_tokens         = rec_tokens,
         .recommendation_node_capacity  = CLI_NODE_CAPACITY,
@@ -1285,7 +1293,7 @@ static int run_tick_fake(const char *run_path, const char *fake_output) {
         .sim_payload                   = sim_payload,
     };
 
-    struct spg_policy_usage usage = {};
+    struct spg_policy_usage       usage = {};
     struct spg_orchestrator_state state = {
         .graph         = &graph,
         .memory        = &memory,
@@ -1305,8 +1313,8 @@ static int run_tick_fake(const char *run_path, const char *fake_output) {
     const struct spg_orchestrator_config config = {
         .actor_id            = 1u,
         .timestamp_ns        = 1u,
-        .context_limits      = {.graph_nodes = CLI_CONTEXT_REFS,
-                                .memory_facts = CLI_CONTEXT_REFS,
+        .context_limits      = {.graph_nodes    = CLI_CONTEXT_REFS,
+                                .memory_facts   = CLI_CONTEXT_REFS,
                                 .journal_events = CLI_CONTEXT_REFS},
         .max_decode_tokens   = run.budgets.tokens > 0u ? 1u : 0u,
         .reset_model_session = true,
@@ -1323,13 +1331,12 @@ static int run_tick_fake(const char *run_path, const char *fake_output) {
     }
 
     printf("stage=%s\n", spg_orchestrator_stage_to_string(result.stage));
-    printf("recommendation=%s\n",
-           spg_orchestrator_recommendation_valid(&result) ? "valid"
-                                                          : "rejected");
+    printf("recommendation=%s\n", spg_orchestrator_recommendation_valid(&result)
+                                      ? "valid"
+                                      : "rejected");
     if (!spg_orchestrator_recommendation_valid(&result)) {
-        printf("reject_reason=%s\n",
-               spg_recommendation_reject_reason_to_string(
-                   result.recommendation.reject_reason));
+        printf("reject_reason=%s\n", spg_recommendation_reject_reason_to_string(
+                                         result.recommendation.reject_reason));
     }
     if (spg_orchestrator_policy_evaluated(&result)) {
         printf("policy=%s\n",
@@ -1394,21 +1401,21 @@ static int run_loop(const char *run_path, const char *fake_output,
         }
     }
 
-    int rc = 1;
-    struct file_buffer run_text = {};
-    struct file_buffer policy_text = {};
-    struct file_buffer scenario_text = {};
-    char *policy_path = nullptr;
-    char *scenario_path = nullptr;
-    char *journal_path = nullptr;
-    char *model_path = nullptr;
-    struct spg_journal_writer journal = {};
-    bool journal_open = false;
-    struct spg_model_adapter model = {};
-    bool model_open = false;
+    int                       rc            = 1;
+    struct file_buffer        run_text      = {};
+    struct file_buffer        policy_text   = {};
+    struct file_buffer        scenario_text = {};
+    char                     *policy_path   = nullptr;
+    char                     *scenario_path = nullptr;
+    char                     *journal_path  = nullptr;
+    char                     *model_path    = nullptr;
+    struct spg_journal_writer journal       = {};
+    bool                      journal_open  = false;
+    struct spg_model_adapter  model         = {};
+    bool                      model_open    = false;
 
-    struct spg_run_config run = {};
-    enum spg_status status = load_run_file(run_path, &run_text, &run);
+    struct spg_run_config run    = {};
+    enum spg_status       status = load_run_file(run_path, &run_text, &run);
     if (status != SPG_OK) {
         fprintf(stderr, "run: load run failed: %s\n",
                 spg_status_to_string(status));
@@ -1423,8 +1430,8 @@ static int run_loop(const char *run_path, const char *fake_output,
         goto done;
     }
 
-    status = span_to_cstr(run_text.n, run_text.data, run.policy_path,
-                          &policy_path);
+    status =
+        span_to_cstr(run_text.n, run_text.data, run.policy_path, &policy_path);
     if (status != SPG_OK) {
         fprintf(stderr, "run: policy path failed: %s\n",
                 spg_status_to_string(status));
@@ -1444,8 +1451,8 @@ static int run_loop(const char *run_path, const char *fake_output,
                 spg_status_to_string(status));
         goto done;
     }
-    status = span_to_cstr(run_text.n, run_text.data, run.model_path,
-                          &model_path);
+    status =
+        span_to_cstr(run_text.n, run_text.data, run.model_path, &model_path);
     if (status != SPG_OK) {
         fprintf(stderr, "run: model path failed: %s\n",
                 spg_status_to_string(status));
@@ -1480,29 +1487,29 @@ static int run_loop(const char *run_path, const char *fake_output,
     const bool  use_fake    = fake_output != nullptr;
     const char *env_api_url = getenv("GEISTSHELL_API_URL");
     const char *url =
-        (remote_url != nullptr && remote_url[0] != '\0')        ? remote_url
-        : (env_api_url != nullptr && env_api_url[0] != '\0')    ? env_api_url
-                                                                : nullptr;
+        (remote_url != nullptr && remote_url[0] != '\0')     ? remote_url
+        : (env_api_url != nullptr && env_api_url[0] != '\0') ? env_api_url
+                                                             : nullptr;
     const bool use_remote = !use_fake && url != nullptr;
     /* For REMOTE the (model "...") value is a model name, not a file path; an
      * explicit --remote-model overrides it. The key is env-only. */
     const char *remote_name =
         (remote_model != nullptr && remote_model[0] != '\0') ? remote_model
                                                              : model_path;
-    const enum spg_model_adapter_kind kind =
-        use_fake     ? SPG_MODEL_ADAPTER_FAKE
-        : use_remote ? SPG_MODEL_ADAPTER_REMOTE
-                     : SPG_MODEL_ADAPTER_GEIST;
+    const enum spg_model_adapter_kind kind = use_fake ? SPG_MODEL_ADAPTER_FAKE
+                                             : use_remote
+                                                 ? SPG_MODEL_ADAPTER_REMOTE
+                                                 : SPG_MODEL_ADAPTER_GEIST;
     const struct spg_model_adapter_config model_config = {
-        .kind         = kind,
-        .model_path   = (kind == SPG_MODEL_ADAPTER_GEIST) ? model_path : nullptr,
-        .endpoint_url = use_remote ? url : nullptr,
-        .model_name   = use_remote ? remote_name : nullptr,
-        .api_key      = use_remote ? getenv("GEISTSHELL_API_KEY") : nullptr,
+        .kind       = kind,
+        .model_path = (kind == SPG_MODEL_ADAPTER_GEIST) ? model_path : nullptr,
+        .endpoint_url    = use_remote ? url : nullptr,
+        .model_name      = use_remote ? remote_name : nullptr,
+        .api_key         = use_remote ? getenv("GEISTSHELL_API_KEY") : nullptr,
         .sampling        = {.max_seq_len = 4096u,
                             .temperature = 0.0f,
-                            .top_p = 1.0f,
-                            .top_k = 0,
+                            .top_p       = 1.0f,
+                            .top_k       = 0,
                             .random_seed = run.seed},
         .fake_response_n = use_fake ? strlen(fake_output) : 0u,
         .fake_response   = fake_output,
@@ -1512,42 +1519,44 @@ static int run_loop(const char *run_path, const char *fake_output,
         fprintf(stderr, "run: model init failed: %s\n",
                 spg_status_to_string(status));
         if (use_remote && status == SPG_E_UNSUPPORTED) {
-            fprintf(stderr,
-                    "run: rebuild with `make REMOTE=1` to enable --remote-url\n");
+            fprintf(
+                stderr,
+                "run: rebuild with `make REMOTE=1` to enable --remote-url\n");
         }
         goto done;
     }
     model_open = true;
 
-    struct spg_graph graph = {};
+    struct spg_graph  graph  = {};
     struct spg_memory memory = {};
     spg_graph_init(&graph);
     spg_memory_init(&memory);
 
-    struct spg_context_graph_ref graph_refs[CLI_CONTEXT_REFS];
-    struct spg_context_memory_ref memory_refs[CLI_CONTEXT_REFS];
+    struct spg_context_graph_ref   graph_refs[CLI_CONTEXT_REFS];
+    struct spg_context_memory_ref  memory_refs[CLI_CONTEXT_REFS];
     struct spg_context_journal_ref journal_refs[CLI_CONTEXT_REFS];
-    char context[CLI_CONTEXT_BYTES];
-    char model_output[CLI_MODEL_OUTPUT_BYTES];
-    struct spg_sexpr_token rec_tokens[CLI_TOKEN_CAPACITY];
-    struct spg_sexpr_node rec_nodes[CLI_NODE_CAPACITY];
-    char policy_payload[CLI_PAYLOAD_BYTES];
-    char sim_payload[CLI_PAYLOAD_BYTES];
-    char mem_recall_buf[8192] = {0};
+    char                           context[CLI_CONTEXT_BYTES];
+    char                           model_output[CLI_MODEL_OUTPUT_BYTES];
+    struct spg_sexpr_token         rec_tokens[CLI_TOKEN_CAPACITY];
+    struct spg_sexpr_node          rec_nodes[CLI_NODE_CAPACITY];
+    char                           policy_payload[CLI_PAYLOAD_BYTES];
+    char                           sim_payload[CLI_PAYLOAD_BYTES];
+    char                           mem_recall_buf[8192] = {0};
 
     const struct spg_orchestrator_workspace workspace = {
-        .actor = {
-            .context_capacity      = sizeof context,
-            .context               = context,
-            .model_output_capacity = sizeof model_output,
-            .model_output          = model_output,
-            .graph_ref_capacity    = CLI_CONTEXT_REFS,
-            .graph_refs            = graph_refs,
-            .memory_ref_capacity   = CLI_CONTEXT_REFS,
-            .memory_refs           = memory_refs,
-            .journal_ref_capacity  = CLI_CONTEXT_REFS,
-            .journal_refs          = journal_refs,
-        },
+        .actor =
+            {
+                .context_capacity      = sizeof context,
+                .context               = context,
+                .model_output_capacity = sizeof model_output,
+                .model_output          = model_output,
+                .graph_ref_capacity    = CLI_CONTEXT_REFS,
+                .graph_refs            = graph_refs,
+                .memory_ref_capacity   = CLI_CONTEXT_REFS,
+                .memory_refs           = memory_refs,
+                .journal_ref_capacity  = CLI_CONTEXT_REFS,
+                .journal_refs          = journal_refs,
+            },
         .recommendation_token_capacity = CLI_TOKEN_CAPACITY,
         .recommendation_tokens         = rec_tokens,
         .recommendation_node_capacity  = CLI_NODE_CAPACITY,
@@ -1556,13 +1565,13 @@ static int run_loop(const char *run_path, const char *fake_output,
         .policy_payload                = policy_payload,
         .sim_payload_capacity          = sizeof sim_payload,
         .sim_payload                   = sim_payload,
-        .observation_capacity        = sizeof mem_recall_buf,
-        .observation_buf             = mem_recall_buf,
+        .observation_capacity          = sizeof mem_recall_buf,
+        .observation_buf               = mem_recall_buf,
     };
 
-    struct spg_policy_usage usage = {};
-    char                    mem_index_buf[4096] = {0};
-    struct spg_orchestrator_state state = {
+    struct spg_policy_usage       usage               = {};
+    char                          mem_index_buf[4096] = {0};
+    struct spg_orchestrator_state state               = {
         .graph         = &graph,
         .memory        = &memory,
         .journal       = &journal,
@@ -1579,7 +1588,7 @@ static int run_loop(const char *run_path, const char *fake_output,
         .memory_text_n = 0u,
         .memory_text   = nullptr,
         .memory_index  = have_store ? mem_index_buf : nullptr,
-        .observation = have_store ? mem_recall_buf : nullptr,
+        .observation   = have_store ? mem_recall_buf : nullptr,
     };
 
     uint64_t parent_sequence = 0u;
@@ -1601,8 +1610,8 @@ static int run_loop(const char *run_path, const char *fake_output,
             .actor_id            = 1u,
             .timestamp_ns        = i + 1u,
             .parent_sequence     = parent_sequence,
-            .context_limits      = {.graph_nodes = CLI_CONTEXT_REFS,
-                                    .memory_facts = CLI_CONTEXT_REFS,
+            .context_limits      = {.graph_nodes    = CLI_CONTEXT_REFS,
+                                    .memory_facts   = CLI_CONTEXT_REFS,
                                     .journal_events = CLI_CONTEXT_REFS},
             .max_decode_tokens   = run.budgets.tokens > 0u ? 1u : 0u,
             .reset_model_session = true,
@@ -1624,7 +1633,7 @@ static int run_loop(const char *run_path, const char *fake_output,
     }
 
     struct spg_risk_score final_risk = {};
-    status = spg_risk_evaluate(&sim, &final_risk);
+    status                           = spg_risk_evaluate(&sim, &final_risk);
     if (status != SPG_OK) {
         fprintf(stderr, "run: final risk failed: %s\n",
                 spg_status_to_string(status));
@@ -1681,7 +1690,7 @@ done:
 }
 
 static int tick_command(int argc, char **argv) {
-    const char *run_path = nullptr;
+    const char *run_path    = nullptr;
     const char *fake_output = nullptr;
     for (int i = 2; i < argc; i += 1) {
         if (strcmp(argv[i], "--run") == 0 && i + 1 < argc) {
@@ -1704,14 +1713,14 @@ static int tick_command(int argc, char **argv) {
 }
 
 static int run_command(int argc, char **argv) {
-    const char *run_path = nullptr;
-    const char *fake_output = nullptr;
+    const char *run_path       = nullptr;
+    const char *fake_output    = nullptr;
     const char *sim_state_path = nullptr;
     const char *run_state_path = nullptr;
     const char *memory_dir     = getenv("GEISTSHELL_MEMORY_DIR");
     const char *remote_url     = nullptr;
     const char *remote_model   = nullptr;
-    size_t ticks = 3u;
+    size_t      ticks          = 3u;
     for (int i = 2; i < argc; i += 1) {
         if ((strcmp(argv[i], "--config") == 0 ||
              strcmp(argv[i], "--run") == 0) &&
@@ -1769,17 +1778,17 @@ static int run_command(int argc, char **argv) {
                     run_state_path, memory_dir, remote_url, remote_model);
 }
 
-#define AGENT_MAX_SCRIPT   64u
+#define AGENT_MAX_SCRIPT 64u
 #define AGENT_SHELL_STDOUT 4096u
 #define AGENT_SHELL_STDERR 1024u
-#define AGENT_OBS_BYTES    8192u
-#define CLI_PATH_MAX       4096u
+#define AGENT_OBS_BYTES 8192u
+#define CLI_PATH_MAX 4096u
 
 /* Split a script buffer into one fake reply per non-blank line (pointers into
  * data; no copy, no NUL needed). Returns the number of replies. */
 static size_t split_script_lines(char *data, const size_t n,
                                  struct spg_fake_response out[static 1],
-                                 const size_t cap) {
+                                 const size_t             cap) {
     size_t count = 0u;
     size_t i     = 0u;
     while (i < n && count < cap) {
@@ -1813,10 +1822,12 @@ static int agent_command(int argc, char **argv) {
     size_t      max_repairs    = 2u;
     bool        allow_exec     = false;
     bool        constrained    = false;
-    float       sample_temp    = 0.0f; /* >0 lets the free slots vary (best-of-N) */
-    bool        has_seed       = false;
-    uint64_t    seed_override  = 0u; /* per-attempt seed for best-of-N sampling */
-    size_t      best_of        = 1u; /* #2: verifier-guided best-of-N attempts */
+    float    sample_temp   = 0.0f; /* >0 lets the free slots vary (best-of-N) */
+    bool     has_seed      = false;
+    uint64_t seed_override = 0u; /* per-attempt seed for best-of-N sampling */
+    size_t   best_of       = 1u; /* #2: verifier-guided best-of-N attempts */
+    bool     with_machine  = false; /* roadmap phase 3: (machine-state ...) */
+    const char *profile_path = nullptr; /* (process-profile ...) file */
     for (int i = 2; i < argc; i += 1) {
         if ((strcmp(argv[i], "--config") == 0 ||
              strcmp(argv[i], "--run") == 0) &&
@@ -1869,7 +1880,8 @@ static int agent_command(int argc, char **argv) {
             continue;
         }
         if (strcmp(argv[i], "--directive-slug") == 0 && i + 1 < argc) {
-            /* render this stored lesson's directive every step (strong channel) */
+            /* render this stored lesson's directive every step (strong channel)
+             */
             directive_slug = argv[i + 1];
             i += 1;
             continue;
@@ -1888,6 +1900,16 @@ static int agent_command(int argc, char **argv) {
             i += 1;
             continue;
         }
+        if (strcmp(argv[i], "--machine") == 0) {
+            with_machine = true;
+            continue;
+        }
+        if (strcmp(argv[i], "--process-profile") == 0 && i + 1 < argc) {
+            profile_path = argv[i + 1];
+            with_machine = true; /* a profile without telemetry does nothing */
+            i += 1;
+            continue;
+        }
         if (strcmp(argv[i], "--best-of") == 0 && i + 1 < argc) {
             best_of = (size_t)strtoull(argv[i + 1], nullptr, 10);
             if (best_of == 0u) {
@@ -1902,6 +1924,7 @@ static int agent_command(int argc, char **argv) {
     if (run_path == nullptr) {
         fprintf(stderr,
                 "usage: %s agent --config <run> [--fake-script <file>] "
+                "[--machine] [--process-profile <file>] "
                 "[--max-steps N] [--max-repairs N] [--allow-exec] "
                 "[--memory-dir <d>]\n"
                 "  without --fake-script the real model at the config's "
@@ -1910,22 +1933,22 @@ static int agent_command(int argc, char **argv) {
         return 2;
     }
 
-    int                rc            = 1;
-    struct file_buffer run_text       = {};
-    struct file_buffer policy_text    = {};
-    struct file_buffer scenario_text  = {};
-    struct file_buffer script_text    = {};
-    struct file_buffer exemplars_text = {};
-    char              *policy_path   = nullptr;
-    char              *scenario_path = nullptr;
-    char              *journal_path  = nullptr;
-    char              *model_path    = nullptr;
-    struct spg_journal_writer journal     = {};
-    bool                      journal_open = false;
-    struct spg_model_adapter  model        = {};
-    bool                      model_open   = false;
-    struct spg_mem_store      store        = {};
-    bool                      store_open   = false;
+    int                       rc             = 1;
+    struct file_buffer        run_text       = {};
+    struct file_buffer        policy_text    = {};
+    struct file_buffer        scenario_text  = {};
+    struct file_buffer        script_text    = {};
+    struct file_buffer        exemplars_text = {};
+    char                     *policy_path    = nullptr;
+    char                     *scenario_path  = nullptr;
+    char                     *journal_path   = nullptr;
+    char                     *model_path     = nullptr;
+    struct spg_journal_writer journal        = {};
+    bool                      journal_open   = false;
+    struct spg_model_adapter  model          = {};
+    bool                      model_open     = false;
+    struct spg_mem_store      store          = {};
+    bool                      store_open     = false;
 
     struct spg_run_config run    = {};
     enum spg_status       status = load_run_file(run_path, &run_text, &run);
@@ -2013,7 +2036,7 @@ static int agent_command(int argc, char **argv) {
                           &policy, policy_text.n, policy_text.data,
                           sizeof agent_cap_names, agent_cap_names,
                           sizeof agent_caps / sizeof agent_caps[0], agent_caps)
-                                            : 0u;
+                    : 0u;
 
     /* Best-of-N needs the choice slots to vary between attempts (#2); if the
      * caller asked for it without a temperature, sample. */
@@ -2063,16 +2086,16 @@ static int agent_command(int argc, char **argv) {
     static struct spg_context_graph_ref   graph_refs[CLI_CONTEXT_REFS];
     static struct spg_context_memory_ref  memory_refs[CLI_CONTEXT_REFS];
     static struct spg_context_journal_ref journal_refs[CLI_CONTEXT_REFS];
-    static char            context[CLI_CONTEXT_BYTES];
-    static char            model_output[CLI_MODEL_OUTPUT_BYTES];
-    static struct spg_sexpr_token rec_tokens[CLI_TOKEN_CAPACITY];
-    static struct spg_sexpr_node  rec_nodes[CLI_NODE_CAPACITY];
-    static char            policy_payload[CLI_PAYLOAD_BYTES];
-    static char            sim_payload[CLI_PAYLOAD_BYTES];
-    static char            observation[AGENT_OBS_BYTES];
-    static char            shell_stdout[AGENT_SHELL_STDOUT];
-    static char            shell_stderr[AGENT_SHELL_STDERR];
-    static char            mem_index[AGENT_OBS_BYTES];
+    static char                           context[CLI_CONTEXT_BYTES];
+    static char                           model_output[CLI_MODEL_OUTPUT_BYTES];
+    static struct spg_sexpr_token         rec_tokens[CLI_TOKEN_CAPACITY];
+    static struct spg_sexpr_node          rec_nodes[CLI_NODE_CAPACITY];
+    static char                           policy_payload[CLI_PAYLOAD_BYTES];
+    static char                           sim_payload[CLI_PAYLOAD_BYTES];
+    static char                           observation[AGENT_OBS_BYTES];
+    static char                           shell_stdout[AGENT_SHELL_STDOUT];
+    static char                           shell_stderr[AGENT_SHELL_STDERR];
+    static char                           mem_index[AGENT_OBS_BYTES];
     static struct spg_journal_record_header trajectory[256];
 
     const struct spg_agent_run_workspace ws = {
@@ -2109,6 +2132,36 @@ static int agent_command(int argc, char **argv) {
     if (run.has_goal) {
         (void)span_to_cstr(run_text.n, run_text.data, run.goal, &goal_cstr);
     }
+    /* Sampled once per run, not per tick: phase 3 only proves the state
+     * reaches the context. Re-observing after an action is phase 7's job, and
+     * it needs an action to observe first. The timestamp is the run's, from the
+     * same injected counter the journal uses — no clock is read here either. */
+    struct spg_machine_state   machine = {};
+    struct spg_process_profile profile = {};
+    if (with_machine && profile_path != nullptr) {
+        struct file_buffer profile_text = {};
+        if (read_file(profile_path, &profile_text) != SPG_OK) {
+            fprintf(stderr, "agent: cannot read process profile: %s\n",
+                    profile_path);
+            return 2;
+        }
+        struct spg_process_profile_error perr    = {};
+        const enum spg_status            pstatus = spg_process_profile_load(
+            profile_text.n, profile_text.data, CLI_TOKEN_CAPACITY, rec_tokens,
+            CLI_NODE_CAPACITY, rec_nodes, &profile, &perr);
+        free_file_buffer(&profile_text);
+        if (pstatus != SPG_OK) {
+            fprintf(stderr,
+                    "agent: invalid process profile %s: %s at offset %zu\n",
+                    profile_path, spg_status_to_string(pstatus), perr.offset);
+            return 2;
+        }
+    }
+    if (with_machine) {
+        (void)spg_machine_sample_with_processes(
+            1u, nullptr, 0u, nullptr,
+            profile_path != nullptr ? &profile : nullptr, &machine);
+    }
     const struct spg_agent_run_inputs inputs = {
         .model         = &model,
         .policy        = &policy,
@@ -2120,26 +2173,31 @@ static int agent_command(int argc, char **argv) {
         .journal       = &journal,
         .exemplars     = exemplars_text.data, /* null when --exemplars absent */
         .goal          = goal_cstr,           /* null when (goal ...) absent */
+        /* Absent by default: without --machine the context is byte-identical
+         * to before this phase, which is what keeps the phase-0 freeze valid.
+         */
+        .machine = with_machine ? &machine : nullptr,
     };
     const struct spg_agent_run_config rcfg = {
-        .max_steps         = max_steps,
-        .max_repairs       = max_repairs,
+        .max_steps   = max_steps,
+        .max_repairs = max_repairs,
         /* #40: a model that acts validly but never emits (kind finish) would
          * run to the step cap; treat a converged (no-progress) run as done so
          * it terminates FINISHED and an expect verdict can pass. */
         .finish_on_no_progress = true,
         .directive_slug        = directive_slug,
         .execution_enabled     = allow_exec,
-        .exec_timeout_ms   = 5000u,
-        .exec_stdout_cap   = sizeof shell_stdout,
-        .exec_stderr_cap   = sizeof shell_stderr,
-        .context_refs      = CLI_CONTEXT_REFS,
+        .exec_timeout_ms       = 5000u,
+        .exec_stdout_cap       = sizeof shell_stdout,
+        .exec_stderr_cap       = sizeof shell_stderr,
+        .context_refs          = CLI_CONTEXT_REFS,
     };
     struct spg_policy_usage      usage       = {};
     struct spg_agent_loop_result loop_result = {};
 
     /* Optional success criterion (docs/LEARNING.md P1): judge the real run the
-     * same way the eval loop judges a scripted case — model-free, zero tokens. */
+     * same way the eval loop judges a scripted case — model-free, zero tokens.
+     */
     const bool have_expect =
         run.has_expect && run.expect_observation.length < sizeof observation;
     char                   expect_obs[AGENT_OBS_BYTES];
@@ -2148,21 +2206,23 @@ static int agent_command(int argc, char **argv) {
         memcpy(expect_obs, run_text.data + run.expect_observation.offset,
                run.expect_observation.length);
         expect_obs[run.expect_observation.length] = '\0';
-        expect = (struct spg_eval_expect){.check_termination = true,
-                                          .termination = SPG_AGENT_LOOP_FINISHED,
-                                          .observation = expect_obs};
+        expect =
+            (struct spg_eval_expect){.check_termination = true,
+                                     .termination = SPG_AGENT_LOOP_FINISHED,
+                                     .observation = expect_obs};
     }
 
-    /* Verifier-guided best-of-N (#2): up to best_of attempts, model loaded once;
-     * the choice-slot RNG drifts between attempts (temperature > 0), so each
-     * explores different valid decisions, and we keep the first the verifier
-     * passes. Needs an (expect ...) to select on — without it a single run. */
-    const size_t         attempts = have_expect ? best_of : 1u;
+    /* Verifier-guided best-of-N (#2): up to best_of attempts, model loaded
+     * once; the choice-slot RNG drifts between attempts (temperature > 0), so
+     * each explores different valid decisions, and we keep the first the
+     * verifier passes. Needs an (expect ...) to select on — without it a single
+     * run. */
+    const size_t          attempts = have_expect ? best_of : 1u;
     enum spg_eval_outcome verdict  = SPG_EVAL_PASS;
     size_t                used     = 0u;
     for (size_t a = 0u; a < attempts; a += 1u) {
-        used  = a + 1u;
-        usage = (struct spg_policy_usage){}; /* each attempt is independent */
+        used   = a + 1u;
+        usage  = (struct spg_policy_usage){}; /* each attempt is independent */
         status = spg_agent_run(&inputs, &rcfg, &ws, &usage, &loop_result);
         if (!have_expect) {
             break;
@@ -2185,7 +2245,8 @@ static int agent_command(int argc, char **argv) {
         if (attempts > 1u) {
             printf("best_of=%zu attempts_used=%zu\n", attempts, used);
         }
-        /* a FAIL exits non-zero so a caller (and a future miner) can act on it */
+        /* a FAIL exits non-zero so a caller (and a future miner) can act on it
+         */
         if (verdict != SPG_EVAL_PASS && rc == 0) {
             rc = 1;
         }
@@ -2216,7 +2277,7 @@ done:
 static uint32_t eval_field(const struct spg_sexpr_node *nodes,
                            const uint32_t parent, const size_t in_n,
                            const char *in, const char *name) {
-    for (uint32_t c = spg_sexpr_first_child(nodes, parent);
+    for (uint32_t c                      = spg_sexpr_first_child(nodes, parent);
          c != SPG_SEXPR_INVALID_INDEX; c = nodes[c].next_sibling) {
         if (nodes[c].kind != SPG_SEXPR_NODE_LIST) {
             continue;
@@ -2238,10 +2299,11 @@ static bool eval_str(const struct spg_sexpr_node *nodes, const uint32_t parent,
     if (f == SPG_SEXPR_INVALID_INDEX) {
         return false;
     }
-    const uint32_t v = spg_sexpr_second_child(nodes, f);
+    const uint32_t       v = spg_sexpr_second_child(nodes, f);
     struct spg_text_span sp;
     if (v == SPG_SEXPR_INVALID_INDEX ||
-        !spg_sexpr_string_payload_span(&nodes[v], &sp) || sp.length + 1u > cap) {
+        !spg_sexpr_string_payload_span(&nodes[v], &sp) ||
+        sp.length + 1u > cap) {
         return false;
     }
     memcpy(out, in + sp.offset, sp.length);
@@ -2257,7 +2319,8 @@ static bool eval_u64(const struct spg_sexpr_node *nodes, const uint32_t parent,
         return false;
     }
     const uint32_t v = spg_sexpr_second_child(nodes, f);
-    if (v == SPG_SEXPR_INVALID_INDEX || nodes[v].kind != SPG_SEXPR_NODE_SYMBOL) {
+    if (v == SPG_SEXPR_INVALID_INDEX ||
+        nodes[v].kind != SPG_SEXPR_NODE_SYMBOL) {
         return false;
     }
     return spg_sexpr_parse_uint64_span(in_n, in, nodes[v].span, out) == SPG_OK;
@@ -2278,14 +2341,15 @@ static bool eval_flag(const struct spg_sexpr_node *nodes, const uint32_t parent,
 /* Map an (expect (termination <sym>) ...) symbol to the enum. */
 static bool eval_termination(const struct spg_sexpr_node *nodes,
                              const uint32_t expect, const size_t in_n,
-                             const char *in,
+                             const char                      *in,
                              enum spg_agent_loop_termination *out) {
     const uint32_t f = eval_field(nodes, expect, in_n, in, "termination");
     if (f == SPG_SEXPR_INVALID_INDEX) {
         return false;
     }
     const uint32_t v = spg_sexpr_second_child(nodes, f);
-    if (v == SPG_SEXPR_INVALID_INDEX || nodes[v].kind != SPG_SEXPR_NODE_SYMBOL) {
+    if (v == SPG_SEXPR_INVALID_INDEX ||
+        nodes[v].kind != SPG_SEXPR_NODE_SYMBOL) {
         return false;
     }
     static const enum spg_agent_loop_termination all[] = {
@@ -2293,8 +2357,9 @@ static bool eval_termination(const struct spg_sexpr_node *nodes,
         SPG_AGENT_LOOP_REJECTED, SPG_AGENT_LOOP_DENIED,
         SPG_AGENT_LOOP_BUDGET,   SPG_AGENT_LOOP_ERROR};
     for (size_t i = 0u; i < sizeof all / sizeof all[0]; i += 1u) {
-        if (spg_sexpr_span_eq_cstr(in_n, in, nodes[v].span,
-                                   spg_agent_loop_termination_to_string(all[i]))) {
+        if (spg_sexpr_span_eq_cstr(
+                in_n, in, nodes[v].span,
+                spg_agent_loop_termination_to_string(all[i]))) {
             *out = all[i];
             return true;
         }
@@ -2307,28 +2372,29 @@ static bool eval_termination(const struct spg_sexpr_node *nodes,
 #define EVAL_MAX_CASES 64u
 
 struct eval_run_report {
-    size_t                      total;  /* individual runs (cases x samples)   */
-    size_t                      passed; /* individual passing runs             */
-    size_t                      ncases; /* distinct cases (index into the rest) */
-    char                        names[EVAL_MAX_CASES][64];
-    struct spg_eval_case_result results[EVAL_MAX_CASES]; /* last sample/case   */
-    size_t                      runs[EVAL_MAX_CASES];        /* samples per case */
-    size_t                      case_passed[EVAL_MAX_CASES]; /* k passed of N    */
+    size_t total;  /* individual runs (cases x samples)   */
+    size_t passed; /* individual passing runs             */
+    size_t ncases; /* distinct cases (index into the rest) */
+    char   names[EVAL_MAX_CASES][64];
+    struct spg_eval_case_result results[EVAL_MAX_CASES]; /* last sample/case */
+    size_t                      runs[EVAL_MAX_CASES];    /* samples per case */
+    size_t case_passed[EVAL_MAX_CASES];                  /* k passed of N    */
     /* #53 ladder, per case and summed. Monotone by construction:
      * task <= gate <= parse. A pass-rate alone cannot tell "the model cannot
      * produce the form" from "it produces a valid form and picks the wrong
      * action", and those want opposite fixes. */
-    size_t                      case_parsed[EVAL_MAX_CASES];
-    size_t                      case_gated[EVAL_MAX_CASES];
-    size_t                      parsed; /* runs whose form was accepted        */
-    size_t                      gated;  /* ... and the policy gate allowed it  */
+    size_t case_parsed[EVAL_MAX_CASES];
+    size_t case_gated[EVAL_MAX_CASES];
+    size_t parsed; /* runs whose form was accepted        */
+    size_t gated;  /* ... and the policy gate allowed it  */
 };
 
 /* One run's rungs. REJECTED means the loop ran out of repairs on a malformed
  * reply — the form never parsed. DENIED means it parsed and the policy gate
- * refused it. Anything else got past both, whether or not it reached the goal. */
-static void eval_tally_ladder(struct eval_run_report *report,
-                              const size_t case_idx,
+ * refused it. Anything else got past both, whether or not it reached the goal.
+ */
+static void eval_tally_ladder(struct eval_run_report            *report,
+                              const size_t                       case_idx,
                               const struct spg_eval_case_result *r) {
     if (r->outcome == SPG_EVAL_FAIL_RUN_ERROR) {
         return; /* the harness failed, not the model — no rung is earned */
@@ -2348,17 +2414,17 @@ static void eval_tally_ladder(struct eval_run_report *report,
 /* Per-invocation knobs. A null pointer (or zeroed struct) reproduces the
  * historical behaviour: one sample per case, no remote endpoint. */
 struct eval_run_opts {
-    const char *remote_url;   /* nullable: enables (model "remote") cases      */
-    const char *remote_model; /* nullable: model name for remote cases         */
-    size_t      samples;      /* 0/1 => run each case once                     */
+    const char *remote_url; /* nullable: enables (model "remote") cases      */
+    const char *remote_model; /* nullable: model name for remote cases */
+    size_t      samples; /* 0/1 => run each case once                     */
     /* #51: run (model "geist") cases through the SAME decoder as
      * `agent --constrained`. Off by default so the shipped scripted-fake
      * suites keep their recorded free-decode behaviour. */
-    bool        constrained;
+    bool constrained;
     /* #51: sampling temperature for real-model cases. 0.0 (the default) is
      * greedy — which makes --samples N produce N identical runs, so a suite
      * that wants variance must ask for it. */
-    float       temperature;
+    float temperature;
 };
 
 /* #52: one case-sample's sandbox. Big (the store carries an index cache), so
@@ -2391,7 +2457,7 @@ static bool eval_sandbox_prepare(struct eval_sandbox *sb, const char *case_name,
         spg_fixture_copy_into(sb->dir, fixture_dir) != SPG_OK) {
         return false;
     }
-    char mem[CLI_PATH_MAX];
+    char      mem[CLI_PATH_MAX];
     const int n = snprintf(mem, sizeof mem, "%s/mem", sb->dir);
     if (n < 0 || (size_t)n >= sizeof mem) {
         return false;
@@ -2411,11 +2477,11 @@ static bool eval_sandbox_prepare(struct eval_sandbox *sb, const char *case_name,
 /* Load a suite + its shared run/policy/scenario config and run every case with
  * the given mind-palace store (nullable) threaded into each run; fill *report.
  * Returns SPG_OK on a complete run. Prints nothing (the caller reports). */
-static enum spg_status eval_run_suite(const char *suite_path,
-                                      struct spg_mem_store *store,
+static enum spg_status eval_run_suite(const char                 *suite_path,
+                                      struct spg_mem_store       *store,
                                       const struct eval_run_opts *opts,
-                                      struct eval_run_report *report) {
-    *report = (struct eval_run_report){};
+                                      struct eval_run_report     *report) {
+    *report                          = (struct eval_run_report){};
     struct file_buffer suite_text    = {};
     struct file_buffer run_text      = {};
     struct file_buffer policy_text   = {};
@@ -2436,8 +2502,8 @@ static enum spg_status eval_run_suite(const char *suite_path,
     size_t                        nn = 0u;
     struct spg_sexpr_error        se = {};
     if (spg_sexpr_parse_text(suite_text.n, suite_text.data, CLI_TOKEN_CAPACITY,
-                             tok, CLI_NODE_CAPACITY, nod, &tn, &nn, &se) !=
-            SPG_OK ||
+                             tok, CLI_NODE_CAPACITY, nod, &tn, &nn,
+                             &se) != SPG_OK ||
         nn == 0u || nod[0].kind != SPG_SEXPR_NODE_LIST) {
         rc = SPG_E_FORMAT;
         goto done;
@@ -2450,7 +2516,7 @@ static enum spg_status eval_run_suite(const char *suite_path,
     }
 
     struct spg_run_config run = {};
-    status = load_run_file(config_path, &run_text, &run);
+    status                    = load_run_file(config_path, &run_text, &run);
     if (status == SPG_OK) {
         status = span_to_cstr(run_text.n, run_text.data, run.policy_path,
                               &policy_path);
@@ -2460,8 +2526,8 @@ static enum spg_status eval_run_suite(const char *suite_path,
                               &scenario_path);
     }
     if (status == SPG_OK) {
-        status =
-            span_to_cstr(run_text.n, run_text.data, run.model_path, &model_path);
+        status = span_to_cstr(run_text.n, run_text.data, run.model_path,
+                              &model_path);
     }
     if (status != SPG_OK) {
         rc = status;
@@ -2480,26 +2546,25 @@ static enum spg_status eval_run_suite(const char *suite_path,
      * below, hence static. */
     static struct spg_model_capability eval_caps[SPG_MODEL_CAPABILITY_MAX];
     static char                        eval_cap_names[CLI_CAP_NAMES_BYTES];
-    const size_t                       eval_caps_n =
-        spg_model_capabilities_from_policy(
-                                  &policy, policy_text.n, policy_text.data, sizeof eval_cap_names,
-                                  eval_cap_names, sizeof eval_caps / sizeof eval_caps[0], eval_caps);
+    const size_t eval_caps_n = spg_model_capabilities_from_policy(
+        &policy, policy_text.n, policy_text.data, sizeof eval_cap_names,
+        eval_cap_names, sizeof eval_caps / sizeof eval_caps[0], eval_caps);
 
     static struct spg_context_graph_ref   graph_refs[CLI_CONTEXT_REFS];
     static struct spg_context_memory_ref  memory_refs[CLI_CONTEXT_REFS];
     static struct spg_context_journal_ref journal_refs[CLI_CONTEXT_REFS];
-    static char            context[CLI_CONTEXT_BYTES];
-    static char            model_output[CLI_MODEL_OUTPUT_BYTES];
-    static struct spg_sexpr_token rtok[CLI_TOKEN_CAPACITY];
-    static struct spg_sexpr_node  rnod[CLI_NODE_CAPACITY];
-    static char            ppay[CLI_PAYLOAD_BYTES];
-    static char            spay[CLI_PAYLOAD_BYTES];
-    static char            observation[AGENT_OBS_BYTES];
-    static char            sh_out[AGENT_SHELL_STDOUT];
-    static char            sh_err[AGENT_SHELL_STDERR];
-    static char            mem_index[AGENT_OBS_BYTES];
+    static char                           context[CLI_CONTEXT_BYTES];
+    static char                           model_output[CLI_MODEL_OUTPUT_BYTES];
+    static struct spg_sexpr_token         rtok[CLI_TOKEN_CAPACITY];
+    static struct spg_sexpr_node          rnod[CLI_NODE_CAPACITY];
+    static char                           ppay[CLI_PAYLOAD_BYTES];
+    static char                           spay[CLI_PAYLOAD_BYTES];
+    static char                           observation[AGENT_OBS_BYTES];
+    static char                           sh_out[AGENT_SHELL_STDOUT];
+    static char                           sh_err[AGENT_SHELL_STDERR];
+    static char                           mem_index[AGENT_OBS_BYTES];
     static struct spg_journal_record_header traj[256];
-    const struct spg_agent_run_workspace ws = {
+    const struct spg_agent_run_workspace    ws = {
         .context_capacity        = sizeof context,
         .context                 = context,
         .model_output_capacity   = sizeof model_output,
@@ -2540,8 +2605,8 @@ static enum spg_status eval_run_suite(const char *suite_path,
 
     /* Invocation-wide knobs (resolved once, not per case). */
     const struct eval_run_opts  defaults = {};
-    const struct eval_run_opts *o = (opts != nullptr) ? opts : &defaults;
-    const size_t                samples = (o->samples > 0u) ? o->samples : 1u;
+    const struct eval_run_opts *o        = (opts != nullptr) ? opts : &defaults;
+    const size_t                samples  = (o->samples > 0u) ? o->samples : 1u;
     const char                 *env_api_url = getenv("GEISTSHELL_API_URL");
     const char                 *remote_url =
         (o->remote_url != nullptr && o->remote_url[0] != '\0') ? o->remote_url
@@ -2586,8 +2651,8 @@ static enum spg_status eval_run_suite(const char *suite_path,
                 : nullptr;
 
         struct spg_eval_expect expect = {};
-        const uint32_t exp = eval_field(nod, c, suite_text.n, suite_text.data,
-                                        "expect");
+        const uint32_t         exp =
+            eval_field(nod, c, suite_text.n, suite_text.data, "expect");
         if (exp != SPG_SEXPR_INVALID_INDEX) {
             enum spg_agent_loop_termination term;
             if (eval_termination(nod, exp, suite_text.n, suite_text.data,
@@ -2619,31 +2684,28 @@ static enum spg_status eval_run_suite(const char *suite_path,
         /* #53: a real-model baseline needs a task per case; without this every
          * case would inherit the one goal in the shared run config. */
         static char case_goal[1024];
-        const bool  has_goal =
-            eval_str(nod, c, suite_text.n, suite_text.data, "goal", case_goal,
-                     sizeof case_goal);
+        const bool  has_goal = eval_str(nod, c, suite_text.n, suite_text.data,
+                                        "goal", case_goal, sizeof case_goal);
         char        fixture[CLI_PATH_MAX];
-        const bool  has_fixture =
-            eval_str(nod, c, suite_text.n, suite_text.data, "fixture", fixture,
-                     sizeof fixture);
+        const bool has_fixture = eval_str(nod, c, suite_text.n, suite_text.data,
+                                          "fixture", fixture, sizeof fixture);
         static struct eval_sandbox sandbox_state;
         const char *const          sandbox = sandbox_state.dir;
 
         const struct spg_agent_run_config rcfg = {
-            .max_steps         = (size_t)max_steps,
-            .max_repairs       = (size_t)max_repairs,
-            .execution_enabled = allow_exec,
-            .exec_timeout_ms   = 5000u,
-            .exec_stdout_cap   = sizeof sh_out,
-            .exec_stderr_cap   = sizeof sh_err,
-            .context_refs      = CLI_CONTEXT_REFS,
+            .max_steps           = (size_t)max_steps,
+            .max_repairs         = (size_t)max_repairs,
+            .execution_enabled   = allow_exec,
+            .exec_timeout_ms     = 5000u,
+            .exec_stdout_cap     = sizeof sh_out,
+            .exec_stderr_cap     = sizeof sh_err,
+            .context_refs        = CLI_CONTEXT_REFS,
             .exec_working_dir    = has_fixture ? sandbox : nullptr,
             .exec_workdir_prefix = has_fixture ? sandbox : nullptr,
         };
         char       model_kind[16];
-        const bool has_model =
-            eval_str(nod, c, suite_text.n, suite_text.data, "model", model_kind,
-                     sizeof model_kind);
+        const bool has_model = eval_str(nod, c, suite_text.n, suite_text.data,
+                                        "model", model_kind, sizeof model_kind);
         const bool geist_case  = has_model && strcmp(model_kind, "geist") == 0;
         const bool remote_case = has_model && strcmp(model_kind, "remote") == 0;
 
@@ -2658,11 +2720,11 @@ static enum spg_status eval_run_suite(const char *suite_path,
              * the GGUF. */
             struct spg_model_adapter        model = {};
             struct spg_model_adapter_config mc    = {
-                   .sampling = {.max_seq_len = 4096u,
-                                .temperature = o->temperature,
-                                .top_p       = 1.0f,
-                                .top_k       = 0,
-                                .random_seed = run.seed},
+                .sampling = {.max_seq_len = 4096u,
+                             .temperature = o->temperature,
+                             .top_p       = 1.0f,
+                             .top_k       = 0,
+                             .random_seed = run.seed},
             };
             if (geist_case) {
                 mc.kind       = SPG_MODEL_ADAPTER_GEIST;
@@ -2690,7 +2752,8 @@ static enum spg_status eval_run_suite(const char *suite_path,
                     : spg_model_adapter_init(&model, &mc);
             if (is != SPG_OK) {
                 if (geist_case) {
-                    rc = SPG_E_MODEL; /* a configured GGUF that won't load aborts */
+                    rc = SPG_E_MODEL; /* a configured GGUF that won't load
+                                         aborts */
                     goto done;
                 }
                 /* Remote misconfig / default (non-REMOTE) build: one clean
@@ -2755,7 +2818,7 @@ static enum spg_status eval_run_suite(const char *suite_path,
                 goto done;
             }
             static struct spg_fake_response script[EVAL_SCRIPT_MAX];
-            const size_t script_n = split_script_lines(
+            const size_t                    script_n = split_script_lines(
                 script_text.data, script_text.n, script, EVAL_SCRIPT_MAX);
             for (size_t s = 0u; s < samples; s += 1u) {
                 struct spg_agent_run_inputs cin = inputs;
@@ -2763,8 +2826,8 @@ static enum spg_status eval_run_suite(const char *suite_path,
                     cin.goal = case_goal;
                 }
                 if (has_fixture) {
-                    if (!eval_sandbox_prepare(&sandbox_state, name, s,
-                                              fixture, store)) {
+                    if (!eval_sandbox_prepare(&sandbox_state, name, s, fixture,
+                                              store)) {
                         last = (struct spg_eval_case_result){
                             .outcome = SPG_EVAL_FAIL_RUN_ERROR,
                             .status  = SPG_E_IO};
@@ -2774,10 +2837,10 @@ static enum spg_status eval_run_suite(const char *suite_path,
                     }
                     cin.store = &sandbox_state.store;
                 }
-                struct spg_eval_case_result r  = {};
-                const enum spg_status       cs = spg_eval_run_case(
-                          script, script_n, gate_marker, &cin, &rcfg, &ws,
-                          &expect, &r);
+                struct spg_eval_case_result r = {};
+                const enum spg_status       cs =
+                    spg_eval_run_case(script, script_n, gate_marker, &cin,
+                                      &rcfg, &ws, &expect, &r);
                 if (cs != SPG_OK) {
                     free_file_buffer(&script_text);
                     rc = cs;
@@ -2812,7 +2875,7 @@ done:
     return rc;
 }
 
-static void eval_print_report(const char *suite_path,
+static void eval_print_report(const char                   *suite_path,
                               const struct eval_run_report *report) {
     for (size_t i = 0u; i < report->ncases; i += 1u) {
         const struct spg_eval_case_result *r = &report->results[i];
@@ -2892,8 +2955,8 @@ static int eval_command(int argc, char **argv) {
                                           .samples      = samples,
                                           .constrained  = constrained,
                                           .temperature  = temperature};
-    const enum spg_status status = eval_run_suite(suite_path, nullptr, &opts,
-                                                  &report);
+    const enum spg_status         status =
+        eval_run_suite(suite_path, nullptr, &opts, &report);
     if (status != SPG_OK) {
         fprintf(stderr, "eval: suite run failed: %s\n",
                 spg_status_to_string(status));
@@ -2942,9 +3005,11 @@ static bool guard_run(void *vctx, const char *config_path, bool with_lesson) {
     /* the guard's own (expect) criterion (P1) is what judges it */
     struct file_buffer    cfg_text = {};
     struct spg_run_config cfg      = {};
-    if (load_run_file(config_path, &cfg_text, &cfg) != SPG_OK || !cfg.has_expect) {
+    if (load_run_file(config_path, &cfg_text, &cfg) != SPG_OK ||
+        !cfg.has_expect) {
         free_file_buffer(&cfg_text);
-        return false; /* no criterion -> cannot judge -> no signal (baseline fail) */
+        return false; /* no criterion -> cannot judge -> no signal (baseline
+                         fail) */
     }
     char   expect[AGENT_OBS_BYTES];
     size_t en = cfg.expect_observation.length < sizeof expect
@@ -2957,8 +3022,7 @@ static bool guard_run(void *vctx, const char *config_path, bool with_lesson) {
     /* synthesise a one-case suite over the guard config; (model "geist") uses
      * the real model from that config, with the mind-palace injected */
     char   suite[1024];
-    size_t w = (size_t)snprintf(suite, sizeof suite,
-                                "(eval_suite (config \"");
+    size_t w = (size_t)snprintf(suite, sizeof suite, "(eval_suite (config \"");
     sexpr_escape(suite, sizeof suite, &w, config_path);
     w += (size_t)snprintf(suite + w, sizeof suite - w,
                           "\") (case (name \"guard\") (model \"geist\") "
@@ -3121,7 +3185,7 @@ static int audit_command(int argc, char **argv) {
             fprintf(stderr, "audit: cannot open memory dir\n");
             return 1;
         }
-        char   probe[SPG_MEM_DESC_MAX + 1u];
+        char probe[SPG_MEM_DESC_MAX + 1u];
         const struct {
             const char *slug;
             size_t      count;
@@ -3132,9 +3196,10 @@ static int audit_command(int argc, char **argv) {
                                   probe) == 0u) {
                 continue; /* no such lesson kept */
             }
-            printf("{\"lesson\":\"%s\",\"recurrence\":%zu,\"verdict\":\"%s\"}\n",
-                   kept[i].slug, kept[i].count,
-                   kept[i].count > 0u ? "review" : "kept");
+            printf(
+                "{\"lesson\":\"%s\",\"recurrence\":%zu,\"verdict\":\"%s\"}\n",
+                kept[i].slug, kept[i].count,
+                kept[i].count > 0u ? "review" : "kept");
         }
     }
     return 0;
@@ -3144,14 +3209,14 @@ static int audit_command(int argc, char **argv) {
  * persist each tentatively into the mind-palace, re-run, and keep it only if
  * the pass count did not drop (else revert). Emits a JSONL report. */
 static int improve_command(int argc, char **argv) {
-    const char *suite_path   = nullptr;
-    const char *memory_dir   = nullptr;
-    const char *remote_url    = nullptr;
-    const char *remote_model  = nullptr;
-    const char *validate_path = nullptr;
-    size_t      samples       = 1u;
-    bool        constrained   = false;
-    float       temperature   = 0.0f;
+    const char           *suite_path    = nullptr;
+    const char           *memory_dir    = nullptr;
+    const char           *remote_url    = nullptr;
+    const char           *remote_model  = nullptr;
+    const char           *validate_path = nullptr;
+    size_t                samples       = 1u;
+    bool                  constrained   = false;
+    float                 temperature   = 0.0f;
     struct spg_guard_ring guards;
     spg_guard_ring_init(&guards);
     for (int i = 2; i < argc; i += 1) {
@@ -3179,7 +3244,8 @@ static int improve_command(int argc, char **argv) {
             continue;
         }
         /* #51: the gate must measure the decoder the agent actually runs — a
-         * lesson kept under free decode says nothing about a constrained one. */
+         * lesson kept under free decode says nothing about a constrained one.
+         */
         if (strcmp(argv[i], "--constrained") == 0) {
             constrained = true;
             continue;
@@ -3206,12 +3272,13 @@ static int improve_command(int argc, char **argv) {
         return 2;
     }
     if (suite_path == nullptr) {
-        fprintf(stderr,
-                "usage: %s improve <suite.spg> [--validate <holdout.spg>] "
-                "[--guard <run.spg>]... "
-                "[--memory-dir <d>] [--remote-url <url>] [--remote-model <name>] "
-                "[--samples <N>] [--constrained] [--temperature <t>]\n",
-                argv[0]);
+        fprintf(
+            stderr,
+            "usage: %s improve <suite.spg> [--validate <holdout.spg>] "
+            "[--guard <run.spg>]... "
+            "[--memory-dir <d>] [--remote-url <url>] [--remote-model <name>] "
+            "[--samples <N>] [--constrained] [--temperature <t>]\n",
+            argv[0]);
         return 2;
     }
 
@@ -3222,11 +3289,11 @@ static int improve_command(int argc, char **argv) {
         return 1;
     }
 
-    const struct eval_run_opts opts = {.remote_url   = remote_url,
-                                       .remote_model = remote_model,
-                                       .samples      = samples,
-                                       .constrained  = constrained,
-                                       .temperature  = temperature};
+    const struct eval_run_opts    opts = {.remote_url   = remote_url,
+                                          .remote_model = remote_model,
+                                          .samples      = samples,
+                                          .constrained  = constrained,
+                                          .temperature  = temperature};
     static struct eval_run_report baseline;
     if (eval_run_suite(suite_path, &store, &opts, &baseline) != SPG_OK) {
         fprintf(stderr, "improve: baseline run failed\n");
@@ -3257,8 +3324,8 @@ static int improve_command(int argc, char **argv) {
     /* Hold-out gate: candidate lessons are distilled from the *train* suite
      * (above), but the keep/revert decision is measured on the *validation*
      * suite when one is given — so a lesson is kept only if it generalises to
-     * cases it was not derived from, not merely because it fit the suite it came
-     * from. Without --validate the gate falls back to the train suite (the
+     * cases it was not derived from, not merely because it fit the suite it
+     * came from. Without --validate the gate falls back to the train suite (the
      * historical behaviour, and the output is byte-identical). */
     const char *const gate_path =
         validate_path != nullptr ? validate_path : suite_path;
@@ -3287,7 +3354,7 @@ static int improve_command(int argc, char **argv) {
          * (P5, Weg 2): re-run every guard with vs without the lesson and veto
          * if any that passed now regresses. A guard vetoes only a lesson the
          * suite already accepts, so it can only make the gate stricter. */
-        bool accepted = spg_improve_accept(cur_passed, trial.passed);
+        bool accepted     = spg_improve_accept(cur_passed, trial.passed);
         bool guard_vetoed = false;
         if (accepted) {
             struct guard_ctx gctx = {
@@ -3302,7 +3369,7 @@ static int improve_command(int argc, char **argv) {
                                lesson->body);
         }
         (void)guard_vetoed;
-        bool       was_kept = false;
+        bool was_kept = false;
         (void)spg_improve_commit(&store, lesson, accepted, &was_kept);
         if (validate_path != nullptr) {
             printf("{\"lesson\":\"%s\",\"accepted\":%s,\"held_out_passed\":%zu,"
@@ -3321,9 +3388,10 @@ static int improve_command(int argc, char **argv) {
         }
     }
     if (validate_path != nullptr) {
-        printf("{\"suite\":\"%s\",\"validate\":\"%s\",\"held_out_baseline\":%zu,"
-               "\"held_out_final\":%zu,\"lessons_kept\":%zu}\n",
-               suite_path, validate_path, orig_passed, cur_passed, kept);
+        printf(
+            "{\"suite\":\"%s\",\"validate\":\"%s\",\"held_out_baseline\":%zu,"
+            "\"held_out_final\":%zu,\"lessons_kept\":%zu}\n",
+            suite_path, validate_path, orig_passed, cur_passed, kept);
     } else {
         printf("{\"suite\":\"%s\",\"baseline_passed\":%zu,\"final_passed\":%zu,"
                "\"lessons_kept\":%zu}\n",
@@ -3363,9 +3431,10 @@ static int seal_journal_command(int argc, char **argv) {
         return 2;
     }
     if (journal == nullptr || key_path == nullptr) {
-        fprintf(stderr,
-                "usage: %s seal-journal <journal> --key <keyfile> [--sig <p>]\n",
-                argv[0]);
+        fprintf(
+            stderr,
+            "usage: %s seal-journal <journal> --key <keyfile> [--sig <p>]\n",
+            argv[0]);
         return 2;
     }
     struct file_buffer keyb = {};
@@ -3387,7 +3456,8 @@ static int seal_journal_command(int argc, char **argv) {
     return 0;
 }
 
-/* Verify a journal's keyed seal; prints signed=true/false, non-zero on mismatch. */
+/* Verify a journal's keyed seal; prints signed=true/false, non-zero on
+ * mismatch. */
 static int verify_signed_cli(const char *journal, const char *key_path,
                              const char *sig) {
     struct file_buffer keyb = {};

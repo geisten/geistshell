@@ -244,11 +244,14 @@ void spg_process_apply_profile(const struct spg_process_profile *profile,
             spg_process_profile_match(profile, procs[i].name);
         procs[i].profile_index = index;
         if (index == SPG_PROCESS_NO_PROFILE) {
-            procs[i].role      = SPG_PROCESS_ROLE_UNKNOWN;
-            procs[i].may_pause = false;
-            procs[i].may_stop  = false;
+            procs[i].role          = SPG_PROCESS_ROLE_UNKNOWN;
+            procs[i].may_pause     = false;
+            procs[i].may_stop      = false;
+            procs[i].profile_id[0] = '\0';
             continue;
         }
+        memcpy(procs[i].profile_id, profile->entries[index].id,
+               SPG_PROCESS_ID_CAP);
         procs[i].role      = profile->entries[index].role;
         procs[i].may_pause = profile->entries[index].may_pause;
         procs[i].may_stop  = profile->entries[index].may_stop;

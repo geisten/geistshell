@@ -358,6 +358,23 @@ static void put_u64(struct writer *w, const uint64_t value) {
     put_i64(w, (int64_t)value);
 }
 
+/* Quote a name into the s-expression. The process parser already replaced
+ * control characters, but '"' and '\\' are printable and would still break the
+ * form — a process could otherwise inject structure into the model context. */
+static void put_quoted(struct writer *w, const char *text) {
+    put(w, "\"");
+    for (size_t i = 0u; text[i] != '\0'; i += 1u) {
+        if (text[i] == '"' || text[i] == '\\') {
+            char escaped[3] = {'\\', text[i], '\0'};
+            put(w, escaped);
+            continue;
+        }
+        const char one[2] = {text[i], '\0'};
+        put(w, one);
+    }
+    put(w, "\"");
+}
+
 static void put_field(struct writer *w, const char *name,
                       const uint64_t value) {
     put(w, " (");
@@ -395,6 +412,31 @@ enum spg_status spg_machine_state_render(const struct spg_machine_state *state,
     put(&w, spg_throttle_state_to_string(state->throttle));
     put(&w, ")");
     put_field(&w, "process-count", state->process_count);
+
+    for (size_t i = 0u; i < state->n_processes; i += 1u) {
+        const struct spg_process_sample *p = &state->processes[i];
+        put(&w, " (process (id ");
+        /* One shape for managed and unmanaged: the profile id when there is
+         * one, the process name otherwise. Two shapes would cost a small model
+         * accuracy for no gain. */
+        put_quoted(&w, p->profile_id[0] != '\0' ? p->profile_id : p->name);
+        put(&w, ") (role ");
+        put(&w, spg_process_role_to_string(p->role));
+        put(&w, ")");
+        put_field(&w, "cpu-bp", p->cpu_bp);
+        put_field(&w, "rss-bytes", p->rss_bytes);
+        put(&w, ")");
+    }
+    if (state->processes_truncated) {
+        /* A list that looks complete but is not would invite wrong
+         * conclusions; say how many were dropped. */
+        const uint64_t shown   = (uint64_t)state->n_processes;
+        const uint64_t dropped = state->process_count != SPG_MACHINE_UNKNOWN &&
+                                         state->process_count > shown
+                                     ? state->process_count - shown
+                                     : SPG_MACHINE_UNKNOWN;
+        put_field(&w, "processes-dropped", dropped);
+    }
     put(&w, ")");
 
     *out_required = w.used + 1u;

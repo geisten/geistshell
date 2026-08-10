@@ -3,6 +3,7 @@
 
 #include "geistshell/status.h"
 
+#include <stdbool.h>
 #include <stddef.h>
 #include <stdint.h>
 
@@ -61,6 +62,16 @@ struct spg_load_sample {
 /* profile_index of a process no profile entry matched. */
 #define SPG_PROCESS_NO_PROFILE UINT32_MAX
 
+/* Profile id length. Lives here, not in process_profile.h, because a sample
+ * carries the id it matched — process_profile.h includes this header, so the
+ * dependency can only point one way. */
+#define SPG_PROCESS_ID_CAP 32u
+
+/* Upper bound on a rendered (machine-state ...) block: the header fields plus
+ * SPG_MACHINE_MAX_PROCESSES process entries. A caller can size a stack buffer
+ * from this and never truncate. */
+#define SPG_MACHINE_RENDER_CAP 8192u
+
 /* Semantic role, supplied by the process profile — never guessed from the
  * name. Phase 6 turns may_pause/may_stop into policy decisions, so these are
  * typed fields and not prompt text. */
@@ -85,11 +96,34 @@ struct spg_process_sample {
     uint64_t cpu_bp;   /* share of one tick's total CPU, UNKNOWN without prev */
     uint64_t rss_bytes;
 
-    /* Filled from the profile by spg_process_apply_profile. */
+    /* Filled from the profile by spg_process_apply_profile. The id is copied
+     * rather than looked up: it is what the context shows and what a phase-6
+     * action targets, so the sample must be self-contained. */
     uint32_t              profile_index;
+    char                  profile_id[SPG_PROCESS_ID_CAP];
     enum spg_process_role role;
     bool                  may_pause;
     bool                  may_stop;
+};
+
+#define SPG_PROCESS_MATCH_CAP 64u
+#define SPG_PROCESS_PROFILE_CAP 16u
+
+/* Which processes are managed, and what may be done to them. The type lives
+ * here rather than in process_profile.h because the sampler must apply it
+ * before selection ranks by role; the DSL that parses it stays in
+ * process_profile.h. */
+struct spg_process_profile_entry {
+    char                  id[SPG_PROCESS_ID_CAP];
+    char                  match[SPG_PROCESS_MATCH_CAP];
+    enum spg_process_role role;
+    bool                  may_pause;
+    bool                  may_stop;
+};
+
+struct spg_process_profile {
+    size_t                           count;
+    struct spg_process_profile_entry entries[SPG_PROCESS_PROFILE_CAP];
 };
 
 /* Raspberry Pi exposes a throttling bitmask; most hosts expose nothing. */
@@ -193,9 +227,9 @@ spg_process_find(size_t n, const struct spg_process_sample procs[],
  * processes /proc happened to list, so the busiest process could be invisible
  * while kernel threads at 0% filled the snapshot. Ranking is the same as
  * spg_process_select's. */
-[[nodiscard]] bool spg_process_offer(
-    size_t cap, struct spg_process_sample buf[], size_t *n,
-    const struct spg_process_sample *candidate);
+[[nodiscard]] bool
+spg_process_offer(size_t cap, struct spg_process_sample buf[], size_t *n,
+                  const struct spg_process_sample *candidate);
 
 /* Pick which processes reach the snapshot, in a fixed order:
  *   1. profile-managed processes  2. CPU descending
@@ -234,17 +268,31 @@ spg_machine_sample(uint64_t timestamp_ns, const struct spg_cpu_sample *prev,
  * delta. Processes are matched by pid AND start identity: a recycled pid does
  * not inherit the old process's counters, it reports unknown. prev_procs may
  * be null when prev_n is 0. */
+/* profile may be null (nothing managed). It is applied per sample, before
+ * selection: selection ranks managed processes first, so applying it later
+ * would make that rule a no-op — and a managed process that currently costs
+ * nothing must still reach the snapshot. */
 [[nodiscard]] enum spg_status spg_machine_sample_with_processes(
     uint64_t timestamp_ns, const struct spg_cpu_sample *prev, size_t prev_n,
-    const struct spg_process_sample prev_procs[],
-    struct spg_machine_state       *out);
+    const struct spg_process_sample   prev_procs[],
+    const struct spg_process_profile *profile, struct spg_machine_state *out);
 
 /* --- layer 3: serialisation --------------------------------------------- */
 
 /* Deterministic s-expression: fixed field order, unknown values as the symbol
  * `unknown`. Identical input always yields identical bytes. Writes at most
  * dst_capacity bytes including the NUL; on SPG_E_LIMIT *out_required holds the
- * size needed and dst holds no partial record. */
+ * size needed and dst holds no partial record.
+ *
+ * Processes render in snapshot order (already ranked by spg_process_select) as
+ *   (process (id "batch_job") (role batch) (cpu-bp 3100) (rss-bytes 1024))
+ * where id is the profile id for a managed process and the process name
+ * otherwise — one shape, because two would cost a small model accuracy. The
+ * pid is deliberately absent: the model never needs it, and a phase-6 action
+ * targets the profile id while the executor re-validates identity itself.
+ *
+ * When processes were dropped, a trailing (processes-dropped N) says so. A
+ * short list that looks complete would invite wrong conclusions. */
 [[nodiscard]] enum spg_status
 spg_machine_state_render(const struct spg_machine_state *state,
                          size_t dst_capacity, char dst[static dst_capacity],

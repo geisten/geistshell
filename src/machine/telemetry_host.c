@@ -8,6 +8,8 @@
 
 #include "geistshell/machine_state.h"
 
+#include "geistshell/process_profile.h"
+
 #include <stdbool.h>
 #include <stddef.h>
 #include <stdio.h>
@@ -92,10 +94,10 @@ static enum spg_throttle_state read_throttle(const size_t cap, char buf[cap]) {
 /* Read /proc/<pid>/stat for every numeric entry, then select the bounded set
  * that reaches the snapshot. Returns the total number seen, which is not the
  * number kept — the snapshot is deliberately smaller than the machine. */
-static uint64_t enumerate_processes(const size_t                    prev_n,
-                                    const struct spg_process_sample prev[],
-                                    const uint64_t                  total_delta,
-                                    struct spg_machine_state       *out) {
+static uint64_t enumerate_processes(
+    const size_t prev_n, const struct spg_process_sample prev[],
+    const uint64_t total_delta, const struct spg_process_profile *profile,
+    struct spg_machine_state *out) {
     DIR *dir = opendir("/proc");
     if (dir == nullptr) {
         return SPG_MACHINE_UNKNOWN;
@@ -130,10 +132,27 @@ static uint64_t enumerate_processes(const size_t                    prev_n,
         if (spg_process_parse_stat(n, buf, page_bytes, &sample) != SPG_OK) {
             continue;
         }
+        /* Roles first: both the signal filter below and the ranking in
+         * spg_process_select depend on knowing what is managed. */
+        spg_process_apply_profile(profile, 1u, &sample);
         const struct spg_process_sample *before =
             spg_process_find(prev_n, prev, sample.pid, sample.start_identity);
         sample.cpu_bp =
             spg_process_utilisation_bp(before, &sample, total_delta);
+        /* A process with no memory and no measurable CPU carries no signal.
+         * On a Pi 5 that is ~100 kernel threads (kworker, rcu_ and migration threads),
+         * which filled 58 of 64 context slots with ~4 KB of "(rss-bytes 0)"
+         * during the hardware test. Managed processes are always offered: a
+         * paused batch job that currently costs nothing is exactly what the
+         * model must still see. */
+        const bool has_signal =
+            sample.rss_bytes != 0u && sample.rss_bytes != SPG_MACHINE_UNKNOWN;
+        const bool has_cpu =
+            sample.cpu_bp != SPG_MACHINE_UNKNOWN && sample.cpu_bp != 0u;
+        if (!has_signal && !has_cpu &&
+            sample.profile_index == SPG_PROCESS_NO_PROFILE) {
+            continue;
+        }
         (void)spg_process_offer(SPG_MACHINE_MAX_PROCESSES, all, &n_all,
                                 &sample);
     }
@@ -153,7 +172,7 @@ static uint64_t enumerate_processes(const size_t                    prev_n,
 enum spg_status spg_machine_sample_with_processes(
     const uint64_t timestamp_ns, const struct spg_cpu_sample *prev,
     const size_t prev_n, const struct spg_process_sample prev_procs[],
-    struct spg_machine_state *out) {
+    const struct spg_process_profile *profile, struct spg_machine_state *out) {
     if (out == nullptr || (prev_n > 0u && prev_procs == nullptr)) {
         return SPG_E_INVALID_ARG;
     }
@@ -197,7 +216,7 @@ enum spg_status spg_machine_sample_with_processes(
     }
     out->throttle = read_throttle(sizeof buf, buf);
     out->process_count =
-        enumerate_processes(prev_n, prev_procs, total_delta, out);
+        enumerate_processes(prev_n, prev_procs, total_delta, profile, out);
     return SPG_OK;
 }
 
@@ -206,9 +225,10 @@ enum spg_status spg_machine_sample_with_processes(
 enum spg_status spg_machine_sample_with_processes(
     const uint64_t timestamp_ns, const struct spg_cpu_sample *prev,
     const size_t prev_n, const struct spg_process_sample prev_procs[],
-    struct spg_machine_state *out) {
+    const struct spg_process_profile *profile, struct spg_machine_state *out) {
     (void)prev;
     (void)prev_procs;
+    (void)profile;
     if (out == nullptr || (prev_n > 0u && prev_procs == nullptr)) {
         return SPG_E_INVALID_ARG;
     }
@@ -223,5 +243,5 @@ enum spg_status spg_machine_sample(const uint64_t               timestamp_ns,
                                    const struct spg_cpu_sample *prev,
                                    struct spg_machine_state    *out) {
     return spg_machine_sample_with_processes(timestamp_ns, prev, 0u, nullptr,
-                                             out);
+                                             nullptr, out);
 }
