@@ -15,8 +15,8 @@ static struct spg_context_budget_item budget_item(const uint64_t configured,
     };
 }
 
-static void build_budgets(const struct spg_run_config *run,
-                          const struct spg_policy_usage *usage,
+static void build_budgets(const struct spg_run_config    *run,
+                          const struct spg_policy_usage  *usage,
                           struct spg_context_budget_view *out) {
     const struct spg_run_budgets configured =
         run == nullptr ? (struct spg_run_budgets){} : run->budgets;
@@ -25,17 +25,17 @@ static void build_budgets(const struct spg_run_config *run,
     *out = (struct spg_context_budget_view){
         .inference_steps =
             budget_item(configured.inference_steps, consumed.inference_steps),
-        .tokens        = budget_item(configured.tokens, consumed.tokens),
-        .shell_actions = budget_item(configured.shell_actions,
-                                     consumed.shell_actions),
-        .sim_actions   = budget_item(configured.sim_actions,
-                                     consumed.sim_actions),
-        .memory_actions = budget_item(configured.memory_actions,
-                                      consumed.memory_actions),
-        .wall_ms       = budget_item(configured.wall_ms, consumed.wall_ms),
-        .journal_bytes = budget_item(configured.journal_bytes,
-                                     consumed.journal_bytes),
-        .risk_bp       = budget_item(configured.risk_bp, consumed.risk_bp),
+        .tokens = budget_item(configured.tokens, consumed.tokens),
+        .shell_actions =
+            budget_item(configured.shell_actions, consumed.shell_actions),
+        .sim_actions =
+            budget_item(configured.sim_actions, consumed.sim_actions),
+        .memory_actions =
+            budget_item(configured.memory_actions, consumed.memory_actions),
+        .wall_ms = budget_item(configured.wall_ms, consumed.wall_ms),
+        .journal_bytes =
+            budget_item(configured.journal_bytes, consumed.journal_bytes),
+        .risk_bp = budget_item(configured.risk_bp, consumed.risk_bp),
     };
 }
 
@@ -102,7 +102,7 @@ static bool graph_ref_before(const struct spg_context_graph_ref *left,
     return left->node.index < right->node.index;
 }
 
-static void insert_graph_ref(struct spg_context_view *view,
+static void insert_graph_ref(struct spg_context_view           *view,
                              const struct spg_context_graph_ref ref) {
     if (view->graph_ref_capacity == 0u) {
         view->graph_truncated = true;
@@ -115,7 +115,7 @@ static void insert_graph_ref(struct spg_context_view *view,
             view->graph_truncated = true;
             return;
         }
-        pos = view->graph_ref_capacity - 1u;
+        pos                   = view->graph_ref_capacity - 1u;
         view->graph_truncated = true;
     } else {
         view->graph_ref_count += 1u;
@@ -170,7 +170,7 @@ static bool memory_ref_before(const struct spg_context_memory_ref *left,
     return left->fact.index < right->fact.index;
 }
 
-static void insert_memory_ref(struct spg_context_view *view,
+static void insert_memory_ref(struct spg_context_view            *view,
                               const struct spg_context_memory_ref ref) {
     if (view->memory_ref_capacity == 0u) {
         view->memory_truncated = true;
@@ -184,7 +184,7 @@ static void insert_memory_ref(struct spg_context_view *view,
             view->memory_truncated = true;
             return;
         }
-        pos = view->memory_ref_capacity - 1u;
+        pos                    = view->memory_ref_capacity - 1u;
         view->memory_truncated = true;
     } else {
         view->memory_ref_count += 1u;
@@ -204,8 +204,9 @@ static bool journal_ref_before(const struct spg_context_journal_ref *left,
     return left->source_index < right->source_index;
 }
 
-static void insert_recent_journal_ref(struct spg_context_view *view,
-                                      const struct spg_context_journal_ref ref) {
+static void
+insert_recent_journal_ref(struct spg_context_view             *view,
+                          const struct spg_context_journal_ref ref) {
     if (view->journal_ref_capacity == 0u) {
         view->journal_truncated = true;
         return;
@@ -218,7 +219,7 @@ static void insert_recent_journal_ref(struct spg_context_view *view,
             view->journal_truncated = true;
             return;
         }
-        pos = view->journal_ref_capacity - 1u;
+        pos                     = view->journal_ref_capacity - 1u;
         view->journal_truncated = true;
     } else {
         view->journal_ref_count += 1u;
@@ -233,19 +234,19 @@ static void insert_recent_journal_ref(struct spg_context_view *view,
 
 static void reverse_journal_refs(struct spg_context_view *view) {
     for (size_t i = 0u, j = view->journal_ref_count; i < j / 2u; i += 1u) {
-        const size_t other = j - 1u - i;
-        const struct spg_context_journal_ref tmp = view->journal_refs[i];
-        view->journal_refs[i]                   = view->journal_refs[other];
-        view->journal_refs[other]               = tmp;
+        const size_t                         other = j - 1u - i;
+        const struct spg_context_journal_ref tmp   = view->journal_refs[i];
+        view->journal_refs[i]                      = view->journal_refs[other];
+        view->journal_refs[other]                  = tmp;
     }
 }
 
 void spg_context_view_init(
     struct spg_context_view *view, const size_t graph_ref_capacity,
-    struct spg_context_graph_ref graph_refs[static graph_ref_capacity],
-    const size_t memory_ref_capacity,
-    struct spg_context_memory_ref memory_refs[static memory_ref_capacity],
-    const size_t journal_ref_capacity,
+    struct spg_context_graph_ref   graph_refs[static graph_ref_capacity],
+    const size_t                   memory_ref_capacity,
+    struct spg_context_memory_ref  memory_refs[static memory_ref_capacity],
+    const size_t                   journal_ref_capacity,
     struct spg_context_journal_ref journal_refs[static journal_ref_capacity]) {
     if (view == nullptr) {
         return;
@@ -263,13 +264,12 @@ void spg_context_view_init(
 static bool view_arrays_valid(const struct spg_context_view *view) {
     return (view->graph_ref_capacity == 0u || view->graph_refs != nullptr) &&
            (view->memory_ref_capacity == 0u || view->memory_refs != nullptr) &&
-           (view->journal_ref_capacity == 0u ||
-            view->journal_refs != nullptr);
+           (view->journal_ref_capacity == 0u || view->journal_refs != nullptr);
 }
 
 enum spg_status spg_context_build(const struct spg_context_sources *sources,
-                                  const struct spg_context_limits *limits,
-                                  struct spg_context_view *view) {
+                                  const struct spg_context_limits  *limits,
+                                  struct spg_context_view          *view) {
     if (sources == nullptr || limits == nullptr || view == nullptr ||
         !view_arrays_valid(view)) {
         return SPG_E_INVALID_ARG;
@@ -326,11 +326,11 @@ enum spg_status spg_context_build(const struct spg_context_sources *sources,
     }
 
     {
-        const size_t target = limits->journal_events <
-                                      view->journal_ref_capacity
-                                  ? limits->journal_events
-                                  : view->journal_ref_capacity;
-        const size_t old_capacity = view->journal_ref_capacity;
+        const size_t target =
+            limits->journal_events < view->journal_ref_capacity
+                ? limits->journal_events
+                : view->journal_ref_capacity;
+        const size_t old_capacity  = view->journal_ref_capacity;
         view->journal_ref_capacity = target;
         for (size_t i = 0u; i < sources->journal_header_count; i += 1u) {
             const struct spg_journal_record_header *header =
@@ -368,8 +368,8 @@ static void append_char(struct render_state *state, const char ch) {
 }
 
 /* Block append with the same one-byte-reserved invariant as append_char: never
- * fills the last slot (it is kept for the terminating NUL) and always counts the
- * full length into required so the caller can size dst exactly. */
+ * fills the last slot (it is kept for the terminating NUL) and always counts
+ * the full length into required so the caller can size dst exactly. */
 static void append_span(struct render_state *state, const size_t n,
                         const char bytes[static n]) {
     if (state->used + 1u < state->capacity) {
@@ -457,7 +457,7 @@ static const char *fact_status_name(const enum spg_memory_fact_status status) {
 }
 
 static void append_quoted_span(struct render_state *state, const size_t text_n,
-                               const char *text,
+                               const char                *text,
                                const struct spg_text_span span) {
     append_char(state, '"');
     if (text != nullptr && span.offset <= text_n &&
@@ -522,20 +522,38 @@ static void append_budget_line(struct render_state *state, const char *name,
 
 static void render_contract(struct render_state *state) {
     append_cstr(state, "(contract\n");
-    append_cstr(state, "  (role \"Return exactly one recommendation form.\")\n");
-    append_cstr(state, "  (schema \"(recommend (kind <simulator|local_shell|ssh_auth_probe|memory_save|memory_delete|memory_read>) (capability \\\"<policy capability>\\\") (cost <positive integer>) (uses_network <true|false>) (confidence_bp <0..10000>) (reason \\\"<short reason>\\\") [(command \\\"...\\\")|(target \\\"...\\\")|(slug \\\"...\\\") (description \\\"...\\\") (body \\\"...\\\")])\")\n");
+    append_cstr(state,
+                "  (role \"Return exactly one recommendation form.\")\n");
+    append_cstr(
+        state, "  (schema \"(recommend (kind "
+               "<simulator|local_shell|ssh_auth_probe|memory_save|memory_"
+               "delete|memory_read>) (capability \\\"<policy capability>\\\") "
+               "(cost <positive integer>) (uses_network <true|false>) "
+               "(confidence_bp <0..10000>) (reason \\\"<short reason>\\\") "
+               "[(command \\\"...\\\")|(target \\\"...\\\")|(slug \\\"...\\\") "
+               "(description \\\"...\\\") (body \\\"...\\\")])\")\n");
     append_cstr(state, "  (rules\n");
-    append_cstr(state, "    (simulator \"uses_network must be false and no command or target\")\n");
-    append_cstr(state, "    (local_shell \"uses_network must be false and command is only a recommendation\")\n");
-    append_cstr(state, "    (ssh_auth_probe \"uses_network must be true and target is required; no attack is executed here\")\n");
-    append_cstr(state, "    (memory_save \"uses_network false; provide slug, description and body to remember something durably\")\n");
-    append_cstr(state, "    (memory_delete \"uses_network false; provide slug to forget a memory\")\n");
-    append_cstr(state, "    (memory_read \"uses_network false; provide slug to recall a memory; its content arrives next turn as observation\"))\n");
-    append_cstr(state, "  (memory \"(memory_index ...) lists recallable memories by slug; (observation ...) holds the last tool result -- recalled memory or command output\")\n");
+    append_cstr(state, "    (simulator \"uses_network must be false and no "
+                       "command or target\")\n");
+    append_cstr(state, "    (local_shell \"uses_network must be false and "
+                       "command is only a recommendation\")\n");
+    append_cstr(state, "    (ssh_auth_probe \"uses_network must be true and "
+                       "target is required; no attack is executed here\")\n");
+    append_cstr(state,
+                "    (memory_save \"uses_network false; provide slug, "
+                "description and body to remember something durably\")\n");
+    append_cstr(state, "    (memory_delete \"uses_network false; provide slug "
+                       "to forget a memory\")\n");
+    append_cstr(state,
+                "    (memory_read \"uses_network false; provide slug to recall "
+                "a memory; its content arrives next turn as observation\"))\n");
+    append_cstr(state, "  (memory \"(memory_index ...) lists recallable "
+                       "memories by slug; (observation ...) holds the last "
+                       "tool result -- recalled memory or command output\")\n");
     append_cstr(state, ")\n");
 }
 
-static void render_budgets(struct render_state *state,
+static void render_budgets(struct render_state                  *state,
                            const struct spg_context_budget_view *budgets) {
     append_cstr(state, "(budgets\n");
     append_budget_line(state, "inference_steps", budgets->inference_steps);
@@ -550,8 +568,8 @@ static void render_budgets(struct render_state *state,
 }
 
 static void render_graph(const struct spg_context_sources *sources,
-                         const struct spg_context_view *view,
-                         struct render_state *state) {
+                         const struct spg_context_view    *view,
+                         struct render_state              *state) {
     append_cstr(state, "(graph");
     if (view->graph_truncated) {
         append_cstr(state, " (truncated true)");
@@ -585,8 +603,8 @@ static void render_graph(const struct spg_context_sources *sources,
 }
 
 static void render_memory(const struct spg_context_sources *sources,
-                          const struct spg_context_view *view,
-                          struct render_state *state) {
+                          const struct spg_context_view    *view,
+                          struct render_state              *state) {
     append_cstr(state, "(memory");
     if (view->memory_truncated) {
         append_cstr(state, " (truncated true)");
@@ -626,7 +644,7 @@ static void render_memory(const struct spg_context_sources *sources,
 }
 
 static void render_journal(const struct spg_context_view *view,
-                           struct render_state *state) {
+                           struct render_state           *state) {
     append_cstr(state, "(recent_events");
     if (view->journal_truncated) {
         append_cstr(state, " (truncated true)");
@@ -653,9 +671,8 @@ static void render_journal(const struct spg_context_view *view,
  * knows what it can recall. The raw lines are emitted as-is (this is prompt
  * text, not re-parsed). */
 static void render_memory_index(const struct spg_context_sources *sources,
-                                struct render_state *state) {
-    if (sources->memory_index == nullptr ||
-        sources->memory_index[0] == '\0') {
+                                struct render_state              *state) {
+    if (sources->memory_index == nullptr || sources->memory_index[0] == '\0') {
         return;
     }
     append_cstr(state, "(memory_index\n");
@@ -665,9 +682,8 @@ static void render_memory_index(const struct spg_context_sources *sources,
 
 /* Content of the most recently recalled memory, as a quoted string. */
 static void render_observation(const struct spg_context_sources *sources,
-                                 struct render_state *state) {
-    if (sources->observation == nullptr ||
-        sources->observation[0] == '\0') {
+                               struct render_state              *state) {
+    if (sources->observation == nullptr || sources->observation[0] == '\0') {
         return;
     }
     append_cstr(state, "(observation ");
@@ -675,11 +691,31 @@ static void render_observation(const struct spg_context_sources *sources,
     append_cstr(state, ")\n");
 }
 
+/* The machine block is produced by the single renderer that owns its format
+ * (spg_machine_state_render), then appended — one definition of the schema,
+ * not a second copy here. The bound is a compile-time constant, so the stack
+ * buffer can never truncate. */
+static void render_machine(const struct spg_context_sources *sources,
+                           struct render_state              *state) {
+    if (sources->machine == nullptr) {
+        return;
+    }
+    char   block[SPG_MACHINE_RENDER_CAP];
+    size_t required = 0u;
+    if (spg_machine_state_render(sources->machine, sizeof block, block,
+                                 &required) != SPG_OK) {
+        return; /* cannot happen at this capacity; emitting nothing beats
+                 * emitting a truncated form the model would misread */
+    }
+    append_cstr(state, block);
+    append_cstr(state, "\n");
+}
+
 enum spg_status spg_context_render(const struct spg_context_sources *sources,
-                                   const struct spg_context_view *view,
+                                   const struct spg_context_view    *view,
                                    const size_t dst_capacity,
-                                   char dst[static dst_capacity],
-                                   size_t *out_required) {
+                                   char         dst[static dst_capacity],
+                                   size_t      *out_required) {
     if (sources == nullptr || view == nullptr || dst == nullptr ||
         out_required == nullptr || dst_capacity == 0u ||
         view->graph_ref_count > view->graph_ref_capacity ||
@@ -711,6 +747,7 @@ enum spg_status spg_context_render(const struct spg_context_sources *sources,
         append_cstr(&state, ")\n");
     }
     render_budgets(&state, &view->budgets);
+    render_machine(sources, &state);
     render_graph(sources, view, &state);
     render_memory(sources, view, &state);
     render_memory_index(sources, &state);

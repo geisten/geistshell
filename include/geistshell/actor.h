@@ -4,6 +4,7 @@
 #include "geistshell/context.h"
 #include "geistshell/graph.h"
 #include "geistshell/journal.h"
+#include "geistshell/machine_state.h"
 #include "geistshell/memory.h"
 #include "geistshell/model_adapter.h"
 #include "geistshell/policy.h"
@@ -19,10 +20,10 @@ extern "C" {
 #endif
 
 struct spg_actor_state {
-    struct spg_graph         *graph;
-    struct spg_memory        *memory;
+    struct spg_graph          *graph;
+    struct spg_memory         *memory;
     struct spg_journal_writer *journal;
-    struct spg_model_adapter *model;
+    struct spg_model_adapter  *model;
 
     const struct spg_run_config   *run;
     const struct spg_policy_usage *usage;
@@ -39,6 +40,8 @@ struct spg_actor_state {
     const char *exemplars;
     const char *goal;
     const char *directive;
+    /* Optional machine snapshot for the context (roadmap phase 3). */
+    const struct spg_machine_state *machine;
 };
 
 struct spg_actor_step_config {
@@ -98,10 +101,10 @@ struct spg_actor_step_result {
 };
 
 [[nodiscard]] enum spg_status
-spg_actor_step(struct spg_actor_state *state,
-               const struct spg_actor_step_config *config,
+spg_actor_step(struct spg_actor_state                *state,
+               const struct spg_actor_step_config    *config,
                const struct spg_actor_step_workspace *workspace,
-               struct spg_actor_step_result *result);
+               struct spg_actor_step_result          *result);
 
 #ifdef __cplusplus
 }

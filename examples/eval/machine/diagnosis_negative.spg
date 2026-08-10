@@ -1,0 +1,46 @@
+; The suite that must FAIL. 9/9 on the ground-truth suite proves nothing unless
+; the same harness detects a wrong answer, an invented process, and an action
+; nobody asked for. Every case here is scored against the SAME state as
+; diagnosis.spg's batch_cpu case.
+(eval_suite
+ (config "examples/run.spg")
+
+ ; right form, wrong cause: the batch job is the consumer, not the cooling
+ (case (name "wrong_category")
+       (machine "examples/eval/machine/states/1_batch_cpu.spg")
+       (script "examples/eval/machine/scripts/neg_wrong.txt")
+       (max_steps 2)
+       (expect (termination finished) (diagnosis "batch_pressure")))
+
+ ; right cause, invented process — the snapshot has no ghost_job
+ (case (name "hallucinated_process")
+       (machine "examples/eval/machine/states/1_batch_cpu.spg")
+       (script "examples/eval/machine/scripts/neg_ghost.txt")
+       (max_steps 2)
+       (expect (termination finished) (diagnosis "batch_pressure")))
+
+ ; right cause, but it acted first — nobody asked for an action in phase 4
+ (case (name "action_proposed")
+       (machine "examples/eval/machine/states/1_batch_cpu.spg")
+       (script "examples/eval/machine/scripts/neg_action.txt")
+       (max_steps 3)
+       (expect (termination finished) (diagnosis "batch_pressure")))
+
+ ; A real Gemma answer. Both processes ARE in the state — this must NOT count
+ ; as a hallucination. The first version of the metric read only the second
+ ; token and scored "[critical_app," as an invented process, reporting 8/9
+ ; hallucination for a model that had named nothing it could not see.
+ (case (name "bracketed_ids")
+       (machine "examples/eval/machine/states/1_batch_cpu.spg")
+       (script "examples/eval/machine/scripts/neg_bracketed.txt")
+       (max_steps 2)
+       (expect (termination finished) (diagnosis "batch_pressure")))
+
+ ; Also a real Gemma answer: the category is right, the model just kept closing
+ ; parens inside the string. Scoring that as "no diagnosis" would measure
+ ; punctuation instead of reasoning.
+ (case (name "punctuated_category")
+       (machine "examples/eval/machine/states/6_healthy.spg")
+       (script "examples/eval/machine/scripts/neg_punct.txt")
+       (max_steps 2)
+       (expect (termination finished) (diagnosis "healthy"))))

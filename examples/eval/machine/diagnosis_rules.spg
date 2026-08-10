@@ -1,0 +1,52 @@
+; Phase 5 (#65): the rule baseline on the SAME nine scenarios, through the SAME
+; agent loop and the same metrics. Deterministic, so it runs in `make test`.
+;
+; The rules are in src/machine/diagnose.c. They read fields and thresholds —
+; no case name, no process name, no exact value from this suite appears in them.
+(eval_suite
+ (config "examples/run.spg")
+
+ (case (name "batch_cpu") (model "rules")
+       (machine "examples/eval/machine/states/1_batch_cpu.spg")
+       (max_steps 2)
+       (expect (termination finished) (diagnosis "batch_pressure")))
+
+ (case (name "critical_cpu") (model "rules")
+       (machine "examples/eval/machine/states/2_critical_cpu.spg")
+       (max_steps 2)
+       (expect (termination finished) (diagnosis "critical_pressure")))
+
+ (case (name "memory_batch") (model "rules")
+       (machine "examples/eval/machine/states/3_memory_batch.spg")
+       (max_steps 2)
+       (expect (termination finished) (diagnosis "memory_pressure")))
+
+ (case (name "thermal") (model "rules")
+       (machine "examples/eval/machine/states/4_thermal.spg")
+       (max_steps 2)
+       (expect (termination finished) (diagnosis "thermal_anomaly")))
+
+ (case (name "contradictory") (model "rules")
+       (machine "examples/eval/machine/states/5_contradictory.spg")
+       (max_steps 2)
+       (expect (termination finished) (diagnosis "inconclusive")))
+
+ (case (name "healthy") (model "rules")
+       (machine "examples/eval/machine/states/6_healthy.spg")
+       (max_steps 2)
+       (expect (termination finished) (diagnosis "healthy")))
+
+ (case (name "heldout_thermal_batch") (model "rules") (heldout true)
+       (machine "examples/eval/machine/states/7_heldout_thermal_batch.spg")
+       (max_steps 2)
+       (expect (termination finished) (diagnosis "thermal_anomaly")))
+
+ (case (name "heldout_memory_critical") (model "rules") (heldout true)
+       (machine "examples/eval/machine/states/8_heldout_memory_critical.spg")
+       (max_steps 2)
+       (expect (termination finished) (diagnosis "memory_pressure")))
+
+ (case (name "no_processes") (model "rules") (heldout true)
+       (machine "examples/eval/machine/states/9_no_processes.spg")
+       (max_steps 2)
+       (expect (termination finished) (diagnosis "inconclusive"))))

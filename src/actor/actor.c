@@ -20,11 +20,12 @@ static bool workspace_valid(const struct spg_actor_step_workspace *workspace) {
     return true;
 }
 
-static enum spg_status append_journal(
-    struct spg_journal_writer *writer, const bool enabled,
-    const uint64_t timestamp_ns, uint64_t *parent_sequence,
-    const enum spg_journal_event_kind kind, const enum spg_status event_status,
-    const size_t payload_n, const char payload[], uint64_t *out_sequence) {
+static enum spg_status
+append_journal(struct spg_journal_writer *writer, const bool enabled,
+               const uint64_t timestamp_ns, uint64_t *parent_sequence,
+               const enum spg_journal_event_kind kind,
+               const enum spg_status event_status, const size_t payload_n,
+               const char payload[], uint64_t *out_sequence) {
     if (!enabled) {
         if (out_sequence != nullptr) {
             *out_sequence = 0u;
@@ -44,15 +45,17 @@ static enum spg_status append_journal(
     return status;
 }
 
-static enum spg_status add_graph_updates(
-    struct spg_graph *graph, const uint32_t actor_id, const size_t context_n,
-    const size_t output_n, struct spg_actor_step_result *result) {
+static enum spg_status add_graph_updates(struct spg_graph *graph,
+                                         const uint32_t    actor_id,
+                                         const size_t      context_n,
+                                         const size_t      output_n,
+                                         struct spg_actor_step_result *result) {
     if (graph == nullptr || result == nullptr) {
         return SPG_E_INVALID_ARG;
     }
 
     struct spg_node_id model_input = {};
-    enum spg_status status = spg_graph_add_node(
+    enum spg_status    status      = spg_graph_add_node(
         graph, SPG_GRAPH_NODE_OBSERVATION, actor_id,
         (struct spg_text_span){.offset = 0u, .length = context_n},
         &model_input);
@@ -63,7 +66,7 @@ static enum spg_status add_graph_updates(
     result->model_input_node     = model_input;
 
     struct spg_node_id recommendation = {};
-    status = spg_graph_add_node(
+    status                            = spg_graph_add_node(
         graph, SPG_GRAPH_NODE_PLAN, actor_id,
         (struct spg_text_span){.offset = 0u, .length = output_n},
         &recommendation);
@@ -73,13 +76,13 @@ static enum spg_status add_graph_updates(
     result->has_recommendation_node = true;
     result->recommendation_node     = recommendation;
 
-    status = spg_graph_set_scores(
-        graph, recommendation,
-        (struct spg_graph_scores){.confidence    = 0.5f,
-                                  .utility       = 0.5f,
-                                  .risk          = 0.0f,
-                                  .novelty       = 0.5f,
-                                  .cost_estimate = 0.0f});
+    status =
+        spg_graph_set_scores(graph, recommendation,
+                             (struct spg_graph_scores){.confidence    = 0.5f,
+                                                       .utility       = 0.5f,
+                                                       .risk          = 0.0f,
+                                                       .novelty       = 0.5f,
+                                                       .cost_estimate = 0.0f});
     if (status != SPG_OK) {
         return status;
     }
@@ -89,14 +92,16 @@ static enum spg_status add_graph_updates(
                               recommendation, model_input, &edge);
 }
 
-static enum spg_status add_memory_update(
-    struct spg_memory *memory, const uint64_t source_event_id,
-    const bool has_graph_node, const struct spg_node_id graph_node,
-    const size_t output_n, struct spg_actor_step_result *result) {
+static enum spg_status add_memory_update(struct spg_memory *memory,
+                                         const uint64_t     source_event_id,
+                                         const bool         has_graph_node,
+                                         const struct spg_node_id graph_node,
+                                         const size_t             output_n,
+                                         struct spg_actor_step_result *result) {
     if (memory == nullptr || result == nullptr || source_event_id == 0u) {
         return SPG_E_INVALID_ARG;
     }
-    struct spg_fact_id fact = {};
+    struct spg_fact_id    fact   = {};
     const enum spg_status status = spg_memory_add_fact(
         memory, SPG_MEMORY_FACT_ARTIFACT, (struct spg_text_span){},
         (struct spg_text_span){},
@@ -109,11 +114,10 @@ static enum spg_status add_memory_update(
     return status;
 }
 
-enum spg_status
-spg_actor_step(struct spg_actor_state *state,
-               const struct spg_actor_step_config *config,
-               const struct spg_actor_step_workspace *workspace,
-               struct spg_actor_step_result *result) {
+enum spg_status spg_actor_step(struct spg_actor_state                *state,
+                               const struct spg_actor_step_config    *config,
+                               const struct spg_actor_step_workspace *workspace,
+                               struct spg_actor_step_result          *result) {
     if (state == nullptr || config == nullptr || !workspace_valid(workspace) ||
         result == nullptr || state->model == nullptr ||
         (config->write_journal && state->journal == nullptr) ||
@@ -121,16 +125,15 @@ spg_actor_step(struct spg_actor_state *state,
         (config->update_memory && state->memory == nullptr)) {
         return SPG_E_INVALID_ARG;
     }
-    *result = (struct spg_actor_step_result){};
+    *result                    = (struct spg_actor_step_result){};
     workspace->context[0]      = '\0';
     workspace->model_output[0] = '\0';
 
     struct spg_context_view context_view = {};
-    spg_context_view_init(&context_view, workspace->graph_ref_capacity,
-                          workspace->graph_refs, workspace->memory_ref_capacity,
-                          workspace->memory_refs,
-                          workspace->journal_ref_capacity,
-                          workspace->journal_refs);
+    spg_context_view_init(
+        &context_view, workspace->graph_ref_capacity, workspace->graph_refs,
+        workspace->memory_ref_capacity, workspace->memory_refs,
+        workspace->journal_ref_capacity, workspace->journal_refs);
 
     const struct spg_context_sources context_sources = {
         .run                  = state->run,
@@ -144,10 +147,11 @@ spg_actor_step(struct spg_actor_state *state,
         .memory_text_n        = state->memory_text_n,
         .memory_text          = state->memory_text,
         .memory_index         = state->memory_index,
-        .observation        = state->observation,
+        .observation          = state->observation,
         .exemplars            = state->exemplars,
         .goal                 = state->goal,
         .directive            = state->directive,
+        .machine              = state->machine,
     };
 
     enum spg_status status = spg_context_build(
@@ -194,7 +198,7 @@ spg_actor_step(struct spg_actor_state *state,
     result->stopped_by_token_limit = model_result.stopped_by_token_limit;
 
     const enum spg_status model_event_status = status;
-    enum spg_status journal_status = append_journal(
+    enum spg_status       journal_status     = append_journal(
         state->journal, config->write_journal, config->timestamp_ns,
         &parent_sequence, SPG_JOURNAL_EVENT_MODEL_OUTPUT, model_event_status,
         result->model_output_n, workspace->model_output,
@@ -224,10 +228,10 @@ spg_actor_step(struct spg_actor_state *state,
     }
 
     if (config->update_memory) {
-        const uint64_t source_event_id =
-            result->model_output_sequence != 0u ? result->model_output_sequence
-                                                : UINT64_C(1);
-        status = add_memory_update(
+        const uint64_t source_event_id = result->model_output_sequence != 0u
+                                             ? result->model_output_sequence
+                                             : UINT64_C(1);
+        status                         = add_memory_update(
             state->memory, source_event_id, result->has_recommendation_node,
             result->recommendation_node, result->model_output_n, result);
         if (status != SPG_OK) {

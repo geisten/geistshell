@@ -1,0 +1,62 @@
+; Phase 4 (#64): the SAME nine scenarios as diagnosis.spg, answered by a real
+; local model instead of a script. Not part of `make test` — it needs a GGUF and
+; is non-deterministic; run it with --samples N and report k/N.
+;
+;   ln -s ~/models models
+;   geistshell eval examples/eval/machine/diagnosis_model.spg --samples 5 --constrained
+(eval_suite
+ (config "examples/eval/machine/run_local.spg")
+
+ (case (name "batch_cpu") (model "geist")
+       (machine "examples/eval/machine/states/1_batch_cpu.spg")
+       (goal "Name the single root cause of the machine state shown in the context. Answer with exactly one action: (recommend (kind finish) (reason \"<cause> [<process-id>]\")). <cause> must be one of: healthy batch_pressure critical_pressure memory_pressure thermal_anomaly inconclusive. Do not propose any other action.")
+       (max_steps 2)
+       (expect (termination finished) (diagnosis "batch_pressure")))
+
+ (case (name "critical_cpu") (model "geist")
+       (machine "examples/eval/machine/states/2_critical_cpu.spg")
+       (goal "Name the single root cause of the machine state shown in the context. Answer with exactly one action: (recommend (kind finish) (reason \"<cause> [<process-id>]\")). <cause> must be one of: healthy batch_pressure critical_pressure memory_pressure thermal_anomaly inconclusive. Do not propose any other action.")
+       (max_steps 2)
+       (expect (termination finished) (diagnosis "critical_pressure")))
+
+ (case (name "memory_batch") (model "geist")
+       (machine "examples/eval/machine/states/3_memory_batch.spg")
+       (goal "Name the single root cause of the machine state shown in the context. Answer with exactly one action: (recommend (kind finish) (reason \"<cause> [<process-id>]\")). <cause> must be one of: healthy batch_pressure critical_pressure memory_pressure thermal_anomaly inconclusive. Do not propose any other action.")
+       (max_steps 2)
+       (expect (termination finished) (diagnosis "memory_pressure")))
+
+ (case (name "thermal") (model "geist")
+       (machine "examples/eval/machine/states/4_thermal.spg")
+       (goal "Name the single root cause of the machine state shown in the context. Answer with exactly one action: (recommend (kind finish) (reason \"<cause> [<process-id>]\")). <cause> must be one of: healthy batch_pressure critical_pressure memory_pressure thermal_anomaly inconclusive. Do not propose any other action.")
+       (max_steps 2)
+       (expect (termination finished) (diagnosis "thermal_anomaly")))
+
+ (case (name "contradictory") (model "geist")
+       (machine "examples/eval/machine/states/5_contradictory.spg")
+       (goal "Name the single root cause of the machine state shown in the context. Answer with exactly one action: (recommend (kind finish) (reason \"<cause> [<process-id>]\")). <cause> must be one of: healthy batch_pressure critical_pressure memory_pressure thermal_anomaly inconclusive. Do not propose any other action.")
+       (max_steps 2)
+       (expect (termination finished) (diagnosis "inconclusive")))
+
+ (case (name "healthy") (model "geist")
+       (machine "examples/eval/machine/states/6_healthy.spg")
+       (goal "Name the single root cause of the machine state shown in the context. Answer with exactly one action: (recommend (kind finish) (reason \"<cause> [<process-id>]\")). <cause> must be one of: healthy batch_pressure critical_pressure memory_pressure thermal_anomaly inconclusive. Do not propose any other action.")
+       (max_steps 2)
+       (expect (termination finished) (diagnosis "healthy")))
+
+ (case (name "heldout_thermal_batch") (model "geist") (heldout true)
+       (machine "examples/eval/machine/states/7_heldout_thermal_batch.spg")
+       (goal "Name the single root cause of the machine state shown in the context. Answer with exactly one action: (recommend (kind finish) (reason \"<cause> [<process-id>]\")). <cause> must be one of: healthy batch_pressure critical_pressure memory_pressure thermal_anomaly inconclusive. Do not propose any other action.")
+       (max_steps 2)
+       (expect (termination finished) (diagnosis "thermal_anomaly")))
+
+ (case (name "heldout_memory_critical") (model "geist") (heldout true)
+       (machine "examples/eval/machine/states/8_heldout_memory_critical.spg")
+       (goal "Name the single root cause of the machine state shown in the context. Answer with exactly one action: (recommend (kind finish) (reason \"<cause> [<process-id>]\")). <cause> must be one of: healthy batch_pressure critical_pressure memory_pressure thermal_anomaly inconclusive. Do not propose any other action.")
+       (max_steps 2)
+       (expect (termination finished) (diagnosis "memory_pressure")))
+
+ (case (name "no_processes") (model "geist") (heldout true)
+       (machine "examples/eval/machine/states/9_no_processes.spg")
+       (goal "Name the single root cause of the machine state shown in the context. Answer with exactly one action: (recommend (kind finish) (reason \"<cause> [<process-id>]\")). <cause> must be one of: healthy batch_pressure critical_pressure memory_pressure thermal_anomaly inconclusive. Do not propose any other action.")
+       (max_steps 2)
+       (expect (termination finished) (diagnosis "inconclusive"))))

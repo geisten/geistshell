@@ -1,22 +1,26 @@
 #include "geistshell/context.h"
+#include "geistshell/machine_state.h"
 
+#include <locale.h>
 #include <stdio.h>
 #include <string.h>
 
 static int test_budget_view(void) {
     const struct spg_run_config run = {
-        .budgets = {
-            .inference_steps = 10u,
-            .tokens          = 100u,
-            .shell_actions   = 2u,
-        },
+        .budgets =
+            {
+                .inference_steps = 10u,
+                .tokens          = 100u,
+                .shell_actions   = 2u,
+            },
     };
     const struct spg_policy_usage usage = {
-        .consumed = {
-            .inference_steps = 3u,
-            .tokens          = 125u,
-            .shell_actions   = 1u,
-        },
+        .consumed =
+            {
+                .inference_steps = 3u,
+                .tokens          = 125u,
+                .shell_actions   = 1u,
+            },
     };
     struct spg_context_graph_ref   graph_refs[1];
     struct spg_context_memory_ref  memory_refs[1];
@@ -45,36 +49,33 @@ static int test_budget_view(void) {
 }
 
 static int test_graph_ranking_and_truncation(void) {
-    const char text[] = "goal payload plan payload observation payload";
-    struct spg_graph graph = {};
+    const char         text[] = "goal payload plan payload observation payload";
+    struct spg_graph   graph  = {};
     struct spg_node_id observation = {};
-    struct spg_node_id goal = {};
-    struct spg_node_id plan = {};
+    struct spg_node_id goal        = {};
+    struct spg_node_id plan        = {};
     spg_graph_init(&graph);
-    if (spg_graph_add_node(
-            &graph, SPG_GRAPH_NODE_OBSERVATION, 1u,
-            (struct spg_text_span){.offset = 23u, .length = 19u},
-            &observation) != SPG_OK) {
+    if (spg_graph_add_node(&graph, SPG_GRAPH_NODE_OBSERVATION, 1u,
+                           (struct spg_text_span){.offset = 23u, .length = 19u},
+                           &observation) != SPG_OK) {
         return 1;
     }
-    if (spg_graph_add_node(
-            &graph, SPG_GRAPH_NODE_GOAL, 1u,
-            (struct spg_text_span){.offset = 0u, .length = 12u}, &goal) !=
-        SPG_OK) {
+    if (spg_graph_add_node(&graph, SPG_GRAPH_NODE_GOAL, 1u,
+                           (struct spg_text_span){.offset = 0u, .length = 12u},
+                           &goal) != SPG_OK) {
         return 1;
     }
-    if (spg_graph_add_node(
-            &graph, SPG_GRAPH_NODE_PLAN, 1u,
-            (struct spg_text_span){.offset = 13u, .length = 12u}, &plan) !=
-        SPG_OK) {
+    if (spg_graph_add_node(&graph, SPG_GRAPH_NODE_PLAN, 1u,
+                           (struct spg_text_span){.offset = 13u, .length = 12u},
+                           &plan) != SPG_OK) {
         return 1;
     }
     if (spg_graph_set_scores(
             &graph, plan,
-            (struct spg_graph_scores){.confidence = 0.9f,
-                                      .utility = 1.0f,
-                                      .risk = 0.0f,
-                                      .novelty = 0.8f,
+            (struct spg_graph_scores){.confidence    = 0.9f,
+                                      .utility       = 1.0f,
+                                      .risk          = 0.0f,
+                                      .novelty       = 0.8f,
                                       .cost_estimate = 0.1f}) != SPG_OK) {
         return 1;
     }
@@ -109,24 +110,24 @@ static int test_graph_ranking_and_truncation(void) {
 }
 
 static int test_memory_ranking_ignores_rejected(void) {
-    const char text[] = "host-a role server old fact";
-    struct spg_memory memory = {};
-    struct spg_fact_id old_fact = {};
+    const char         text[]     = "host-a role server old fact";
+    struct spg_memory  memory     = {};
+    struct spg_fact_id old_fact   = {};
     struct spg_fact_id constraint = {};
     spg_memory_init(&memory);
-    if (spg_memory_add_fact(
-            &memory, SPG_MEMORY_FACT_OBSERVATION,
-            (struct spg_text_span){.offset = 18u, .length = 8u},
-            (struct spg_text_span){}, (struct spg_text_span){}, 1u, false,
-            (struct spg_node_id){}, 1.0f, &old_fact) != SPG_OK) {
+    if (spg_memory_add_fact(&memory, SPG_MEMORY_FACT_OBSERVATION,
+                            (struct spg_text_span){.offset = 18u, .length = 8u},
+                            (struct spg_text_span){}, (struct spg_text_span){},
+                            1u, false, (struct spg_node_id){}, 1.0f,
+                            &old_fact) != SPG_OK) {
         return 1;
     }
-    if (spg_memory_add_fact(
-            &memory, SPG_MEMORY_FACT_CONSTRAINT,
-            (struct spg_text_span){.offset = 0u, .length = 6u},
-            (struct spg_text_span){.offset = 7u, .length = 4u},
-            (struct spg_text_span){.offset = 12u, .length = 6u}, 4000u,
-            false, (struct spg_node_id){}, 0.7f, &constraint) != SPG_OK) {
+    if (spg_memory_add_fact(&memory, SPG_MEMORY_FACT_CONSTRAINT,
+                            (struct spg_text_span){.offset = 0u, .length = 6u},
+                            (struct spg_text_span){.offset = 7u, .length = 4u},
+                            (struct spg_text_span){.offset = 12u, .length = 6u},
+                            4000u, false, (struct spg_node_id){}, 0.7f,
+                            &constraint) != SPG_OK) {
         return 1;
     }
     if (spg_memory_set_status(&memory, old_fact, SPG_MEMORY_FACT_REJECTED) !=
@@ -153,8 +154,8 @@ static int test_memory_ranking_ignores_rejected(void) {
     if (spg_context_build(&sources, &limits, &view) != SPG_OK) {
         return 1;
     }
-    if (view.memory_ref_count != 1u || view.memory_refs[0].fact.index !=
-                                           constraint.index) {
+    if (view.memory_ref_count != 1u ||
+        view.memory_refs[0].fact.index != constraint.index) {
         return 1;
     }
     return 0;
@@ -196,26 +197,24 @@ static int test_recent_events_are_chronological(void) {
 }
 
 static int test_render_and_limit(void) {
-    const char graph_text[]  = "deploy plan";
-    const char memory_text[] = "host-a is isolated";
-    struct spg_graph graph = {};
-    struct spg_memory memory = {};
-    struct spg_node_id node = {};
-    struct spg_fact_id fact = {};
+    const char         graph_text[]  = "deploy plan";
+    const char         memory_text[] = "host-a is isolated";
+    struct spg_graph   graph         = {};
+    struct spg_memory  memory        = {};
+    struct spg_node_id node          = {};
+    struct spg_fact_id fact          = {};
     spg_graph_init(&graph);
     spg_memory_init(&memory);
-    if (spg_graph_add_node(
-            &graph, SPG_GRAPH_NODE_PLAN, 9u,
-            (struct spg_text_span){.offset = 0u, .length = 11u}, &node) !=
-        SPG_OK) {
+    if (spg_graph_add_node(&graph, SPG_GRAPH_NODE_PLAN, 9u,
+                           (struct spg_text_span){.offset = 0u, .length = 11u},
+                           &node) != SPG_OK) {
         return 1;
     }
-    if (spg_memory_add_fact(
-            &memory, SPG_MEMORY_FACT_CONSTRAINT,
-            (struct spg_text_span){.offset = 0u, .length = 6u},
-            (struct spg_text_span){.offset = 7u, .length = 2u},
-            (struct spg_text_span){.offset = 10u, .length = 8u}, 2u, true,
-            node, 0.8f, &fact) != SPG_OK) {
+    if (spg_memory_add_fact(&memory, SPG_MEMORY_FACT_CONSTRAINT,
+                            (struct spg_text_span){.offset = 0u, .length = 6u},
+                            (struct spg_text_span){.offset = 7u, .length = 2u},
+                            (struct spg_text_span){.offset = 10u, .length = 8u},
+                            2u, true, node, 0.8f, &fact) != SPG_OK) {
         return 1;
     }
 
@@ -241,7 +240,7 @@ static int test_render_and_limit(void) {
     if (spg_context_build(&sources, &limits, &view) != SPG_OK) {
         return 1;
     }
-    char small[16];
+    char   small[16];
     size_t required = 0u;
     if (spg_context_render(&sources, &view, sizeof small, small, &required) !=
         SPG_E_LIMIT) {
@@ -277,7 +276,8 @@ static int test_render_memory_index(void) {
                           journal_refs);
     const struct spg_context_limits limits = {0};
 
-    /* With an index, the rendered context carries a (memory_index ...) block. */
+    /* With an index, the rendered context carries a (memory_index ...) block.
+     */
     const struct spg_context_sources with = {
         .memory_index = "- auth-flow: how login works\n",
     };
@@ -286,7 +286,8 @@ static int test_render_memory_index(void) {
     }
     char   buf[2048];
     size_t required = 0u;
-    if (spg_context_render(&with, &view, sizeof buf, buf, &required) != SPG_OK) {
+    if (spg_context_render(&with, &view, sizeof buf, buf, &required) !=
+        SPG_OK) {
         return 1;
     }
     /* Match the injected block (newline after the tag), not the contract's
@@ -309,7 +310,7 @@ static int test_invalid_args(void) {
     struct spg_context_graph_ref   graph_refs[1];
     struct spg_context_memory_ref  memory_refs[1];
     struct spg_context_journal_ref journal_refs[1];
-    struct spg_context_view        view = {};
+    struct spg_context_view        view    = {};
     struct spg_context_sources     sources = {
         .journal_header_count = 1u,
         .journal_headers      = nullptr,
@@ -414,7 +415,8 @@ static int test_goal_render(void) {
         return 1;
     }
 
-    /* A standing directive renders prominently as (directive "...") every step. */
+    /* A standing directive renders prominently as (directive "...") every step.
+     */
     sources.directive = "emit finish once the goal output is produced";
     if (spg_context_render(&sources, &view, sizeof buf, buf, &req) != SPG_OK ||
         strstr(buf, "(directive ") == nullptr ||
@@ -429,6 +431,157 @@ static int test_goal_render(void) {
     return 0;
 }
 
+/* Roadmap phase 3: the machine snapshot reaches the model context, bounded and
+ * deterministic, and is absent unless a caller supplies one. */
+static int test_machine_render(void) {
+    const struct spg_run_config    run   = {.budgets = {.tokens = 100u}};
+    const struct spg_policy_usage  usage = {};
+    struct spg_context_graph_ref   graph_refs[1];
+    struct spg_context_memory_ref  memory_refs[1];
+    struct spg_context_journal_ref journal_refs[1];
+    struct spg_context_view        view = {};
+    spg_context_view_init(&view, 1u, graph_refs, 1u, memory_refs, 1u,
+                          journal_refs);
+    const struct spg_context_limits limits = {
+        .graph_nodes = 1u, .memory_facts = 1u, .journal_events = 1u};
+
+    struct spg_machine_state machine = {
+        .timestamp_ns        = 7u,
+        .cpu_utilisation_bp  = 9200u,
+        .load                = {.avg_1_cbp = 175u},
+        .memory              = {.total_bytes = 1024u, .used_bytes = 512u},
+        .temperature_mc      = 78400,
+        .cpu_freq_khz        = 1500000u,
+        .throttle            = SPG_THROTTLE_NONE,
+        .process_count       = 200u,
+        .n_processes         = 2u,
+        .processes_truncated = true,
+    };
+    machine.processes[0] = (struct spg_process_sample){
+        .pid           = 11u,
+        .cpu_bp        = 5400u,
+        .rss_bytes     = 4096u,
+        .role          = SPG_PROCESS_ROLE_CRITICAL,
+        .profile_index = 0u,
+    };
+    memcpy(machine.processes[0].profile_id, "critical_app",
+           sizeof "critical_app");
+    machine.processes[1] = (struct spg_process_sample){
+        .pid           = 12u,
+        .cpu_bp        = 3100u,
+        .rss_bytes     = 8192u,
+        .role          = SPG_PROCESS_ROLE_BATCH,
+        .profile_index = 1u,
+    };
+    memcpy(machine.processes[1].profile_id, "batch_job", sizeof "batch_job");
+
+    struct spg_context_sources sources = {
+        .run = &run, .usage = &usage, .machine = &machine};
+    if (spg_context_build(&sources, &limits, &view) != SPG_OK) {
+        return 1;
+    }
+    char   buf[8192];
+    size_t req = 0u;
+    if (spg_context_render(&sources, &view, sizeof buf, buf, &req) != SPG_OK) {
+        return 1;
+    }
+    if (strstr(buf, "(machine-state ") == nullptr ||
+        strstr(buf, "(cpu-load-bp 9200)") == nullptr ||
+        strstr(buf, "(temperature-mc 78400)") == nullptr) {
+        return 1;
+    }
+    /* The process carries its profile id and role — that is what a phase-6
+     * action would target. */
+    if (strstr(buf, "(process (id \"batch_job\") (role batch)") == nullptr ||
+        strstr(buf, "(cpu-bp 3100)") == nullptr) {
+        return 1;
+    }
+    /* A truncated list must say so, or the model reads it as the whole
+     * machine. */
+    if (strstr(buf, "(processes-dropped 198)") == nullptr) {
+        return 1;
+    }
+
+    /* Byte-identical for the same snapshot. */
+    char   again[8192];
+    size_t req2 = 0u;
+    if (spg_context_render(&sources, &view, sizeof again, again, &req2) !=
+            SPG_OK ||
+        req != req2 || memcmp(buf, again, req) != 0) {
+        return 1;
+    }
+
+    /* Absent by default: without a snapshot the context is what it always was,
+     * which is what keeps the phase-0 journal freeze valid. */
+    sources.machine = nullptr;
+    if (spg_context_render(&sources, &view, sizeof again, again, &req2) !=
+        SPG_OK) {
+        return 1;
+    }
+    if (strstr(again, "machine-state") != nullptr) {
+        return 1;
+    }
+    return 0;
+}
+
+/* Missing telemetry must render as the symbol `unknown`, never as 0 — a model
+ * cannot tell a dead sensor from an idle machine otherwise. */
+static int test_machine_unknown_and_locale(void) {
+    const struct spg_run_config    run   = {.budgets = {.tokens = 100u}};
+    const struct spg_policy_usage  usage = {};
+    struct spg_context_graph_ref   graph_refs[1];
+    struct spg_context_memory_ref  memory_refs[1];
+    struct spg_context_journal_ref journal_refs[1];
+    struct spg_context_view        view = {};
+    spg_context_view_init(&view, 1u, graph_refs, 1u, memory_refs, 1u,
+                          journal_refs);
+    const struct spg_context_limits limits = {
+        .graph_nodes = 1u, .memory_facts = 1u, .journal_events = 1u};
+
+    const struct spg_machine_state machine = {
+        .cpu_utilisation_bp = SPG_MACHINE_UNKNOWN,
+        .load               = {.avg_1_cbp  = SPG_MACHINE_UNKNOWN,
+                               .avg_5_cbp  = SPG_MACHINE_UNKNOWN,
+                               .avg_15_cbp = SPG_MACHINE_UNKNOWN},
+        .memory             = {.total_bytes     = SPG_MACHINE_UNKNOWN,
+                               .used_bytes      = SPG_MACHINE_UNKNOWN,
+                               .swap_used_bytes = SPG_MACHINE_UNKNOWN},
+        .temperature_mc     = SPG_MACHINE_UNKNOWN_S,
+        .cpu_freq_khz       = SPG_MACHINE_UNKNOWN,
+        .throttle           = SPG_THROTTLE_UNKNOWN,
+        .process_count      = SPG_MACHINE_UNKNOWN,
+    };
+    const struct spg_context_sources sources = {
+        .run = &run, .usage = &usage, .machine = &machine};
+    if (spg_context_build(&sources, &limits, &view) != SPG_OK) {
+        return 1;
+    }
+    char   buf[8192];
+    size_t req = 0u;
+    if (spg_context_render(&sources, &view, sizeof buf, buf, &req) != SPG_OK) {
+        return 1;
+    }
+    if (strstr(buf, "(cpu-load-bp unknown)") == nullptr ||
+        strstr(buf, "(temperature-mc unknown)") == nullptr) {
+        return 1;
+    }
+
+    /* A locale with ',' as the decimal separator must not change one byte:
+     * the block is integers only, and byte-identical replay depends on it. */
+    char first[8192];
+    memcpy(first, buf, req);
+    (void)setlocale(LC_ALL, "de_DE.UTF-8");
+    size_t req2 = 0u;
+    if (spg_context_render(&sources, &view, sizeof buf, buf, &req2) != SPG_OK) {
+        return 1;
+    }
+    (void)setlocale(LC_ALL, "C");
+    if (req != req2 || memcmp(first, buf, req) != 0) {
+        return 1;
+    }
+    return 0;
+}
+
 int main(void) {
     if (test_exemplars_render() != 0) {
         fprintf(stderr, "test_exemplars_render failed\n");
@@ -436,6 +589,14 @@ int main(void) {
     }
     if (test_goal_render() != 0) {
         fprintf(stderr, "test_goal_render failed\n");
+        return 1;
+    }
+    if (test_machine_render() != 0) {
+        fprintf(stderr, "test_machine_render failed\n");
+        return 1;
+    }
+    if (test_machine_unknown_and_locale() != 0) {
+        fprintf(stderr, "test_machine_unknown_and_locale failed\n");
         return 1;
     }
     if (test_budget_view() != 0) {
