@@ -101,6 +101,8 @@ SPG_SOURCES := \
     src/memory/mem_executor.c \
     src/memory/mem_store.c \
     src/memory/memory.c \
+    src/machine/telemetry.c \
+    src/machine/telemetry_host.c \
     src/model/grammar_mask.c \
     src/model/model_adapter.c \
     src/model/model_remote_codec.c \
