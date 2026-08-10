@@ -10,11 +10,11 @@
 #include "geistshell/agent_run.h"
 #include "geistshell/eval.h"
 #include "geistshell/exec_command.h"
-#include "geistshell/machine_fixture.h"
 #include "geistshell/fixture.h"
 #include "geistshell/grammar_mask.h"
 #include "geistshell/guard_ring.h"
 #include "geistshell/improve.h"
+#include "geistshell/machine_fixture.h"
 #include "geistshell/mem_command.h"
 #include "geistshell/mem_store.h"
 #include "geistshell/process_profile.h"
@@ -2392,15 +2392,15 @@ struct eval_run_report {
     /* #64 diagnosis metrics. A diagnosis case asks one question — what is
      * wrong — so a bare pass rate hides the two failures that matter: naming
      * the wrong cause, and proposing an action when none was asked for. */
-    bool   diagnosis_suite; /* any case declared (expect (diagnosis ...)) */
-    char   case_expected[EVAL_MAX_CASES][32];
-    char   case_emitted[EVAL_MAX_CASES][32]; /* last sample's category */
+    bool diagnosis_suite; /* any case declared (expect (diagnosis ...)) */
+    char case_expected[EVAL_MAX_CASES][32];
+    char case_emitted[EVAL_MAX_CASES][32]; /* last sample's category */
     /* The reason verbatim. A metric nobody can audit is a metric nobody
      * should trust: the benchmark shows what the model actually wrote. */
-    char case_reason[EVAL_MAX_CASES][96];
-    size_t case_diag_ok[EVAL_MAX_CASES];     /* samples naming the right cause */
-    size_t case_halluc[EVAL_MAX_CASES];   /* ... naming a process not present */
-    size_t case_action[EVAL_MAX_CASES];   /* ... proposing an action anyway */
+    char   case_reason[EVAL_MAX_CASES][96];
+    size_t case_diag_ok[EVAL_MAX_CASES]; /* samples naming the right cause */
+    size_t case_halluc[EVAL_MAX_CASES];  /* ... naming a process not present */
+    size_t case_action[EVAL_MAX_CASES];  /* ... proposing an action anyway */
     size_t case_ctx_bytes[EVAL_MAX_CASES];
     bool   case_heldout[EVAL_MAX_CASES];
 };
@@ -2409,8 +2409,8 @@ struct eval_run_report {
  * scoring free text would measure how the grader feels, not what the model
  * concluded. */
 static const char *const diagnosis_categories[] = {
-    "healthy",         "batch_pressure",    "critical_pressure",
-    "memory_pressure", "thermal_anomaly",   "inconclusive",
+    "healthy",         "batch_pressure",  "critical_pressure",
+    "memory_pressure", "thermal_anomaly", "inconclusive",
 };
 
 /* Diagnosis convention: (recommend (kind finish) (reason "<category> [<id>]")).
@@ -2444,7 +2444,7 @@ static void diagnosis_from_output(const char *text, char category[static 32],
         i -= 1u;
         category[i] = '\0';
     }
-    bool known  = false;
+    bool known = false;
     for (size_t k = 0u;
          k < sizeof diagnosis_categories / sizeof diagnosis_categories[0];
          k += 1u) {
@@ -2488,8 +2488,9 @@ static bool next_reason_token(const char **cursor, char token[static 32]) {
 
 /* A named process that is not in the snapshot is invented — the sharpest
  * hallucination signal available without a grader. */
-static bool diagnosis_names_absent_process(
-    const struct spg_machine_state *state, const char *reason_text) {
+static bool
+diagnosis_names_absent_process(const struct spg_machine_state *state,
+                               const char                     *reason_text) {
     if (state == nullptr || reason_text == nullptr) {
         return false;
     }
@@ -2534,9 +2535,8 @@ static bool eval_tally_diagnosis(struct eval_run_report *report,
     char category[32];
     char process[32];
     diagnosis_from_output(model_output, category, process);
-    const char *reason = model_output != nullptr
-                             ? strstr(model_output, "(reason \"")
-                             : nullptr;
+    const char *reason =
+        model_output != nullptr ? strstr(model_output, "(reason \"") : nullptr;
     if (reason != nullptr) {
         reason += sizeof "(reason \"" - 1u;
         size_t i = 0u;
@@ -2871,9 +2871,9 @@ static enum spg_status eval_run_suite(const char                 *suite_path,
          * on a laptop with no Pi attached. */
         static struct spg_machine_state case_machine;
         char                            machine_path[CLI_PATH_MAX];
-        bool has_machine = eval_str(nod, c, suite_text.n, suite_text.data,
-                                    "machine", machine_path,
-                                    sizeof machine_path);
+        bool                            has_machine =
+            eval_str(nod, c, suite_text.n, suite_text.data, "machine",
+                     machine_path, sizeof machine_path);
         if (has_machine) {
             struct file_buffer mtext = {};
             if (read_file(machine_path, &mtext) != SPG_OK) {
@@ -3028,11 +3028,9 @@ static enum spg_status eval_run_suite(const char                 *suite_path,
                     };
                     eval_tally_ladder(report, case_idx, &last);
                     if (has_diagnosis &&
-                        !eval_tally_diagnosis(report, case_idx, expected_diag,
-                                              model_output,
-                                              has_machine ? &case_machine
-                                                          : nullptr,
-                                              &loop) &&
+                        !eval_tally_diagnosis(
+                            report, case_idx, expected_diag, model_output,
+                            has_machine ? &case_machine : nullptr, &loop) &&
                         last.outcome == SPG_EVAL_PASS) {
                         /* Terminating cleanly is not the same as being right.
                          * A wrong root cause is a failed expectation, or the
@@ -3097,11 +3095,9 @@ static enum spg_status eval_run_suite(const char                 *suite_path,
                     const struct spg_agent_loop_result synth = {
                         .steps_taken = r.steps_taken,
                         .termination = r.termination};
-                    if (!eval_tally_diagnosis(report, case_idx, expected_diag,
-                                              model_output,
-                                              has_machine ? &case_machine
-                                                          : nullptr,
-                                              &synth) &&
+                    if (!eval_tally_diagnosis(
+                            report, case_idx, expected_diag, model_output,
+                            has_machine ? &case_machine : nullptr, &synth) &&
                         r.outcome == SPG_EVAL_PASS) {
                         r.outcome    = SPG_EVAL_FAIL_OBSERVATION;
                         last.outcome = SPG_EVAL_FAIL_OBSERVATION;

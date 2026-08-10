@@ -109,7 +109,8 @@ static int test_unknown_is_not_zero(void) {
         return 1;
     }
     /* An explicit `unknown` reads the same as an absent field. */
-    if (load(LIT("(machine-state (cpu-load-bp unknown) (temperature-mc unknown))"),
+    if (load(LIT("(machine-state (cpu-load-bp unknown) (temperature-mc "
+                 "unknown))"),
              &s) != SPG_OK) {
         return 1;
     }

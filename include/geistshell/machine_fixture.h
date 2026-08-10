@@ -27,7 +27,7 @@ extern "C" {
 [[nodiscard]] enum spg_status spg_machine_state_parse(
     size_t input_n, const char input[], size_t token_capacity,
     struct spg_sexpr_token tokens[static token_capacity], size_t node_capacity,
-    struct spg_sexpr_node    nodes[static node_capacity],
+    struct spg_sexpr_node     nodes[static node_capacity],
     struct spg_machine_state *out);
 
 #ifdef __cplusplus

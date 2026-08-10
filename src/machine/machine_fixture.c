@@ -65,7 +65,8 @@ static enum spg_status read_i64(const size_t input_n, const char input[],
     }
     struct spg_text_span span   = nodes[value].span;
     bool                 negate = false;
-    if (span.length > 0u && span.offset < input_n && input[span.offset] == '-') {
+    if (span.length > 0u && span.offset < input_n &&
+        input[span.offset] == '-') {
         negate = true;
         span.offset += 1u;
         span.length -= 1u;
@@ -85,8 +86,8 @@ static enum spg_status read_i64(const size_t input_n, const char input[],
 
 static enum spg_status read_role(const size_t input_n, const char input[],
                                  const struct spg_sexpr_node nodes[static 1],
-                                 const uint32_t         parent,
-                                 enum spg_process_role *out) {
+                                 const uint32_t              parent,
+                                 enum spg_process_role      *out) {
     const uint32_t value = field_value(input_n, input, nodes, parent, "role");
     if (value == SPG_SEXPR_INVALID_INDEX ||
         span_is(input_n, input, nodes[value].span, "unknown")) {
@@ -106,9 +107,10 @@ static enum spg_status read_role(const size_t input_n, const char input[],
     return SPG_E_SCHEMA;
 }
 
-static enum spg_throttle_state read_throttle(
-    const size_t input_n, const char input[],
-    const struct spg_sexpr_node nodes[static 1], const uint32_t parent) {
+static enum spg_throttle_state
+read_throttle(const size_t input_n, const char input[],
+              const struct spg_sexpr_node nodes[static 1],
+              const uint32_t              parent) {
     const uint32_t value =
         field_value(input_n, input, nodes, parent, "throttle");
     if (value == SPG_SEXPR_INVALID_INDEX) {
@@ -128,14 +130,14 @@ static enum spg_throttle_state read_throttle(
 
 static enum spg_status read_process(const size_t input_n, const char input[],
                                     const struct spg_sexpr_node nodes[static 1],
-                                    const uint32_t             entry,
-                                    struct spg_process_sample *out) {
+                                    const uint32_t              entry,
+                                    struct spg_process_sample  *out) {
     *out = (struct spg_process_sample){
         .cpu_bp        = SPG_MACHINE_UNKNOWN,
         .rss_bytes     = SPG_MACHINE_UNKNOWN,
         .profile_index = SPG_PROCESS_NO_PROFILE,
     };
-    const uint32_t id = field_value(input_n, input, nodes, entry, "id");
+    const uint32_t       id   = field_value(input_n, input, nodes, entry, "id");
     struct spg_text_span span = {};
     if (id == SPG_SEXPR_INVALID_INDEX ||
         !spg_sexpr_string_payload_span(&nodes[id], &span) ||
@@ -153,7 +155,8 @@ static enum spg_status read_process(const size_t input_n, const char input[],
     memcpy(out->name, input + span.offset, name_n);
     out->name[name_n] = '\0';
 
-    enum spg_status status = read_role(input_n, input, nodes, entry, &out->role);
+    enum spg_status status =
+        read_role(input_n, input, nodes, entry, &out->role);
     if (status != SPG_OK) {
         return status;
     }
@@ -168,16 +171,16 @@ static enum spg_status read_process(const size_t input_n, const char input[],
     if (status != SPG_OK) {
         return status;
     }
-    return read_u64(input_n, input, nodes, entry, "rss-bytes",
-                    &out->rss_bytes);
+    return read_u64(input_n, input, nodes, entry, "rss-bytes", &out->rss_bytes);
 }
 
-enum spg_status spg_machine_state_parse(
-    const size_t input_n, const char input[], const size_t token_capacity,
-    struct spg_sexpr_token tokens[static token_capacity],
-    const size_t           node_capacity,
-    struct spg_sexpr_node nodes[static node_capacity],
-    struct spg_machine_state *out) {
+enum spg_status
+spg_machine_state_parse(const size_t input_n, const char input[],
+                        const size_t              token_capacity,
+                        struct spg_sexpr_token    tokens[static token_capacity],
+                        const size_t              node_capacity,
+                        struct spg_sexpr_node     nodes[static node_capacity],
+                        struct spg_machine_state *out) {
     if (out == nullptr) {
         return SPG_E_INVALID_ARG;
     }
@@ -234,8 +237,8 @@ enum spg_status spg_machine_state_parse(
     out->throttle = read_throttle(input_n, input, nodes, root);
 
     uint64_t dropped = 0u;
-    status = read_u64(input_n, input, nodes, root, "processes-dropped",
-                      &dropped);
+    status =
+        read_u64(input_n, input, nodes, root, "processes-dropped", &dropped);
     if (status != SPG_OK) {
         return status;
     }
@@ -243,7 +246,7 @@ enum spg_status spg_machine_state_parse(
         field_value(input_n, input, nodes, root, "processes-dropped") !=
         SPG_SEXPR_INVALID_INDEX;
 
-    for (uint32_t entry = nodes[head].next_sibling;
+    for (uint32_t entry                          = nodes[head].next_sibling;
          entry != SPG_SEXPR_INVALID_INDEX; entry = nodes[entry].next_sibling) {
         if (nodes[entry].kind != SPG_SEXPR_NODE_LIST) {
             continue;

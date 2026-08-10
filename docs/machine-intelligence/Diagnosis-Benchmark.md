@@ -83,6 +83,8 @@ die Metrik fest auf „korrekt" verdrahtet wäre. Deshalb gibt es
 | falsche Kategorie | Case scheitert | `correct=0`, `outcome=fail_observation` |
 | erfundener Prozess `ghost_job` bei richtiger Kategorie | erkannt | `hallucinated=1` |
 | Aktion vorgeschlagen statt nur diagnostiziert | gezählt | `action_proposed=1`, `steps=2` |
+| `batch_pressure [critical_app, batch_job]` (echte Gemma-Antwort) | **keine** Halluzination | `hallucinated=0` |
+| `healthy))` (echte Gemma-Antwort) | Kategorie erkannt | `emitted=healthy` |
 
 `test/test_cli_diagnosis.sh` fährt beide Suiten und schlägt fehl, wenn der
 Harness einen dieser Fälle durchgehen lässt. Er ist Teil von `make test`.
@@ -91,21 +93,81 @@ Harness einen dieser Fälle durchgehen lässt. Er ist Teil von `make test`.
 
 ### Scripted Ground Truth (deterministisch, in `make test`)
 
-| Methode | Known | Held-out | Halluzination | Unnötige Action |
-|---|---|---|---|---|
-| scripted baseline | 6/6 | 3/3 | 0 | 0 |
+| Methode | Known | Held-out | Halluzination | Unnötige Action | Parse |
+|---|---|---|---|---|---|
+| scripted baseline | 6/6 | 3/3 | 0 | 0 | 9/9 |
 
 Das ist keine Modellleistung, sondern der Nachweis, dass Harness und Metriken
 funktionieren.
 
-### Lokales Modell
+### Gemma4-E2B, lokal auf dem Pi 5
 
-_Wird beim Modelllauf eingetragen._
+`--constrained --samples 1`, Release-Build, aarch64.
+
+| Methode | Known | Held-out | Halluzination | Unnötige Action | Parse | Gate |
+|---|---|---|---|---|---|---|
+| Gemma4-E2B (Q4_K_M) | 2/6 | 1/3 | 0 | 0 | 9/9 | 9/9 |
+
+Die Antworten im Wortlaut:
+
+| Szenario | Erwartet | Geantwortet |
+|---|---|---|
+| batch_cpu | batch_pressure | `memory_pressure [critical_app, batch_job]` |
+| critical_cpu | critical_pressure | `critical_pressure [critical_app]` ✓ |
+| memory_batch | memory_pressure | `memory_pressure [critical_app, batch_job]` ✓ |
+| thermal | thermal_anomaly | `memory_pressure [critical_app, batch_job]` |
+| contradictory | inconclusive | `healthy))` |
+| healthy | healthy | `critical_pressure [critical_app]` |
+| heldout_thermal_batch | thermal_anomaly | `memory_pressure [critical_app, batch_job]` |
+| heldout_memory_critical | memory_pressure | `memory_pressure [critical_app, batch_job]` ✓ |
+| no_processes | inconclusive | `memory_pressure [unknown]` |
+
+**Das Modell diagnostiziert nicht, es rät ein Label.** In sechs von neun Fällen
+lautet die Antwort `memory_pressure`, unabhängig davon, ob Speicher überhaupt
+knapp ist — bei `thermal` sind 4,2 GB installiert und 1,1 GB belegt. Die
+Kategorie `thermal_anomaly` kam kein einziges Mal vor, obwohl zwei Szenarien sie
+verlangen und die Temperatur als eigenes Feld im Context steht.
+
+Der Vergleich, der das einordnet: wer **immer** `memory_pressure` antwortet,
+trifft 1/6 known und 1/3 held-out, also 2/9. Gemma erreicht 3/9. Der Abstand zu
+einer konstanten Antwort ist ein einziger Fall — und der (`critical_cpu`) ist
+schwer von Glück zu unterscheiden, weil dieselbe Antwort im `healthy`-Szenario
+falsch war.
+
+**Was gut funktioniert: die Form.** Parse 9/9 und Gate 9/9 mit dem constrained
+Decoder. Die Hypothese aus #53 hält hier — das Gerüst hebt die Parse-Rate
+unabhängig vom Modell, und die Frage verschiebt sich von „kann es die Form" zu
+„wählt es richtig". Die Antwort auf die zweite Frage ist auf dieser Suite: nein.
+
+Laufzeit: rund 25–30 Minuten für neun Fälle auf einem Pi 5 (Release-Build, vier
+Kerne). Die **Inferenzzeit pro Fall ist nicht instrumentiert** — der Harness
+misst sie nicht, und eine Uhr in den Eval-Pfad zu legen ist eine Änderung, die
+zu Phase 10 gehört, wo Latenz eine der Zielmetriken ist.
 
 ### Remote-Modell
 
-Nicht konfiguriert. Ein nicht verfügbares Remote-Modell wird als
-Fehler-Record ausgewiesen und **nicht** als bestanden gewertet.
+Nicht konfiguriert, also nicht gelaufen. Ein nicht verfügbares Remote-Modell
+wird als Fehler-Record ausgewiesen und **nicht** als bestanden gewertet.
+
+### Was die Halluzinationsmetrik erst falsch gemessen hat
+
+Die erste Fassung meldete für denselben Lauf **8 von 9 Halluzinationen**. Das
+war ein Artefakt: sie las nur das zweite Token des Reasons und verglich es mit
+den Prozess-IDs des Snapshots. Gemma schreibt aber
+`memory_pressure [critical_app, batch_job]` — das zweite Token ist
+`[critical_app,`, und die genannten Prozesse sind **beide** im Zustand
+vorhanden.
+
+Aufgefallen ist es erst, weil die Metrik den Reason im Klartext mit ausgibt.
+Eine Zahl, die niemand nachprüfen kann, ist eine Zahl, der niemand trauen
+sollte.
+
+Korrigiert wird jetzt jedes Token nach der Kategorie geprüft, befreit von
+`[](),`, und nur Tokens mit Unterstrich gelten als ID-Behauptung — die
+Namenskonvention der Profile (`critical_app`, `batch_job`), die Prosa nicht
+erfüllt. Beide echten Gemma-Antworten sind als Regressionsfälle in
+`diagnosis_negative.spg` eingefroren, ebenso `healthy))`, das die
+Kategorie-Extraktion an Satzzeichen scheitern ließ.
 
 ## Wo einfache Regeln offensichtlich genügen
 
@@ -114,6 +176,11 @@ mit drei Schwellwerten zu lösen — „CPU hoch **und** der Verursacher ist ein
 Batch-Prozess", „Speicher hoch **und** ein RSS dominiert", „alles unter
 Schwelle". Für diese Fälle ist ein Modell teurer, langsamer und weniger
 vorhersagbar als vier Zeilen C.
+
+Nach dem Gemma-Lauf ist die Frage schärfer gestellt: eine Regel, die nur
+`temperature-mc > 75000` prüft, löst die Fälle 4 und 7 sofort — Gemma löst
+keinen davon. Die Regel-Baseline aus Phase 5 tritt also nicht gegen ein starkes
+Modell an.
 
 Interessant sind die Fälle, in denen eine Regel eine Kollision hat:
 
