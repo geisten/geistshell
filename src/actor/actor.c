@@ -187,9 +187,36 @@ enum spg_status spg_actor_step(struct spg_actor_state                *state,
         .output_capacity = workspace->model_output_capacity,
         .output          = workspace->model_output,
     };
+    /* #54: frame the prompt the way this model expects to be spoken to.
+     *
+     * Until now every model got the bare context. Phase 12 (#72) measured the
+     * cost: same constrained decoder, Gemma parsed 9 of 9 and BitNet 1 of 9,
+     * once returning a lone backslash. A base model that was never shown a
+     * chat format still gets `none` — the framing is per profile, not a new
+     * universal wrapper. */
+    size_t      prompt_n = result->context_prompt_n;
+    const char *prompt   = workspace->context;
+    if (state->profile != nullptr && workspace->framed != nullptr &&
+        workspace->framed_capacity > 0u) {
+        const enum spg_chat_template tmpl =
+            state->profile->chat_template == SPG_TEMPLATE_AUTO
+                ? spg_template_for_arch(state->profile->arch)
+                : state->profile->chat_template;
+        size_t framed_n = 0u;
+        if (tmpl != SPG_TEMPLATE_NONE &&
+            spg_chat_frame(tmpl, nullptr, result->context_prompt_n,
+                           workspace->context, workspace->framed_capacity,
+                           workspace->framed, &framed_n) == SPG_OK) {
+            prompt_n = framed_n;
+            prompt   = workspace->framed;
+        }
+        /* On SPG_E_LIMIT the unframed prompt is used rather than a truncated
+         * template: half a chat format is worse than none. */
+    }
+
     const struct spg_model_generate_request model_request = {
-        .prompt_n          = result->context_prompt_n,
-        .prompt            = workspace->context,
+        .prompt_n          = prompt_n,
+        .prompt            = prompt,
         .reset_session     = config->reset_model_session,
         .max_decode_tokens = config->max_decode_tokens,
     };

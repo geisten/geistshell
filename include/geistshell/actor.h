@@ -5,6 +5,7 @@
 #include "geistshell/graph.h"
 #include "geistshell/journal.h"
 #include "geistshell/machine_state.h"
+#include "geistshell/model_profile.h"
 #include "geistshell/memory.h"
 #include "geistshell/model_adapter.h"
 #include "geistshell/policy.h"
@@ -43,6 +44,9 @@ struct spg_actor_state {
     /* Optional machine snapshot for the context (roadmap phase 3). */
     const struct spg_machine_state *machine;
     const struct spg_machine_goal  *machine_goal;
+    /* How to speak to this model (#54). Null = the bare context, which is what
+     * every model got before profiles existed. */
+    const struct spg_model_profile *profile;
     uint32_t                        machine_ablate;
 };
 
@@ -63,6 +67,13 @@ struct spg_actor_step_config {
 struct spg_actor_step_workspace {
     size_t context_capacity;
     char  *context;
+
+    /* Scratch for the chat-framed prompt (#54). Null or zero means the model
+     * gets the bare context — the framing is skipped rather than the run
+     * failing, because a missing buffer is a caller's omission and not a
+     * reason to stop driving the model. */
+    size_t framed_capacity;
+    char  *framed;
 
     size_t model_output_capacity;
     char  *model_output;

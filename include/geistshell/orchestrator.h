@@ -52,6 +52,8 @@ struct spg_orchestrator_state {
     const struct spg_machine_state *machine_after;
     /* What the run is for (phase 9). Read-only here; the harness judges it. */
     const struct spg_machine_goal *machine_goal;
+    /* #54: how to frame the prompt for this model. */
+    const struct spg_model_profile *profile_model;
     /* Phase 11: which parts of the snapshot the model does NOT get. */
     uint32_t                       machine_ablate;
     /* Where pauses are recorded so the run can undo them (phase 6b, #80).

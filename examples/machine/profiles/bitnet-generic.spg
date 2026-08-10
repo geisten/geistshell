@@ -1,0 +1,12 @@
+; BitNet b1.58 is a base model: not instruction-tuned, no turn tokens of its
+; own. Auto-detect therefore gives it `none`, which is what phase 12 measured
+; at 1/9 parses.
+;
+; `generic` uses plain text labels rather than special tokens — a visible
+; boundary between instruction and answer that a base model can read as text,
+; without putting markers in the prompt that it was never trained on.
+(model_profile
+  (name "bitnet-generic")
+  (arch "bitnet-b1.58")
+  (template generic)
+  (constrained true))

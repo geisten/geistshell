@@ -65,6 +65,8 @@ struct spg_agent_run_inputs {
     /* Optional goal for the context (phase 9). The harness, not the loop,
      * decides whether it was met. */
     const struct spg_machine_goal  *machine_goal;
+    /* How to speak to this model (#54). Null = the bare context. */
+    const struct spg_model_profile *profile_model;
     /* Phase 11 (#71): parts of the snapshot to withhold, to measure what the
      * model actually needs. 0 = everything, the default. */
     uint32_t                        machine_ablate;
@@ -93,6 +95,9 @@ struct spg_agent_run_config {
  * (except shell_* which may be null when execution is never used). */
 struct spg_agent_run_workspace {
     size_t                          context_capacity;
+    /* Scratch for the chat-framed prompt (#54); null skips framing. */
+    size_t                          framed_capacity;
+    char                           *framed;
     char                           *context;
     size_t                          model_output_capacity;
     char                           *model_output;
