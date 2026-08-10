@@ -58,6 +58,10 @@ struct spg_agent_run_inputs {
      * live run, which re-samples the host instead. */
     const struct spg_machine_state *machine_after;
     bool                            refresh_machine;
+    /* Milliseconds to let the machine settle before re-observing. See
+     * spg_agent_loop_config.machine_settle_ms — without it a live run measures
+     * the load from before its own action. */
+    uint64_t                        machine_settle_ms;
 };
 
 struct spg_agent_run_config {

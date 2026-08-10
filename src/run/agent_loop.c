@@ -1,4 +1,10 @@
+/* nanosleep for the settle window: declared only under POSIX on glibc,
+ * exposed by default on macOS — the difference cost a Pi round-trip. */
+#define _POSIX_C_SOURCE 200809L
+
 #include "geistshell/agent_loop.h"
+
+#include <time.h>
 
 #include "geistshell/mem_store.h" /* P6: slug-triggered directive injection */
 
@@ -225,6 +231,16 @@ spg_agent_loop_run(struct spg_orchestrator_state           *state,
          * anything happened would only cost a syscall and would make the first
          * decision race the sampler. */
         if (config->refresh_machine && state->machine != nullptr) {
+            if (config->machine_settle_ms > 0u &&
+                state->machine_after == nullptr) {
+                /* Only on the live path: a scripted case describes the world
+                 * after the action directly and has nothing to wait for. */
+                const struct timespec settle = {
+                    .tv_sec  = (time_t)(config->machine_settle_ms / 1000u),
+                    .tv_nsec = (long)((config->machine_settle_ms % 1000u) *
+                                      1000000u)};
+                (void)nanosleep(&settle, nullptr);
+            }
             if (state->machine_after != nullptr) {
                 /* Scripted: the world changes in the way the case describes. */
                 *state->machine = *state->machine_after;
