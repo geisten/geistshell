@@ -25,6 +25,8 @@ enum spg_policy_capability_kind {
     SPG_POLICY_CAP_SSH_AUTH_PROBE,
     SPG_POLICY_CAP_SIMULATOR,
     SPG_POLICY_CAP_MEMORY,
+    /* machine.process.pause / machine.process.resume */
+    SPG_POLICY_CAP_MACHINE_PROCESS,
 };
 
 struct spg_policy_capability {

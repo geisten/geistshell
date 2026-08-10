@@ -12,7 +12,8 @@ static bool span_eq_texts(const size_t left_n, const char left[],
                           const size_t right_n, const char right[],
                           const struct spg_text_span right_span) {
     if (left == nullptr || right == nullptr ||
-        !spg_sexpr_span_valid(left_n, left_span) || !spg_sexpr_span_valid(right_n, right_span) ||
+        !spg_sexpr_span_valid(left_n, left_span) ||
+        !spg_sexpr_span_valid(right_n, right_span) ||
         left_span.length != right_span.length) {
         return false;
     }
@@ -20,10 +21,10 @@ static bool span_eq_texts(const size_t left_n, const char left[],
                   left_span.length) == 0;
 }
 
-static bool resolve_capability_span(
-    const struct spg_policy_gate_state *state,
-    const struct spg_recommendation *recommendation,
-    struct spg_text_span *out_policy_span) {
+static bool
+resolve_capability_span(const struct spg_policy_gate_state *state,
+                        const struct spg_recommendation    *recommendation,
+                        struct spg_text_span               *out_policy_span) {
     if (state == nullptr || recommendation == nullptr ||
         out_policy_span == nullptr || state->policy == nullptr) {
         return false;
@@ -33,9 +34,8 @@ static bool resolve_capability_span(
             state->policy->capabilities[i].name;
         if (span_eq_texts(state->recommendation_text_n,
                           state->recommendation_text,
-                          recommendation->capability,
-                          state->policy_text_n, state->policy_text,
-                          candidate)) {
+                          recommendation->capability, state->policy_text_n,
+                          state->policy_text, candidate)) {
             *out_policy_span = candidate;
             return true;
         }
@@ -43,7 +43,8 @@ static bool resolve_capability_span(
     return false;
 }
 
-static const char *decision_kind_name(const enum spg_policy_decision_kind kind) {
+static const char *
+decision_kind_name(const enum spg_policy_decision_kind kind) {
     switch (kind) {
     case SPG_POLICY_DECISION_ALLOW:
         return "allow";
@@ -53,11 +54,11 @@ static const char *decision_kind_name(const enum spg_policy_decision_kind kind) 
     return "unknown";
 }
 
-static enum spg_status render_payload(
-    const struct spg_recommendation *recommendation,
-    const struct spg_policy_decision *decision,
-    const struct spg_policy_gate_workspace *workspace,
-    struct spg_policy_gate_result *result) {
+static enum spg_status
+render_payload(const struct spg_recommendation        *recommendation,
+               const struct spg_policy_decision       *decision,
+               const struct spg_policy_gate_workspace *workspace,
+               struct spg_policy_gate_result          *result) {
     struct spg_sexpr_writer writer;
     spg_sexpr_writer_init(&writer, workspace->payload_capacity,
                           workspace->payload);
@@ -65,8 +66,8 @@ static enum spg_status render_payload(
     enum spg_status status =
         spg_sexpr_writer_append_text(&writer, "(policy_decision (decision ");
     if (status == SPG_OK) {
-        status = spg_sexpr_writer_append_text(&writer,
-                                              decision_kind_name(decision->kind));
+        status = spg_sexpr_writer_append_text(
+            &writer, decision_kind_name(decision->kind));
     }
     if (status == SPG_OK) {
         status = spg_sexpr_writer_append_text(&writer, ") (deny_reason ");
@@ -144,17 +145,17 @@ static enum spg_status journal_decision(
         (const uint8_t *)workspace->payload, out_sequence);
 }
 
-static enum spg_status add_deny_graph(
-    struct spg_graph *graph, const struct spg_policy_gate_config *config,
-    struct spg_policy_gate_result *result) {
+static enum spg_status
+add_deny_graph(struct spg_graph                    *graph,
+               const struct spg_policy_gate_config *config,
+               struct spg_policy_gate_result       *result) {
     if (graph == nullptr || config == nullptr || result == nullptr) {
         return SPG_E_INVALID_ARG;
     }
     struct spg_node_id policy_node = {};
-    enum spg_status status = spg_graph_add_node(
+    enum spg_status    status      = spg_graph_add_node(
         graph, SPG_GRAPH_NODE_POLICY_DECISION, config->actor_id,
-        (struct spg_text_span){.offset = 0u,
-                               .length = result->payload_used},
+        (struct spg_text_span){.offset = 0u, .length = result->payload_used},
         &policy_node);
     if (status != SPG_OK) {
         return status;
@@ -166,13 +167,13 @@ static enum spg_status add_deny_graph(
     if (status != SPG_OK) {
         return status;
     }
-    status = spg_graph_set_scores(
-        graph, policy_node,
-        (struct spg_graph_scores){.confidence    = 1.0f,
-                                  .utility       = 0.0f,
-                                  .risk          = 0.0f,
-                                  .novelty       = 0.0f,
-                                  .cost_estimate = 0.0f});
+    status =
+        spg_graph_set_scores(graph, policy_node,
+                             (struct spg_graph_scores){.confidence    = 1.0f,
+                                                       .utility       = 0.0f,
+                                                       .risk          = 0.0f,
+                                                       .novelty       = 0.0f,
+                                                       .cost_estimate = 0.0f});
     if (status != SPG_OK) {
         return status;
     }
@@ -182,9 +183,9 @@ static enum spg_status add_deny_graph(
             return SPG_E_INVALID_ARG;
         }
         struct spg_edge_id edge = {};
-        status = spg_graph_add_edge(graph, SPG_GRAPH_EDGE_BLOCKED_BY_POLICY,
-                                    config->recommendation_node, policy_node,
-                                    &edge);
+        status =
+            spg_graph_add_edge(graph, SPG_GRAPH_EDGE_BLOCKED_BY_POLICY,
+                               config->recommendation_node, policy_node, &edge);
         if (status != SPG_OK) {
             return status;
         }
@@ -194,28 +195,107 @@ static enum spg_status add_deny_graph(
     return SPG_OK;
 }
 
-enum spg_status spg_policy_gate_step(
-    const struct spg_policy_gate_state *state,
-    const struct spg_policy_gate_config *config,
-    const struct spg_recommendation *recommendation,
-    const struct spg_policy_gate_workspace *workspace,
-    struct spg_policy_gate_result *result) {
+/* Machine actions carry a target: a profile id, never a pid. Resolve it into
+ * the span of text the recommendation used. */
+static bool target_text(const struct spg_policy_gate_state *state,
+                        const struct spg_recommendation    *rec,
+                        char target[static SPG_PROCESS_ID_CAP]) {
+    const struct spg_text_span span = rec->target;
+    if (span.length == 0u || span.length + 1u > SPG_PROCESS_ID_CAP ||
+        span.offset + span.length > state->recommendation_text_n) {
+        return false;
+    }
+    memcpy(target, state->recommendation_text + span.offset, span.length);
+    target[span.length] = '\0';
+    return true;
+}
+
+/* Decide a machine action on process semantics alone; budget and capability
+ * are still the general path's job.
+ *
+ * Order matters for what the journal ends up saying. "unmanaged" and
+ * "protected" are different findings: the first means the operator never
+ * declared this process, the second means they declared it off limits. */
+static enum spg_policy_deny_reason
+machine_denial(const struct spg_policy_gate_state *state,
+               const struct spg_recommendation    *rec) {
+    if (rec->action_kind != SPG_ACTION_MACHINE_PAUSE &&
+        rec->action_kind != SPG_ACTION_MACHINE_RESUME) {
+        return SPG_POLICY_DENY_NONE;
+    }
+    if (state->profile == nullptr || state->machine == nullptr) {
+        /* No profile configured means nothing is managed, and nothing
+         * unmanaged is actionable. */
+        return SPG_POLICY_DENY_UNMANAGED_PROCESS;
+    }
+    char target[SPG_PROCESS_ID_CAP];
+    if (!target_text(state, rec, target)) {
+        return SPG_POLICY_DENY_INVALID_REQUEST;
+    }
+
+    const struct spg_process_profile_entry *entry = nullptr;
+    for (size_t i = 0u; i < state->profile->count; i += 1u) {
+        if (strcmp(state->profile->entries[i].id, target) == 0) {
+            entry = &state->profile->entries[i];
+            break;
+        }
+    }
+    if (entry == nullptr) {
+        return SPG_POLICY_DENY_UNMANAGED_PROCESS;
+    }
+
+    /* Pausing needs permission. Resuming does not: it can only restore the
+     * state the machine had before we touched it, and denying it would leave a
+     * process we stopped stopped. */
+    if (rec->action_kind == SPG_ACTION_MACHINE_PAUSE && !entry->may_pause) {
+        return SPG_POLICY_DENY_PROCESS_PROTECTED;
+    }
+
+    /* The target must be a process we actually observed this tick. Acting on
+     * something that is not in the snapshot means acting on a guess. */
+    for (size_t i = 0u; i < state->machine->n_processes; i += 1u) {
+        if (strcmp(state->machine->processes[i].profile_id, target) == 0) {
+            return SPG_POLICY_DENY_NONE;
+        }
+    }
+    return SPG_POLICY_DENY_PROCESS_IDENTITY;
+}
+
+enum spg_status
+spg_policy_gate_step(const struct spg_policy_gate_state     *state,
+                     const struct spg_policy_gate_config    *config,
+                     const struct spg_recommendation        *recommendation,
+                     const struct spg_policy_gate_workspace *workspace,
+                     struct spg_policy_gate_result          *result) {
     if (state == nullptr || config == nullptr || recommendation == nullptr ||
         !workspace_valid(workspace) || result == nullptr ||
-        state->policy_text == nullptr || state->recommendation_text == nullptr ||
-        state->policy == nullptr || state->usage == nullptr ||
-        state->policy_text_n == 0u || state->recommendation_text_n == 0u ||
+        state->policy_text == nullptr ||
+        state->recommendation_text == nullptr || state->policy == nullptr ||
+        state->usage == nullptr || state->policy_text_n == 0u ||
+        state->recommendation_text_n == 0u ||
         recommendation->state != SPG_RECOMMENDATION_VALID ||
         (config->write_journal && state->journal == nullptr) ||
         (config->update_graph_on_deny && state->graph == nullptr)) {
         return SPG_E_INVALID_ARG;
     }
 
-    *result = (struct spg_policy_gate_result){};
+    *result               = (struct spg_policy_gate_result){};
     workspace->payload[0] = '\0';
 
-    struct spg_action_request request = recommendation->action;
-    if (!resolve_capability_span(state, recommendation, &request.capability)) {
+    struct spg_action_request         request = recommendation->action;
+    const enum spg_policy_deny_reason machine_reason =
+        machine_denial(state, recommendation);
+    if (machine_reason != SPG_POLICY_DENY_NONE) {
+        /* Decided before capability and budget on purpose: a process the
+         * operator protected must not consume budget to be refused, and the
+         * journal should say why it was refused, not that we ran out. */
+        result->decision = (struct spg_policy_decision){
+            .kind             = SPG_POLICY_DECISION_DENY,
+            .deny_reason      = machine_reason,
+            .capability_index = SIZE_MAX,
+        };
+    } else if (!resolve_capability_span(state, recommendation,
+                                        &request.capability)) {
         result->decision = (struct spg_policy_decision){
             .kind             = SPG_POLICY_DECISION_DENY,
             .deny_reason      = SPG_POLICY_DENY_UNKNOWN_CAPABILITY,
@@ -223,8 +303,8 @@ enum spg_status spg_policy_gate_step(
         };
     } else {
         enum spg_status status = spg_policy_decide(
-        state->policy_text_n, state->policy_text, state->policy, state->usage,
-        &request, &result->decision);
+            state->policy_text_n, state->policy_text, state->policy,
+            state->usage, &request, &result->decision);
         if (status != SPG_OK) {
             return status;
         }
@@ -237,9 +317,9 @@ enum spg_status spg_policy_gate_step(
     }
 
     if (config->write_journal) {
-        status = journal_decision(
-            state->journal, config->timestamp_ns, config->parent_sequence,
-            &result->decision, workspace, result, &result->policy_sequence);
+        status = journal_decision(state->journal, config->timestamp_ns,
+                                  config->parent_sequence, &result->decision,
+                                  workspace, result, &result->policy_sequence);
         if (status != SPG_OK) {
             return status;
         }

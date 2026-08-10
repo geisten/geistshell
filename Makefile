@@ -94,6 +94,7 @@ SPG_SOURCES := \
     src/exec/shell_executor.c \
     src/improve/improve.c \
     src/executor/executor_boundary.c \
+    src/executor/machine_executor.c \
     src/graph/graph.c \
     src/journal/journal.c \
     src/journal/journal_sign.c \
@@ -128,6 +129,10 @@ endif
 CLI_SOURCES := src/cli/main.c
 CHAT_SOURCES := src/chat/main.c
 TEST_SOURCES := $(wildcard test/test_*.c)
+# Not a test_*.c: it forks a child and drives real signals, so the shell
+# wrapper decides when running it is meaningful (see test_cli_machine_action.sh).
+PROBE_SOURCES := test/machine_action_probe.c
+PROBE_BINS := $(patsubst test/%.c,$(TEST_DIR)/%,$(PROBE_SOURCES))
 CLI_TESTS := $(wildcard test/test_cli_*.sh)
 
 SPG_OBJECTS := $(patsubst %.c,$(OBJ_DIR)/%.o,$(SPG_SOURCES))
@@ -190,7 +195,7 @@ $(OBJ_DIR)/%.o: %.c
 	@mkdir -p $(@D)
 	$(CC) $(CFLAGS) -MMD -MP -c $< -o $@
 
-test: $(TEST_BINS) $(SPG_BIN)
+test: $(TEST_BINS) $(PROBE_BINS) $(SPG_BIN)
 	@status=0; \
 	for t in $(TEST_BINS); do \
 		echo "$$t"; \

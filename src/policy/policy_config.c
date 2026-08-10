@@ -16,7 +16,7 @@ static const struct spg_schema_field_rule policy_fields[] = {
     {.name       = "budgets",
      .value_kind = SPG_SCHEMA_VALUE_LIST,
      .min_values = 7u,
-     .max_values = 8u, /* 7 required + optional memory_actions */
+     .max_values = 9u, /* 7 required + optional memory/machine_actions */
      .required   = true,
      .unique     = true},
     {.name       = "capability",
@@ -140,6 +140,10 @@ static enum spg_status parse_cap_kind(
     }
     if (spg_sexpr_span_eq_cstr(input_n, input, span, "memory")) {
         *out = SPG_POLICY_CAP_MEMORY;
+        return SPG_OK;
+    }
+    if (spg_sexpr_span_eq_cstr(input_n, input, span, "machine_process")) {
+        *out = SPG_POLICY_CAP_MACHINE_PROCESS;
         return SPG_OK;
     }
     return SPG_E_SCHEMA;

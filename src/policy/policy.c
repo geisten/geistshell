@@ -38,6 +38,9 @@ cap_kind_for_action(const enum spg_action_kind kind) {
     case SPG_ACTION_MEMORY_DELETE:
     case SPG_ACTION_MEMORY_READ:
         return SPG_POLICY_CAP_MEMORY;
+    case SPG_ACTION_MACHINE_PAUSE:
+    case SPG_ACTION_MACHINE_RESUME:
+        return SPG_POLICY_CAP_MACHINE_PROCESS;
     default:
         return SPG_POLICY_CAP_LOCAL_SHELL;
     }
@@ -46,7 +49,8 @@ cap_kind_for_action(const enum spg_action_kind kind) {
 static bool action_kind_valid(const enum spg_action_kind kind) {
     return kind == SPG_ACTION_LOCAL_SHELL || kind == SPG_ACTION_SSH_AUTH_PROBE ||
            kind == SPG_ACTION_SIMULATOR || kind == SPG_ACTION_MEMORY_SAVE ||
-           kind == SPG_ACTION_MEMORY_DELETE || kind == SPG_ACTION_MEMORY_READ;
+           kind == SPG_ACTION_MEMORY_DELETE || kind == SPG_ACTION_MEMORY_READ ||
+           kind == SPG_ACTION_MACHINE_PAUSE || kind == SPG_ACTION_MACHINE_RESUME;
 }
 
 static uint64_t consumed_for_action(const struct spg_policy_usage *usage,
@@ -62,6 +66,9 @@ static uint64_t consumed_for_action(const struct spg_policy_usage *usage,
     case SPG_ACTION_MEMORY_DELETE:
     case SPG_ACTION_MEMORY_READ:
         return usage->consumed.memory_actions;
+    case SPG_ACTION_MACHINE_PAUSE:
+    case SPG_ACTION_MACHINE_RESUME:
+        return usage->consumed.machine_actions;
     default:
         return UINT64_MAX;
     }
@@ -80,6 +87,9 @@ static uint64_t global_budget_for_action(const struct spg_policy_config *policy,
     case SPG_ACTION_MEMORY_DELETE:
     case SPG_ACTION_MEMORY_READ:
         return policy->budgets.memory_actions;
+    case SPG_ACTION_MACHINE_PAUSE:
+    case SPG_ACTION_MACHINE_RESUME:
+        return policy->budgets.machine_actions;
     default:
         return 0u;
     }
@@ -107,6 +117,10 @@ const char *spg_action_kind_to_string(const enum spg_action_kind kind) {
         return "memory_delete";
     case SPG_ACTION_MEMORY_READ:
         return "memory_read";
+    case SPG_ACTION_MACHINE_PAUSE:
+        return "machine_pause_process";
+    case SPG_ACTION_MACHINE_RESUME:
+        return "machine_resume_process";
     case SPG_ACTION_FINISH:
         return "finish";
     }
@@ -132,6 +146,12 @@ const char *spg_policy_deny_reason_to_string(
         return "SPG_POLICY_DENY_GLOBAL_BUDGET";
     case SPG_POLICY_DENY_INVALID_REQUEST:
         return "SPG_POLICY_DENY_INVALID_REQUEST";
+    case SPG_POLICY_DENY_UNMANAGED_PROCESS:
+        return "SPG_POLICY_DENY_UNMANAGED_PROCESS";
+    case SPG_POLICY_DENY_PROCESS_PROTECTED:
+        return "SPG_POLICY_DENY_PROCESS_PROTECTED";
+    case SPG_POLICY_DENY_PROCESS_IDENTITY:
+        return "SPG_POLICY_DENY_PROCESS_IDENTITY";
     default:
         return "SPG_POLICY_DENY_UNKNOWN";
     }

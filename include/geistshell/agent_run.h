@@ -44,6 +44,9 @@ struct spg_agent_run_inputs {
      * Null = none, the default: the context is then byte-identical to before
      * machine state existed, which the phase-0 journal freeze relies on. */
     const struct spg_machine_state *machine;
+    /* Process profile for machine actions (roadmap phase 6). Null = every
+     * machine action is denied as unmanaged, which is the right default. */
+    const struct spg_process_profile *profile;
 };
 
 struct spg_agent_run_config {

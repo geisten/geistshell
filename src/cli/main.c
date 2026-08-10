@@ -142,6 +142,8 @@ policy_capability_kind_name(const enum spg_policy_capability_kind kind) {
         return "simulator";
     case SPG_POLICY_CAP_MEMORY:
         return "memory";
+    case SPG_POLICY_CAP_MACHINE_PROCESS:
+        return "machine_process";
     }
     return "unknown";
 }
@@ -2179,6 +2181,10 @@ static int agent_command(int argc, char **argv) {
          * to before this phase, which is what keeps the phase-0 freeze valid.
          */
         .machine = with_machine ? &machine : nullptr,
+        /* No profile means nothing is managed, and the gate denies every
+         * machine action as unmanaged. That is the right default: a run that
+         * never declared what it may touch may not touch anything. */
+        .profile = profile_path != nullptr ? &profile : nullptr,
     };
     const struct spg_agent_run_config rcfg = {
         .max_steps   = max_steps,

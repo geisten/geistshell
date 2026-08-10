@@ -90,6 +90,7 @@ enum spg_status spg_agent_run(const struct spg_agent_run_inputs *inputs,
         .goal          = inputs->goal,
         .directive     = directive,
         .machine       = inputs->machine,
+        .profile       = inputs->profile,
     };
 
     const size_t refs = config->context_refs > 0u ? config->context_refs : 8u;

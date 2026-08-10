@@ -21,6 +21,12 @@ enum spg_action_kind {
     SPG_ACTION_MEMORY_SAVE,
     SPG_ACTION_MEMORY_DELETE,
     SPG_ACTION_MEMORY_READ,
+    /* Machine actions (roadmap phase 6, #66). Typed and closed: the model
+     * never gets a shell for these. Both are reversible, which is why they are
+     * the first two — an irreversible action would need a stronger story than
+     * "the policy said yes". */
+    SPG_ACTION_MACHINE_PAUSE,
+    SPG_ACTION_MACHINE_RESUME,
     /* Control action: the agent declares the task complete. Carries no
      * capability and consumes no budget; the loop terminates on it and it never
      * reaches the policy gate. */
@@ -41,6 +47,15 @@ enum spg_policy_deny_reason {
     SPG_POLICY_DENY_CAPABILITY_BUDGET,
     SPG_POLICY_DENY_GLOBAL_BUDGET,
     SPG_POLICY_DENY_INVALID_REQUEST,
+    /* The target is not in the process profile. An unmanaged process is never
+     * actionable — not a no-op, a denial, so the model learns the difference. */
+    SPG_POLICY_DENY_UNMANAGED_PROCESS,
+    /* The profile manages it and forbids this action (role critical, or
+     * may_pause/may_stop false). Checked here rather than in the executor:
+     * the prompt cannot argue with the policy layer. */
+    SPG_POLICY_DENY_PROCESS_PROTECTED,
+    /* The pid no longer belongs to the process that was observed. */
+    SPG_POLICY_DENY_PROCESS_IDENTITY,
 };
 
 struct spg_action_request {
