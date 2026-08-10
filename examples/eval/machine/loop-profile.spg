@@ -1,0 +1,7 @@
+; The profile the closed-loop scenarios run against: the batch job may be
+; paused, the critical one may not. Phase 6's gate reads exactly this.
+(process-profile
+  (process "critical_app" (match "critical-worker") (role critical)
+    (may_pause false) (may_stop false))
+  (process "batch_job" (match "batch-worker") (role batch)
+    (may_pause true) (may_stop true)))

@@ -42,6 +42,11 @@ struct spg_agent_loop_config {
      * 0 = unlimited. */
     uint64_t step_budget;
 
+    /* Phase 7: re-observe between ticks. With a live host that means sampling
+     * again; with machine_after set it means installing that snapshot once an
+     * action has executed. Off = phase 6 behaviour, one snapshot per run. */
+    bool refresh_machine;
+
     /* Self-repair: when a step's recommendation is malformed, write the parse
      * error into the observation channel and retry instead of terminating, up
      * to this many times total. 0 = terminate on the first rejection. Repairs

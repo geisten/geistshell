@@ -34,6 +34,8 @@ const char *spg_machine_exec_outcome_to_string(
         return "ok";
     case SPG_MACHINE_EXEC_IDENTITY_CHANGED:
         return "identity_changed";
+    case SPG_MACHINE_EXEC_ALREADY_PAUSED:
+        return "already_paused";
     case SPG_MACHINE_EXEC_GONE:
         return "gone";
     case SPG_MACHINE_EXEC_FORBIDDEN:
@@ -153,6 +155,20 @@ static void dismiss_guardian(int *fd) {
 
 /* Ledger bookkeeping. A pause that cannot be recorded is not performed: the
  * alternative is a stopped process nobody owes a resume for. */
+static bool ledger_holds(const struct spg_machine_pause_ledger *ledger,
+                         const struct spg_process_sample       *p) {
+    if (ledger == nullptr) {
+        return false;
+    }
+    for (size_t i = 0u; i < ledger->count; i += 1u) {
+        if (ledger->entries[i].pid == p->pid &&
+            ledger->entries[i].start_identity == p->start_identity) {
+            return true;
+        }
+    }
+    return false;
+}
+
 static bool ledger_remember(struct spg_machine_pause_ledger *ledger,
                             const struct spg_process_sample *p) {
     if (ledger == nullptr) {
@@ -161,7 +177,7 @@ static bool ledger_remember(struct spg_machine_pause_ledger *ledger,
     for (size_t i = 0u; i < ledger->count; i += 1u) {
         if (ledger->entries[i].pid == p->pid &&
             ledger->entries[i].start_identity == p->start_identity) {
-            return true; /* pausing twice still owes exactly one resume */
+            return false; /* already ours; the caller reports already_paused */
         }
     }
     if (ledger->count >= SPG_MACHINE_MAX_PAUSED) {
@@ -313,6 +329,14 @@ enum spg_status spg_machine_executor_step(
     } else if (!config->execution_enabled) {
         result->pid     = p->pid;
         result->outcome = SPG_MACHINE_EXEC_UNSUPPORTED;
+    } else if (kind == SPG_ACTION_MACHINE_PAUSE &&
+               ledger_holds(state->ledger, p)) {
+        /* We stopped it earlier in this run and have not resumed it. Sending
+         * SIGSTOP again would spend budget to change nothing, and the loop
+         * would have no way to tell a fresh remedy from a repeated one. */
+        result->pid      = p->pid;
+        result->identity = p->start_identity;
+        result->outcome  = SPG_MACHINE_EXEC_ALREADY_PAUSED;
     } else if (kind == SPG_ACTION_MACHINE_PAUSE &&
                !ledger_remember(state->ledger, p)) {
         /* No room to record it, or nowhere to record it at all. Stopping a

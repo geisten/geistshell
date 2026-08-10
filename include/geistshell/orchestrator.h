@@ -40,8 +40,16 @@ struct spg_orchestrator_state {
     /* Optional machine snapshot for the context (roadmap phase 3) and the
      * process profile the gate judges machine actions against (phase 6).
      * Without a profile every machine action is denied as unmanaged. */
-    const struct spg_machine_state   *machine;
+    /* Mutable since phase 7: the loop replaces the snapshot between ticks, so
+     * the tick after an action observes its effect rather than the state the
+     * decision was made on. Still one snapshot, not a second loop. */
+    struct spg_machine_state         *machine;
     const struct spg_process_profile *profile;
+    /* Optional second snapshot, installed after the first executed action
+     * (phase 7). A scripted eval needs the world to change deterministically;
+     * a live run refreshes from the host instead. Null = the snapshot stays
+     * as it was, which is phase 6's behaviour. */
+    const struct spg_machine_state *machine_after;
     /* Where pauses are recorded so the run can undo them (phase 6b, #80).
      * Null means a pause cannot be tracked, and an untracked pause is refused
      * rather than performed. */

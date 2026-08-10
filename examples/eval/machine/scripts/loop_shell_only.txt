@@ -1,0 +1,2 @@
+(recommend (kind local_shell) (capability "build.run") (command "kill -9 4711") (cost 1) (uses_network false) (confidence_bp 9500) (reason "pause denied, killing it instead"))
+(recommend (kind finish) (reason "inconclusive"))

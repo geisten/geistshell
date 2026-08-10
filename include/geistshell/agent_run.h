@@ -43,7 +43,9 @@ struct spg_agent_run_inputs {
     /* Optional machine telemetry snapshot for the context (roadmap phase 3).
      * Null = none, the default: the context is then byte-identical to before
      * machine state existed, which the phase-0 journal freeze relies on. */
-    const struct spg_machine_state *machine;
+    /* Mutable since phase 7: the loop replaces it between ticks so the tick
+     * after an action sees what the action did. */
+    struct spg_machine_state *machine;
     /* Process profile for machine actions (roadmap phase 6). Null = every
      * machine action is denied as unmanaged, which is the right default. */
     const struct spg_process_profile *profile;
@@ -51,6 +53,11 @@ struct spg_agent_run_inputs {
      * machine pauses are refused: stopping a process nobody promised to
      * restart is the failure mode this exists to prevent. */
     struct spg_machine_pause_ledger *pause_ledger;
+    /* Phase 7: the snapshot to install once an action has executed, for
+     * scripted cases where the world must change deterministically. Null on a
+     * live run, which re-samples the host instead. */
+    const struct spg_machine_state *machine_after;
+    bool                            refresh_machine;
 };
 
 struct spg_agent_run_config {

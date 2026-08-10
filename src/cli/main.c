@@ -2985,9 +2985,10 @@ static enum spg_status eval_run_suite(const char                 *suite_path,
         /* #64: the scenario is a machine state. Reading it from a file rather
          * than sampling the host is what makes a diagnosis case reproducible
          * on a laptop with no Pi attached. */
-        static struct spg_machine_state case_machine;
-        char                            machine_path[CLI_PATH_MAX];
-        bool                            has_machine =
+        static struct spg_machine_state        case_machine;
+        static struct spg_machine_pause_ledger case_pause_ledger;
+        char                                   machine_path[CLI_PATH_MAX];
+        bool                                   has_machine =
             eval_str(nod, c, suite_text.n, suite_text.data, "machine",
                      machine_path, sizeof machine_path);
         if (has_machine) {
@@ -3016,6 +3017,60 @@ static enum spg_status eval_run_suite(const char                 *suite_path,
             if (spg_machine_state_render(&case_machine, sizeof block, block,
                                          &block_n) == SPG_OK) {
                 report->case_ctx_bytes[case_idx] = block_n - 1u;
+            }
+        }
+        /* Phase 7 (#67): what the machine looks like once an action has run.
+         * A closed loop is only a loop if the next tick sees the consequence,
+         * and a scripted case needs that consequence to be deterministic. */
+        static struct spg_machine_state case_machine_after;
+        char                            machine_after_path[CLI_PATH_MAX];
+        const bool                      has_machine_after =
+            eval_str(nod, c, suite_text.n, suite_text.data, "machine_after",
+                     machine_after_path, sizeof machine_after_path);
+        if (has_machine_after) {
+            struct file_buffer mtext = {};
+            if (read_file(machine_after_path, &mtext) != SPG_OK) {
+                fprintf(stderr, "eval: cannot read machine_after %s\n",
+                        machine_after_path);
+                rc = SPG_E_IO;
+                goto done;
+            }
+            const enum spg_status ms = spg_machine_state_parse(
+                mtext.n, mtext.data, ws.token_capacity, ws.tokens,
+                ws.node_capacity, ws.nodes, &case_machine_after);
+            free_file_buffer(&mtext);
+            if (ms != SPG_OK) {
+                fprintf(stderr, "eval: invalid machine_after %s: %s\n",
+                        machine_after_path, spg_status_to_string(ms));
+                rc = ms;
+                goto done;
+            }
+        }
+        /* Without a profile nothing is managed and every machine action is
+         * denied — correct as a default, useless as a scenario. */
+        static struct spg_process_profile case_profile;
+        char                              profile_case_path[CLI_PATH_MAX];
+        const bool                        has_case_profile =
+            eval_str(nod, c, suite_text.n, suite_text.data, "process_profile",
+                     profile_case_path, sizeof profile_case_path);
+        if (has_case_profile) {
+            struct file_buffer ptext = {};
+            if (read_file(profile_case_path, &ptext) != SPG_OK) {
+                fprintf(stderr, "eval: cannot read process_profile %s\n",
+                        profile_case_path);
+                rc = SPG_E_IO;
+                goto done;
+            }
+            struct spg_process_profile_error perr = {};
+            const enum spg_status            ps   = spg_process_profile_load(
+                ptext.n, ptext.data, ws.token_capacity, ws.tokens,
+                ws.node_capacity, ws.nodes, &case_profile, &perr);
+            free_file_buffer(&ptext);
+            if (ps != SPG_OK) {
+                fprintf(stderr, "eval: invalid process_profile %s: %s\n",
+                        profile_case_path, spg_status_to_string(ps));
+                rc = ps;
+                goto done;
             }
         }
         char       expected_diag[32] = {};
@@ -3143,6 +3198,14 @@ static enum spg_status eval_run_suite(const char                 *suite_path,
                     if (has_machine) {
                         gin.machine = &case_machine;
                     }
+                    if (has_machine_after) {
+                        gin.machine_after   = &case_machine_after;
+                        gin.refresh_machine = true;
+                    }
+                    if (has_case_profile) {
+                        gin.profile      = &case_profile;
+                        gin.pause_ledger = &case_pause_ledger;
+                    }
                     if (has_fixture) {
                         if (!eval_sandbox_prepare(&sandbox_state, name, s,
                                                   fixture, store)) {
@@ -3215,6 +3278,14 @@ static enum spg_status eval_run_suite(const char                 *suite_path,
                 }
                 if (has_machine) {
                     cin.machine = &case_machine;
+                }
+                if (has_machine_after) {
+                    cin.machine_after   = &case_machine_after;
+                    cin.refresh_machine = true;
+                }
+                if (has_case_profile) {
+                    cin.profile      = &case_profile;
+                    cin.pause_ledger = &case_pause_ledger;
                 }
                 if (has_fixture) {
                     if (!eval_sandbox_prepare(&sandbox_state, name, s, fixture,

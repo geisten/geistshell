@@ -1,0 +1,2 @@
+(recommend (kind machine_pause_process) (capability "machine.process.pause") (target "batch_job") (cost 1) (uses_network false) (confidence_bp 9000) (reason "batch_pressure batch_job"))
+(recommend (kind finish) (reason "inconclusive"))
