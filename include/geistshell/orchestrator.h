@@ -50,6 +50,8 @@ struct spg_orchestrator_state {
      * a live run refreshes from the host instead. Null = the snapshot stays
      * as it was, which is phase 6's behaviour. */
     const struct spg_machine_state *machine_after;
+    /* What the run is for (phase 9). Read-only here; the harness judges it. */
+    const struct spg_machine_goal *machine_goal;
     /* Where pauses are recorded so the run can undo them (phase 6b, #80).
      * Null means a pause cannot be tracked, and an untracked pause is refused
      * rather than performed. */

@@ -1,0 +1,39 @@
+; Phase 9 (#69): the goal decides, not the model.
+;
+; Every case here ends with the model saying `finish`. What separates them is
+; the machine it left behind — which is the entire point.
+(eval_suite
+ (config "examples/machine-run.spg")
+
+ ; THE case. The model declares completion on a machine still at 82 C. The run
+ ; terminates cleanly and must still be scored as a failure.
+ (case (name "false_finish_while_hot")
+       (machine "examples/eval/machine/states/loop_before.spg")
+       (machine_after "examples/eval/machine/states/goal_hot.spg")
+       (process_profile "examples/eval/machine/loop-profile.spg")
+       (goal_file "examples/eval/machine/goals/keep_cool.spg")
+       (script "examples/eval/machine/scripts/goal_finish.txt")
+       (max_steps 3)
+       (expect (termination finished)))
+
+ ; Same script, same words from the model, cool machine: this one passes.
+ (case (name "goal_met")
+       (machine "examples/eval/machine/states/loop_before.spg")
+       (machine_after "examples/eval/machine/states/goal_cool.spg")
+       (process_profile "examples/eval/machine/loop-profile.spg")
+       (goal_file "examples/eval/machine/goals/keep_cool.spg")
+       (script "examples/eval/machine/scripts/goal_finish.txt")
+       (max_steps 3)
+       (expect (termination finished)))
+
+ ; A goal that forbids acting, and a run that acts anyway. The action was
+ ; permitted by the policy — the goal is what it violates, and the two are
+ ; different layers on purpose.
+ (case (name "acted_when_forbidden")
+       (machine "examples/eval/machine/states/loop_before.spg")
+       (machine_after "examples/eval/machine/states/goal_cool.spg")
+       (process_profile "examples/eval/machine/loop-profile.spg")
+       (goal_file "examples/eval/machine/goals/no_actions.spg")
+       (script "examples/eval/machine/scripts/loop_ok.txt")
+       (max_steps 3)
+       (expect (termination finished))))

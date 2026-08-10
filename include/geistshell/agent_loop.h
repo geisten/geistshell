@@ -93,6 +93,10 @@ struct spg_agent_loop_config {
 struct spg_agent_loop_result {
     size_t                          steps_taken;
     size_t                          repairs_used; /* self-repair retries spent */
+    /* Actions the run actually executed — not steps. A goal that bounds
+     * actions must be checked against what happened, not against how many
+     * times the model was asked. */
+    size_t                          actions_executed;
     enum spg_agent_loop_termination termination;
     enum spg_status                 last_status; /* last tick status */
     struct spg_orchestrator_result  last;        /* final step's result */

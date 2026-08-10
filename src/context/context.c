@@ -697,6 +697,18 @@ static void render_observation(const struct spg_context_sources *sources,
  * buffer can never truncate. */
 static void render_machine(const struct spg_context_sources *sources,
                            struct render_state              *state) {
+    /* Goal first: what the run is for, then what it is looking at. A model
+     * that reads the constraints after the numbers has to re-read the
+     * numbers. */
+    if (sources->machine_goal != nullptr && sources->machine_goal->present) {
+        char   goal_block[512];
+        size_t goal_n = 0u;
+        if (spg_machine_goal_render(sources->machine_goal, sizeof goal_block,
+                                    goal_block, &goal_n) == SPG_OK) {
+            append_cstr(state, goal_block);
+            append_cstr(state, "\n");
+        }
+    }
     if (sources->machine == nullptr) {
         return;
     }

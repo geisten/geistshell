@@ -41,6 +41,8 @@ struct spg_eval_case_result {
     enum spg_eval_outcome           outcome;
     enum spg_agent_loop_termination termination; /* actual */
     size_t                          steps_taken;
+    /* Actions the run executed, for a goal that bounds them (phase 9). */
+    size_t                          actions_executed;
     size_t                          repairs_used;
     enum spg_status                 status; /* run status (SPG_OK unless error) */
     /* Concrete failure signal from the final tick, so reflection can distil a

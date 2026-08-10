@@ -1,0 +1,8 @@
+; Keep the machine below 70 C, keep the critical service alive, and do it in at
+; most three actions. Every number here is checked against the OBSERVED final
+; state — the model reading this cannot argue with it.
+(machine-goal
+  (max-temperature-mc 70000)
+  (min-critical-service-health-bp 9500)
+  (prefer-min-energy true)
+  (max-actions 3))

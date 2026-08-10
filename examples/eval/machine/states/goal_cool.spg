@@ -1,0 +1,5 @@
+; Cool, and the critical service is running: the goal is met.
+(machine-state (cpu-load-bp 1500) (temperature-mc 58000)
+ (memory-total-bytes 4245815296) (memory-used-bytes 1000000000)
+ (process (id "critical_app") (role critical) (cpu-bp 1200) (rss-bytes 52428800))
+ (process (id "batch_job") (role batch) (cpu-bp 0) (rss-bytes 104857600)))

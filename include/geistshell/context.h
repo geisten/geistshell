@@ -3,6 +3,7 @@
 
 #include "geistshell/graph.h"
 #include "geistshell/journal.h"
+#include "geistshell/machine_goal.h"
 #include "geistshell/machine_state.h"
 #include "geistshell/memory.h"
 #include "geistshell/policy.h"
@@ -50,6 +51,10 @@ struct spg_context_sources {
      * Null = none, which is the default and keeps the context byte-identical
      * to before this existed — the phase-0 journal freeze depends on that. */
     const struct spg_machine_state *machine;
+    /* Optional goal, rendered as (machine-goal ...) right before the state so
+     * the model reads what the run is FOR before what it is looking at. Null =
+     * no goal, the default, and the context is unchanged. */
+    const struct spg_machine_goal *machine_goal;
     /* Optional standing directive (a learned lesson) rendered prominently as
      * (directive "...") every step — a stronger channel than the mind-palace
      * index for steering a small model's behaviour (geistshell#40 follow-up).

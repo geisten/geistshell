@@ -1886,7 +1886,7 @@ static int agent_command(int argc, char **argv) {
     bool     with_machine  = false; /* roadmap phase 3: (machine-state ...) */
     /* Declared up here because every early `goto done` must find it defined —
      * the cleanup path releases it. */
-    int         machine_lock = -1;
+    int machine_lock = -1;
     /* Milliseconds to let the machine settle before re-observing. Default 0
      * keeps a scripted run synchronous; a live experiment needs enough for the
      * counters to reflect its own action. */
@@ -2526,8 +2526,11 @@ struct eval_run_report {
      * action", and those want opposite fixes. */
     size_t case_parsed[EVAL_MAX_CASES];
     size_t case_gated[EVAL_MAX_CASES];
-    size_t parsed; /* runs whose form was accepted        */
-    size_t gated;  /* ... and the policy gate allowed it  */
+    /* Phase 9: the objective verdict per case, reported alongside the outcome
+     * so a reader can see WHY a run that finished cleanly still failed. */
+    enum spg_goal_verdict goal_verdicts[EVAL_MAX_CASES];
+    size_t                parsed; /* runs whose form was accepted        */
+    size_t                gated;  /* ... and the policy gate allowed it  */
 
     /* #64 diagnosis metrics. A diagnosis case asks one question — what is
      * wrong — so a bare pass rate hides the two failures that matter: naming
@@ -3061,6 +3064,35 @@ static enum spg_status eval_run_suite(const char                 *suite_path,
                 goto done;
             }
         }
+        /* Phase 9 (#69): what the run is for. The model reads it, and the
+         * harness checks it against the machine afterwards — those are two
+         * different things and only the second decides the verdict. */
+        static struct spg_machine_goal case_machine_goal;
+        char                           goal_path[CLI_PATH_MAX];
+        const bool                     has_goal_file =
+            eval_str(nod, c, suite_text.n, suite_text.data, "goal_file",
+                     goal_path, sizeof goal_path);
+        if (has_goal_file) {
+            struct file_buffer gtext = {};
+            if (read_file(goal_path, &gtext) != SPG_OK) {
+                fprintf(stderr, "eval: cannot read goal_file %s\n", goal_path);
+                rc = SPG_E_IO;
+                goto done;
+            }
+            const enum spg_status gs = spg_machine_goal_load(
+                gtext.n, gtext.data, ws.token_capacity, ws.tokens,
+                ws.node_capacity, ws.nodes, &case_machine_goal);
+            free_file_buffer(&gtext);
+            if (gs != SPG_OK) {
+                fprintf(stderr, "eval: invalid goal_file %s: %s\n", goal_path,
+                        spg_status_to_string(gs));
+                rc = gs;
+                goto done;
+            }
+        } else {
+            case_machine_goal = (struct spg_machine_goal){};
+        }
+
         /* Without a profile nothing is managed and every machine action is
          * denied — correct as a default, useless as a scenario. */
         static struct spg_process_profile case_profile;
@@ -3221,6 +3253,9 @@ static enum spg_status eval_run_suite(const char                 *suite_path,
                         gin.profile      = &case_profile;
                         gin.pause_ledger = &case_pause_ledger;
                     }
+                    if (has_goal_file) {
+                        gin.machine_goal = &case_machine_goal;
+                    }
                     if (has_fixture) {
                         if (!eval_sandbox_prepare(&sandbox_state, name, s,
                                                   fixture, store)) {
@@ -3302,6 +3337,9 @@ static enum spg_status eval_run_suite(const char                 *suite_path,
                     cin.profile      = &case_profile;
                     cin.pause_ledger = &case_pause_ledger;
                 }
+                if (has_goal_file) {
+                    cin.machine_goal = &case_machine_goal;
+                }
                 if (has_fixture) {
                     if (!eval_sandbox_prepare(&sandbox_state, name, s, fixture,
                                               store)) {
@@ -3337,6 +3375,28 @@ static enum spg_status eval_run_suite(const char                 *suite_path,
                         last.outcome = SPG_EVAL_FAIL_OBSERVATION;
                     }
                 }
+                /* Phase 9: the goal decides, not the model. A run that
+                 * emitted `finish` on a machine that still violates its
+                 * constraints has not succeeded — and the objective check has
+                 * to be able to OVERRULE a pass, or it is decoration. */
+                if (has_goal_file) {
+                    const struct spg_machine_state *observed =
+                        has_machine_after ? &case_machine_after
+                        : has_machine     ? &case_machine
+                                          : nullptr;
+                    struct spg_goal_evaluation ge = {};
+                    if (observed != nullptr &&
+                        spg_machine_goal_evaluate(&case_machine_goal, observed,
+                                                  r.actions_executed,
+                                                  &ge) == SPG_OK) {
+                        report->goal_verdicts[case_idx] = ge.verdict;
+                        if (ge.verdict != SPG_GOAL_SATISFIED &&
+                            r.outcome == SPG_EVAL_PASS) {
+                            r.outcome    = SPG_EVAL_FAIL_OBSERVATION;
+                            last.outcome = SPG_EVAL_FAIL_OBSERVATION;
+                        }
+                    }
+                }
                 if (r.outcome == SPG_EVAL_PASS) {
                     passed_in_case += 1u;
                     report->passed += 1u;
@@ -3369,10 +3429,12 @@ static void eval_print_report(const char                   *suite_path,
     for (size_t i = 0u; i < report->ncases; i += 1u) {
         const struct spg_eval_case_result *r = &report->results[i];
         printf("{\"name\":\"%s\",\"outcome\":\"%s\",\"termination\":\"%s\","
-               "\"steps\":%zu,\"repairs\":%zu",
+               "\"steps\":%zu,\"actions\":%zu,\"goal\":\"%s\",\"repairs\":%zu",
                report->names[i], spg_eval_outcome_to_string(r->outcome),
                spg_agent_loop_termination_to_string(r->termination),
-               r->steps_taken, r->repairs_used);
+               r->steps_taken, r->actions_executed,
+               spg_goal_verdict_to_string(report->goal_verdicts[i]),
+               r->repairs_used);
         /* With --samples N>1, aggregate k-of-N; N==1 stays byte-identical. */
         if (report->runs[i] > 1u) {
             printf(",\"runs\":%zu,\"passed\":%zu", report->runs[i],
