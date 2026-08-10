@@ -179,6 +179,7 @@ static bool kind_fields_match(const struct spg_recommendation *out) {
                !out->has_body;
     case SPG_ACTION_MACHINE_PAUSE:
     case SPG_ACTION_MACHINE_RESUME:
+    case SPG_ACTION_MACHINE_FAN:
         /* A machine action names a target and nothing else. No command field:
          * the whole point of a typed action is that the model cannot hand the
          * executor a string to run. */

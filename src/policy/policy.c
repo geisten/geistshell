@@ -126,6 +126,8 @@ const char *spg_action_kind_to_string(const enum spg_action_kind kind) {
         return "machine_pause_process";
     case SPG_ACTION_MACHINE_RESUME:
         return "machine_resume_process";
+    case SPG_ACTION_MACHINE_FAN:
+        return "machine_set_fan";
     case SPG_ACTION_FINISH:
         return "finish";
     }
