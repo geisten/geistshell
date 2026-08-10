@@ -92,6 +92,46 @@ static bool identity_still_matches(const uint64_t pid,
 }
 #endif
 
+/* Ledger bookkeeping. A pause that cannot be recorded is not performed: the
+ * alternative is a stopped process nobody owes a resume for. */
+static bool ledger_remember(struct spg_machine_pause_ledger *ledger,
+                            const struct spg_process_sample *p) {
+    if (ledger == nullptr) {
+        return false;
+    }
+    for (size_t i = 0u; i < ledger->count; i += 1u) {
+        if (ledger->entries[i].pid == p->pid &&
+            ledger->entries[i].start_identity == p->start_identity) {
+            return true; /* pausing twice still owes exactly one resume */
+        }
+    }
+    if (ledger->count >= SPG_MACHINE_MAX_PAUSED) {
+        return false;
+    }
+    struct spg_machine_paused_entry *e = &ledger->entries[ledger->count];
+    e->pid                             = p->pid;
+    e->start_identity                  = p->start_identity;
+    memcpy(e->profile_id, p->profile_id, SPG_PROCESS_ID_CAP);
+    e->profile_id[SPG_PROCESS_ID_CAP - 1u] = '\0';
+    ledger->count += 1u;
+    return true;
+}
+
+static void ledger_forget(struct spg_machine_pause_ledger *ledger,
+                          const uint64_t pid, const uint64_t start_identity) {
+    if (ledger == nullptr) {
+        return;
+    }
+    for (size_t i = 0u; i < ledger->count; i += 1u) {
+        if (ledger->entries[i].pid == pid &&
+            ledger->entries[i].start_identity == start_identity) {
+            ledger->entries[i] = ledger->entries[ledger->count - 1u];
+            ledger->count -= 1u;
+            return;
+        }
+    }
+}
+
 static enum spg_machine_exec_outcome
 send_signal(const uint64_t pid, const uint64_t start_identity,
             const enum spg_action_kind kind) {
@@ -144,6 +184,10 @@ journal_action(const struct spg_machine_executor_state  *state,
     (void)spg_sexpr_writer_append_text(&w, target);
     (void)spg_sexpr_writer_append_text(&w, "\") (pid ");
     (void)spg_sexpr_writer_append_u64(&w, result->pid);
+    /* Recorded so a later run can re-validate before resuming: recovery would
+     * otherwise have only a pid, and a pid alone is not an identity. */
+    (void)spg_sexpr_writer_append_text(&w, ") (identity ");
+    (void)spg_sexpr_writer_append_u64(&w, result->identity);
     (void)spg_sexpr_writer_append_text(&w, ") (outcome ");
     (void)spg_sexpr_writer_append_text(
         &w, spg_machine_exec_outcome_to_string(result->outcome));
@@ -187,9 +231,26 @@ enum spg_status spg_machine_executor_step(
     } else if (!config->execution_enabled) {
         result->pid     = p->pid;
         result->outcome = SPG_MACHINE_EXEC_UNSUPPORTED;
+    } else if (kind == SPG_ACTION_MACHINE_PAUSE &&
+               !ledger_remember(state->ledger, p)) {
+        /* No room to record it, or nowhere to record it at all. Stopping a
+         * process we could not promise to restart is exactly the outcome this
+         * phase exists to prevent, so the pause does not happen. */
+        result->pid      = p->pid;
+        result->identity = p->start_identity;
+        result->outcome  = SPG_MACHINE_EXEC_REFUSED;
     } else {
-        result->pid     = p->pid;
-        result->outcome = send_signal(p->pid, p->start_identity, kind);
+        result->pid      = p->pid;
+        result->identity = p->start_identity;
+        result->outcome  = send_signal(p->pid, p->start_identity, kind);
+        if (kind == SPG_ACTION_MACHINE_PAUSE &&
+            result->outcome != SPG_MACHINE_EXEC_OK) {
+            ledger_forget(state->ledger, p->pid, p->start_identity);
+        }
+        if (kind == SPG_ACTION_MACHINE_RESUME &&
+            result->outcome == SPG_MACHINE_EXEC_OK) {
+            ledger_forget(state->ledger, p->pid, p->start_identity);
+        }
     }
     journal_action(state, config, kind, target, workspace, result);
     return SPG_OK;
@@ -217,6 +278,191 @@ enum spg_status spg_machine_executor_run(
         if (results[i].outcome != SPG_MACHINE_EXEC_OK) {
             break; /* a batch stops at the first refusal, so a later action
                     * cannot depend on an effect that never happened */
+        }
+    }
+    return SPG_OK;
+}
+
+/* --- phase 6b: nothing stays paused ------------------------------------- */
+
+/* Resume one entry directly, without a snapshot: at cleanup time the snapshot
+ * is stale by definition, and the ledger is the record of what we owe. */
+static enum spg_machine_exec_outcome
+resume_entry(const struct spg_machine_paused_entry       *entry,
+             const struct spg_machine_executor_state     *state,
+             const struct spg_machine_executor_config    *config,
+             const struct spg_machine_executor_workspace *workspace,
+             struct spg_machine_executor_result          *result) {
+    *result = (struct spg_machine_executor_result){
+        .pid = entry->pid, .identity = entry->start_identity};
+    result->outcome = config->execution_enabled
+                          ? send_signal(entry->pid, entry->start_identity,
+                                        SPG_ACTION_MACHINE_RESUME)
+                          : SPG_MACHINE_EXEC_UNSUPPORTED;
+    journal_action(state, config, SPG_ACTION_MACHINE_RESUME, entry->profile_id,
+                   workspace, result);
+    return result->outcome;
+}
+
+enum spg_status spg_machine_ledger_release(
+    struct spg_machine_pause_ledger             *ledger,
+    const struct spg_machine_executor_state     *state,
+    const struct spg_machine_executor_config    *config,
+    const struct spg_machine_executor_workspace *workspace,
+    size_t                                      *out_resumed) {
+    if (state == nullptr || config == nullptr || workspace == nullptr ||
+        workspace->payload == nullptr || workspace->payload_capacity == 0u ||
+        out_resumed == nullptr) {
+        return SPG_E_INVALID_ARG;
+    }
+    *out_resumed = 0u;
+    if (ledger == nullptr) {
+        return SPG_OK;
+    }
+    /* Every entry is attempted even if one fails: a process that exited on its
+     * own must not stop us from restarting the next one. */
+    for (size_t i = 0u; i < ledger->count; i += 1u) {
+        struct spg_machine_executor_result r = {};
+        if (resume_entry(&ledger->entries[i], state, config, workspace, &r) ==
+            SPG_MACHINE_EXEC_OK) {
+            *out_resumed += 1u;
+        }
+    }
+    ledger->count = 0u;
+    return SPG_OK;
+}
+
+/* --- recovery from a journal -------------------------------------------- */
+
+/* One pid's outstanding debt while walking the journal. */
+struct pending_pause {
+    uint64_t pid;
+    uint64_t identity;
+    char     profile_id[SPG_PROCESS_ID_CAP];
+};
+
+static void pending_add(struct pending_pause pending[static 1], size_t *count,
+                        const struct pending_pause *entry) {
+    for (size_t i = 0u; i < *count; i += 1u) {
+        if (pending[i].pid == entry->pid &&
+            pending[i].identity == entry->identity) {
+            return;
+        }
+    }
+    if (*count < SPG_MACHINE_MAX_PAUSED) {
+        pending[*count] = *entry;
+        *count += 1u;
+    }
+}
+
+static void pending_remove(struct pending_pause pending[static 1],
+                           size_t *count, const uint64_t pid,
+                           const uint64_t identity) {
+    for (size_t i = 0u; i < *count; i += 1u) {
+        if (pending[i].pid == pid && pending[i].identity == identity) {
+            pending[i] = pending[*count - 1u];
+            *count -= 1u;
+            return;
+        }
+    }
+}
+
+/* Pull one unsigned field out of a (machine_action ...) payload. The payload is
+ * written by journal_action above, so this is parsing our own format — a full
+ * s-expression parse would need a node arena for no gain. */
+static bool payload_u64(const size_t n, const char text[], const char *field,
+                        uint64_t *out) {
+    char needle[32];
+    if (snprintf(needle, sizeof needle, "(%s ", field) < 0) {
+        return false;
+    }
+    const size_t needle_n = strlen(needle);
+    for (size_t i = 0u; i + needle_n < n; i += 1u) {
+        if (memcmp(text + i, needle, needle_n) != 0) {
+            continue;
+        }
+        size_t   j     = i + needle_n;
+        uint64_t value = 0u;
+        bool     any   = false;
+        while (j < n && text[j] >= '0' && text[j] <= '9') {
+            if (value > (UINT64_MAX - (uint64_t)(text[j] - '0')) / 10u) {
+                return false;
+            }
+            value = value * 10u + (uint64_t)(text[j] - '0');
+            any   = true;
+            j += 1u;
+        }
+        if (any) {
+            *out = value;
+            return true;
+        }
+    }
+    return false;
+}
+
+static bool payload_has(const size_t n, const char text[], const char *what) {
+    const size_t w = strlen(what);
+    for (size_t i = 0u; i + w <= n; i += 1u) {
+        if (memcmp(text + i, what, w) == 0) {
+            return true;
+        }
+    }
+    return false;
+}
+
+enum spg_status spg_machine_recover_journal(
+    const char *journal_path, const struct spg_machine_executor_config *config,
+    const struct spg_machine_executor_workspace *workspace,
+    struct spg_journal_writer *journal, size_t *out_resumed) {
+    if (journal_path == nullptr || config == nullptr || workspace == nullptr ||
+        workspace->payload == nullptr || out_resumed == nullptr) {
+        return SPG_E_INVALID_ARG;
+    }
+    *out_resumed = 0u;
+
+    struct spg_journal_reader reader = {};
+    if (spg_journal_reader_open(&reader, journal_path) != SPG_OK) {
+        return SPG_OK; /* no journal, nothing owed */
+    }
+    struct pending_pause pending[SPG_MACHINE_MAX_PAUSED] = {};
+    size_t               pending_count                   = 0u;
+
+    struct spg_journal_record record = {};
+    uint8_t                   raw[1024];
+    while (spg_journal_reader_next(&reader, sizeof raw, raw, &record) ==
+           SPG_OK) {
+        const char  *payload   = (const char *)raw;
+        const size_t payload_n = record.payload_used;
+        if (record.header.event_kind != (uint32_t)SPG_JOURNAL_EVENT_ACTION ||
+            !payload_has(payload_n, payload, "(machine_action ")) {
+            continue;
+        }
+        if (!payload_has(payload_n, payload, "(outcome ok)")) {
+            continue; /* it never landed, so nothing is owed */
+        }
+        struct pending_pause entry = {};
+        if (!payload_u64(payload_n, payload, "pid", &entry.pid) ||
+            !payload_u64(payload_n, payload, "identity", &entry.identity)) {
+            continue;
+        }
+        if (payload_has(payload_n, payload, "machine_pause_process")) {
+            pending_add(pending, &pending_count, &entry);
+        } else if (payload_has(payload_n, payload, "machine_resume_process")) {
+            pending_remove(pending, &pending_count, entry.pid, entry.identity);
+        }
+    }
+    (void)spg_journal_reader_close(&reader);
+
+    const struct spg_machine_executor_state state = {.journal = journal};
+    for (size_t i = 0u; i < pending_count; i += 1u) {
+        struct spg_machine_executor_result r = {};
+        struct spg_machine_paused_entry    e = {
+            .pid = pending[i].pid, .start_identity = pending[i].identity};
+        /* The id is not needed to signal, only to journal what was restored. */
+        memcpy(e.profile_id, "recovered", sizeof "recovered");
+        if (resume_entry(&e, &state, config, workspace, &r) ==
+            SPG_MACHINE_EXEC_OK) {
+            *out_resumed += 1u;
         }
     }
     return SPG_OK;

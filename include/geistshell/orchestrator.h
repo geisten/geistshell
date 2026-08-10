@@ -42,6 +42,10 @@ struct spg_orchestrator_state {
      * Without a profile every machine action is denied as unmanaged. */
     const struct spg_machine_state   *machine;
     const struct spg_process_profile *profile;
+    /* Where pauses are recorded so the run can undo them (phase 6b, #80).
+     * Null means a pause cannot be tracked, and an untracked pause is refused
+     * rather than performed. */
+    struct spg_machine_pause_ledger *pause_ledger;
     struct spg_model_adapter  *model;
     struct spg_sim_config     *sim;
     struct spg_mem_store      *store;

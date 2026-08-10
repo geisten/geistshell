@@ -1,12 +1,12 @@
-# Actions — Phase 6
+# Actions — Phasen 6 und 6b
 
 Der Agent kann eine **reversible** Aktion ausführen, ohne Governance oder
 Safety zu umgehen: `pause` und `resume` auf Prozessen, die das Profil explizit
 verwaltet.
 
-Ticket: geisten/geistshell#66. Voraussetzungen: [Processes.md](Processes.md),
-[Context.md](Context.md). Offene Folgelücke: **#80** — pausierte Prozesse
-garantiert wieder freigeben.
+Tickets: geisten/geistshell#66 (die Aktion) und #80 (die Garantie, dass nichts
+pausiert bleibt). Voraussetzungen: [Processes.md](Processes.md),
+[Context.md](Context.md).
 
 ## Kein `local_shell`
 
@@ -87,7 +87,7 @@ Journal:
 
 ```
 (machine_action (kind machine_pause_process) (target "batch_job")
-                (pid 4711) (outcome ok))
+                (pid 4711) (identity 987654) (outcome ok))
 ```
 
 Auch ein `refused` steht dort. Eine Ablehnung ohne Spur ist eine Ablehnung, die
@@ -130,9 +130,68 @@ Ohne `--process-profile` ist nichts gemanagt und jede Machine Action wird
 abgelehnt. Ohne `--allow-exec` erreicht sie den Executor, der `unsupported`
 meldet, statt zu signalisieren.
 
+## Nichts bleibt pausiert (Phase 6b, #80)
+
+Eine Pause ist nur reversibel, solange sich jemand an sie erinnert. Ohne das
+Folgende hinterlässt ein Lauf, der nach `SIGSTOP` stirbt, einen dauerhaft
+gestoppten Prozess — der einzige Weg, auf dem diese Runtime bleibenden Schaden
+anrichtet, ohne dass eine Policy verletzt wurde.
+
+### Erste Linie: das Ledger
+
+Jede erfolgreiche Pause wird mit PID **und** Startzeit in einem Ledger fester
+Größe vermerkt. Am Ende **jedes** Laufs — finish, Fehler, max steps, Budget,
+Policy-Deny, Interrupt — wird alles darin wieder freigegeben.
+
+**Eine Pause, die nicht vermerkt werden kann, findet nicht statt.** Kein Ledger
+oder ein volles Ledger ⇒ `refused`, bevor das Signal gesendet wird. Die
+Alternative wäre ein gestoppter Prozess, dem niemand ein Resume schuldet.
+
+`SIGINT`/`SIGTERM` setzen nur ein `volatile sig_atomic_t`-Flag. Der Handler
+gibt selbst nichts frei — das hieße, aus einem Signal-Handler zu journalen. Die
+Freigabe macht der normale Aufräumpfad, und `SA_RESTART` ist bewusst **nicht**
+gesetzt, damit ein blockierender Read mit `EINTR` zurückkommt, statt zu warten,
+während ein Prozess gestoppt bleibt.
+
+### Zweite Linie: Recovery aus dem Journal
+
+`SIGKILL` und Stromausfall sind nicht abfangbar; das Ledger stirbt mit dem
+Prozess. Übrig bleibt das Journal. Beim nächsten Start paart
+`spg_machine_recover_journal()` Pausen mit Resumes und gibt frei, was offen
+blieb — **bevor** der neue Lauf beobachtet, damit der Snapshot nicht einen
+Zustand zeigt, den wir selbst hinterlassen haben.
+
+Deshalb steht die Startzeit im Journal-Payload: eine PID allein ist keine
+Identität, und Recovery muss einen wiederverwendeten PID überspringen statt ihn
+zu wecken.
+
+Recovery ist **wiederholbar**, nicht idempotent im engeren Sinn: ein `SIGCONT`
+auf einen laufenden Prozess ist harmlos. Genau das macht es sicher, sie bei
+jedem Start bedingungslos auszuführen.
+
+### Verbleibende Lücke, benannt
+
+Zwischen `SIGKILL` und dem nächsten Start bleibt der Prozess gestoppt. Dagegen
+hilft nur ein externer Watchdog, und der ist bewusst nicht gebaut — er wäre ein
+zweiter Lebenszyklus mit eigenen Fehlermodi für ein Zeitfenster, das ein
+Neustart schließt.
+
+Ebenfalls offen: zwei parallele Läufe teilen sich das Journal nicht. Recovery
+eines Laufs sieht die Pausen des anderen und könnte sie freigeben. Für einen
+Agenten pro Maschine ist das kein Problem; für mehrere wäre es eines.
+
+### Auf Hardware verifiziert
+
+Pi 5. `machine_action_probe` pausiert ein Kind mit aktivem Journal, lässt das
+Ledger fallen (die simulierte Katastrophe), ruft Recovery — und das Kind läuft
+wieder. Der Absturz wird durch Weglassen der Freigabe simuliert, nicht durch
+Töten des Agenten mitten im Signal: das wäre ein Race, und ein Race im Test ist
+ein Flake.
+
+`test_cli_machine_recovery.sh` prüft die erste Linie über die CLI: nach einem
+Lauf, der pausiert hat, meldet er `released=1` und das Kind läuft.
+
 ## Was Phase 6 nicht tut
 
 Kein Closed Loop (#67) — der Agent beobachtet die Wirkung seiner Aktion noch
-nicht, weil der Snapshot einmal pro Lauf entsteht. Kein `set_nice`. Und
-insbesondere **keine Garantie, dass ein pausierter Prozess wieder freigegeben
-wird**, wenn der Run stirbt: das ist #80 und sollte vor #67 kommen.
+nicht, weil der Snapshot einmal pro Lauf entsteht. Kein `set_nice`.

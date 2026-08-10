@@ -251,13 +251,76 @@ static int test_grammar_rejects_command(void) {
     return parse_rec(no_target, &rec) ? 1 : 0;
 }
 
+/* Phase 6b (#80): a pause that cannot be recorded does not happen. Stopping a
+ * process nobody owes a resume for is the one way this runtime leaves lasting
+ * damage without any policy being violated. */
+static int test_untracked_pause_is_refused(void) {
+    const struct spg_machine_state           s = two_processes();
+    char                                     payload[512];
+    const struct spg_machine_executor_state  st  = {.machine = &s,
+                                                    .ledger  = nullptr};
+    const struct spg_machine_executor_config cfg = {.actor_id          = 1u,
+                                                    .execution_enabled = true};
+    const struct spg_machine_executor_workspace ws = {
+        .payload_capacity = sizeof payload, .payload = payload};
+    struct spg_machine_executor_result r = {};
+    if (spg_machine_executor_step(&st, &cfg, SPG_ACTION_MACHINE_PAUSE,
+                                  "batch_job", &ws, &r) != SPG_OK ||
+        r.outcome != SPG_MACHINE_EXEC_REFUSED) {
+        return 1;
+    }
+    /* A full ledger is the same situation: no room to record, so no pause. */
+    struct spg_machine_pause_ledger full = {.count = SPG_MACHINE_MAX_PAUSED};
+    const struct spg_machine_executor_state st2 = {.machine = &s,
+                                                   .ledger  = &full};
+    if (spg_machine_executor_step(&st2, &cfg, SPG_ACTION_MACHINE_PAUSE,
+                                  "batch_job", &ws, &r) != SPG_OK ||
+        r.outcome != SPG_MACHINE_EXEC_REFUSED) {
+        return 1;
+    }
+    return 0;
+}
+
+/* The release must skip a pid whose identity no longer matches: resuming a
+ * stranger is worse than resuming nothing. */
+static int test_release_is_identity_checked(void) {
+    char                            payload[512];
+    struct spg_machine_pause_ledger ledger = {.count = 1u};
+    ledger.entries[0]                      = (struct spg_machine_paused_entry){
+        .pid = 999999u, .start_identity = 123u};
+    memcpy(ledger.entries[0].profile_id, "batch_job", sizeof "batch_job");
+    const struct spg_machine_executor_state  st  = {.ledger = &ledger};
+    const struct spg_machine_executor_config cfg = {.actor_id          = 1u,
+                                                    .execution_enabled = true};
+    const struct spg_machine_executor_workspace ws = {
+        .payload_capacity = sizeof payload, .payload = payload};
+    size_t resumed = 0u;
+    if (spg_machine_ledger_release(&ledger, &st, &cfg, &ws, &resumed) !=
+        SPG_OK) {
+        return 1;
+    }
+    /* Nothing resumed — that pid is not ours — and the ledger is empty either
+     * way, so a stuck entry cannot be retried forever. */
+    if (resumed != 0u || ledger.count != 0u) {
+        return 1;
+    }
+    /* A null ledger is not an error: a run that never paused owes nothing. */
+    return spg_machine_ledger_release(nullptr, &st, &cfg, &ws, &resumed) ==
+                   SPG_OK
+               ? 0
+               : 1;
+}
+
 /* --- executor ----------------------------------------------------------- */
+
+static struct spg_machine_pause_ledger test_ledger;
 
 static enum spg_machine_exec_outcome
 exec_target(const struct spg_machine_state *machine, const char *target,
             const bool enabled) {
     char                                     payload[512];
-    const struct spg_machine_executor_state  st  = {.machine = machine};
+    const struct spg_machine_executor_state  st  = {.machine = machine,
+                                                    .ledger  = &test_ledger};
     const struct spg_machine_executor_config cfg = {
         .actor_id = 1u, .execution_enabled = enabled};
     const struct spg_machine_executor_workspace ws = {
@@ -295,6 +358,9 @@ static int test_executor_refuses_dangerous_pids(void) {
     memcpy(s.processes[0].profile_id, "batch_job", sizeof "batch_job");
     s.processes[0].pid            = 1u;
     s.processes[0].start_identity = 1u;
+    /* Refused on Linux because pid 1 is off limits; refused elsewhere because
+     * there is no /proc to confirm identity with. Different reason, same
+     * answer, and the answer is what matters. */
     const enum spg_machine_exec_outcome init_outcome =
         exec_target(&s, "batch_job", true);
 #if defined(__linux__)
@@ -354,6 +420,8 @@ int main(void) {
         {"executor_refuses_dangerous_pids",
          test_executor_refuses_dangerous_pids},
         {"executor_null_args", test_executor_null_args},
+        {"untracked_pause_is_refused", test_untracked_pause_is_refused},
+        {"release_is_identity_checked", test_release_is_identity_checked},
     };
     int failures = 0;
     for (size_t i = 0u; i < sizeof cases / sizeof cases[0]; i += 1u) {

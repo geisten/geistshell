@@ -343,6 +343,7 @@ spg_orchestrator_tick(struct spg_orchestrator_state           *state,
         const struct spg_machine_executor_state machine_state = {
             .machine = state->machine,
             .journal = state->journal,
+            .ledger  = state->pause_ledger,
         };
         const struct spg_machine_executor_config machine_config = {
             .actor_id          = config->actor_id,

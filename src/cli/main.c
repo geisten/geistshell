@@ -24,6 +24,7 @@
 
 #include <errno.h>
 #include <math.h> /* isfinite: --temperature validation */
+#include <signal.h>
 #include <stdbool.h>
 #include <stdint.h>
 #include <stdio.h>
@@ -696,6 +697,29 @@ latest_result_sequence(const struct spg_orchestrator_result *result,
         return result->actor.model_input_sequence;
     }
     return fallback_sequence;
+}
+
+/* Set by SIGINT/SIGTERM and read by the cleanup path. A handler may only touch
+ * a volatile sig_atomic_t and call async-signal-safe functions; resuming
+ * processes from inside it would mean journalling from a signal handler, so the
+ * handler does the one safe thing and the normal path does the work. */
+static volatile sig_atomic_t interrupt_requested = 0;
+
+static void note_interrupt(int signum) {
+    (void)signum;
+    interrupt_requested = 1;
+}
+
+static void install_interrupt_handler(void) {
+    struct sigaction sa = {};
+    sa.sa_handler       = note_interrupt;
+    (void)sigemptyset(&sa.sa_mask);
+    /* No SA_RESTART on purpose: a blocking read should return EINTR so the run
+     * unwinds to the cleanup path instead of sitting there while a process
+     * stays stopped. */
+    sa.sa_flags = 0;
+    (void)sigaction(SIGINT, &sa, nullptr);
+    (void)sigaction(SIGTERM, &sa, nullptr);
 }
 
 static void update_run_usage(struct spg_policy_usage              *usage,
@@ -2161,6 +2185,30 @@ static int agent_command(int argc, char **argv) {
             return 2;
         }
     }
+    static struct spg_machine_pause_ledger      pause_ledger;
+    char                                        machine_payload[1024];
+    const struct spg_machine_executor_workspace release_ws = {
+        .payload_capacity = sizeof machine_payload, .payload = machine_payload};
+    if (with_machine) {
+        install_interrupt_handler();
+        /* Second line of defence first: a previous run may have been killed
+         * between a pause and its resume, and that process is still stopped
+         * right now. Recover before observing, so the snapshot this run reasons
+         * about is not one we ourselves left broken. */
+        const struct spg_machine_executor_config recover_cfg = {
+            .actor_id          = 1u,
+            .timestamp_ns      = 1u,
+            .write_journal     = false,
+            .execution_enabled = true,
+        };
+        size_t recovered = 0u;
+        if (spg_machine_recover_journal(journal_path, &recover_cfg, &release_ws,
+                                        nullptr, &recovered) == SPG_OK &&
+            recovered > 0u) {
+            printf("recovered=%zu (processes left paused by an earlier run)\n",
+                   recovered);
+        }
+    }
     if (with_machine) {
         (void)spg_machine_sample_with_processes(
             1u, nullptr, 0u, nullptr,
@@ -2184,7 +2232,8 @@ static int agent_command(int argc, char **argv) {
         /* No profile means nothing is managed, and the gate denies every
          * machine action as unmanaged. That is the right default: a run that
          * never declared what it may touch may not touch anything. */
-        .profile = profile_path != nullptr ? &profile : nullptr,
+        .profile      = profile_path != nullptr ? &profile : nullptr,
+        .pause_ledger = with_machine ? &pause_ledger : nullptr,
     };
     const struct spg_agent_run_config rcfg = {
         .max_steps   = max_steps,
@@ -2261,6 +2310,29 @@ static int agent_command(int argc, char **argv) {
     }
 
 done:
+    /* Nothing stays paused. Every path lands here — success, failure, max
+     * steps, budget, policy denial, interrupt — so the promise does not depend
+     * on how the run ended. */
+    if (with_machine) {
+        const struct spg_machine_executor_state release_state = {
+            .machine = &machine,
+            .journal = journal_open ? &journal : nullptr,
+            .ledger  = &pause_ledger,
+        };
+        const struct spg_machine_executor_config release_cfg = {
+            .actor_id          = 1u,
+            .timestamp_ns      = 1u,
+            .write_journal     = journal_open,
+            .execution_enabled = true,
+        };
+        size_t resumed = 0u;
+        (void)spg_machine_ledger_release(&pause_ledger, &release_state,
+                                         &release_cfg, &release_ws, &resumed);
+        if (resumed > 0u) {
+            printf("released=%zu%s\n", resumed,
+                   interrupt_requested ? " (interrupted)" : "");
+        }
+    }
     if (journal_open) {
         (void)spg_journal_writer_close(&journal);
     }

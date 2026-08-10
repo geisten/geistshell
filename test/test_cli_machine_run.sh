@@ -59,12 +59,23 @@ if [ "$(uname -s)" = "Linux" ]; then
         echo "test_cli_machine_run: FAIL — no successful machine_action" >&2
         exit 1
     fi
+    # Since phase 6b the run releases what it paused before it exits, so the
+    # child is running again by the time we can look. The evidence that the
+    # pause happened is the journal; the evidence that it was undone is the
+    # child's state plus the released= line.
+    case "$OUT" in
+    *released=1*) ;;
+    *)
+        echo "test_cli_machine_run: FAIL — the pause was not released" >&2
+        echo "  $OUT" >&2
+        exit 1
+        ;;
+    esac
     STATE=$(awk '{print $3}' "/proc/$CHILD/stat" 2>/dev/null || echo "?")
-    if [ "$STATE" != "T" ]; then
-        echo "test_cli_machine_run: FAIL — child is '$STATE', expected T" >&2
+    if [ "$STATE" = "T" ]; then
+        echo "test_cli_machine_run: FAIL — child left stopped after the run" >&2
         exit 1
     fi
-    kill -CONT "$CHILD"
 
     # A protected process must be refused by the policy layer, and the journal
     # must say so — "denied" alone would not distinguish it from running out of

@@ -47,6 +47,10 @@ struct spg_agent_run_inputs {
     /* Process profile for machine actions (roadmap phase 6). Null = every
      * machine action is denied as unmanaged, which is the right default. */
     const struct spg_process_profile *profile;
+    /* Ledger of pauses this run owes a resume for (phase 6b, #80). Null means
+     * machine pauses are refused: stopping a process nobody promised to
+     * restart is the failure mode this exists to prevent. */
+    struct spg_machine_pause_ledger *pause_ledger;
 };
 
 struct spg_agent_run_config {

@@ -18,8 +18,8 @@
 
 #if defined(__linux__)
 #    include <signal.h>
-#    include <time.h>
 #    include <sys/wait.h>
+#    include <time.h>
 #    include <unistd.h>
 
 static bool read_identity(const uint64_t pid, struct spg_process_sample *out) {
@@ -41,10 +41,13 @@ static char process_state(const uint64_t pid) {
     return read_identity(pid, &s) ? s.state : '?';
 }
 
+static struct spg_machine_pause_ledger probe_ledger;
+
 static enum spg_machine_exec_outcome run(const struct spg_machine_state *m,
                                          const enum spg_action_kind      kind) {
     char                                     payload[512];
-    const struct spg_machine_executor_state  st  = {.machine = m};
+    const struct spg_machine_executor_state  st  = {.machine = m,
+                                                    .ledger  = &probe_ledger};
     const struct spg_machine_executor_config cfg = {.actor_id          = 1u,
                                                     .execution_enabled = true};
     const struct spg_machine_executor_workspace ws = {
@@ -55,6 +58,106 @@ static enum spg_machine_exec_outcome run(const struct spg_machine_state *m,
         return SPG_MACHINE_EXEC_REFUSED;
     }
     return r.outcome;
+}
+
+/* Phase 6b (#80): the run dies between a pause and its resume. SIGKILL is not
+ * catchable, so the ledger dies with the process — the journal is all that is
+ * left, and the next start has to finish the job.
+ *
+ * Simulated by simply not releasing, rather than by killing an agent
+ * mid-signal: that would be a race, and a race in a test is a flake. What is
+ * under test is the recovery, not the timing of the crash. */
+static int recovery_scenario(void) {
+    const pid_t child = fork();
+    if (child < 0) {
+        return 1;
+    }
+    if (child == 0) {
+        for (;;) {
+            (void)pause();
+        }
+    }
+    struct timespec ts = {.tv_sec = 0, .tv_nsec = 100000000};
+    (void)nanosleep(&ts, nullptr);
+
+    struct spg_machine_state m = {.n_processes = 1u};
+    if (!read_identity((uint64_t)child, &m.processes[0])) {
+        (void)kill(child, SIGKILL);
+        return 1;
+    }
+    memcpy(m.processes[0].profile_id, "batch_job", sizeof "batch_job");
+
+    const char               *path   = "build/machine-probe-recovery.sgj";
+    struct spg_journal_writer writer = {};
+    (void)remove(path);
+    if (spg_journal_writer_open(&writer, path) != SPG_OK) {
+        (void)kill(child, SIGKILL);
+        return 1;
+    }
+    char                                    payload[512];
+    struct spg_machine_pause_ledger         ledger = {};
+    const struct spg_machine_executor_state st     = {
+        .machine = &m, .journal = &writer, .ledger = &ledger};
+    const struct spg_machine_executor_config cfg = {.actor_id          = 1u,
+                                                    .timestamp_ns      = 1u,
+                                                    .write_journal     = true,
+                                                    .execution_enabled = true};
+    const struct spg_machine_executor_workspace ws = {
+        .payload_capacity = sizeof payload, .payload = payload};
+    struct spg_machine_executor_result r  = {};
+    int                                rc = 0;
+
+    if (spg_machine_executor_step(&st, &cfg, SPG_ACTION_MACHINE_PAUSE,
+                                  "batch_job", &ws, &r) != SPG_OK ||
+        r.outcome != SPG_MACHINE_EXEC_OK) {
+        printf("FAIL: recovery setup could not pause\n");
+        rc = 1;
+    }
+    (void)nanosleep(&ts, nullptr);
+    if (process_state((uint64_t)child) != 'T') {
+        printf("FAIL: recovery setup left the child running\n");
+        rc = 1;
+    }
+    /* The crash: the ledger is dropped on the floor, exactly as it would be if
+     * the process had been killed. */
+    (void)spg_journal_writer_close(&writer);
+
+    size_t recovered = 0u;
+    if (spg_machine_recover_journal(path, &cfg, &ws, nullptr, &recovered) !=
+            SPG_OK ||
+        recovered != 1u) {
+        printf("FAIL: recovery resumed %zu processes, expected 1\n", recovered);
+        rc = 1;
+    }
+    (void)nanosleep(&ts, nullptr);
+    if (process_state((uint64_t)child) == 'T') {
+        printf("FAIL: the child is still stopped after recovery\n");
+        rc = 1;
+    }
+
+    /* Recovery must be safe to run twice. It does not have to be a no-op —
+     * SIGCONT on a running process is harmless — but it must not fail and it
+     * must not leave the child worse off. That is what makes it safe to run
+     * unconditionally at every start. */
+    size_t again = 0u;
+    if (spg_machine_recover_journal(path, &cfg, &ws, nullptr, &again) !=
+        SPG_OK) {
+        printf("FAIL: repeating recovery errored\n");
+        rc = 1;
+    }
+    (void)nanosleep(&ts, nullptr);
+    if (process_state((uint64_t)child) == 'T') {
+        printf("FAIL: repeating recovery stopped the child\n");
+        rc = 1;
+    }
+
+    (void)kill(child, SIGKILL);
+    int status = 0;
+    (void)waitpid(child, &status, 0);
+    if (rc == 0) {
+        printf("machine_action_probe: recovery restored a stranded pause\n");
+    }
+    return rc;
 }
 
 int main(void) {
@@ -122,10 +225,11 @@ int main(void) {
     (void)kill(child, SIGKILL);
     int status = 0;
     (void)waitpid(child, &status, 0);
-    if (rc == 0) {
-        printf("machine_action_probe: pause/resume/identity all correct\n");
+    if (rc != 0) {
+        return rc;
     }
-    return rc;
+    printf("machine_action_probe: pause/resume/identity all correct\n");
+    return recovery_scenario();
 }
 
 #else
