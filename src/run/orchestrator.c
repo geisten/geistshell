@@ -209,6 +209,7 @@ spg_orchestrator_tick(struct spg_orchestrator_state           *state,
         .directive            = state->directive,
         .machine              = state->machine,
         .machine_goal         = state->machine_goal,
+        .machine_ablate       = state->machine_ablate,
     };
     const struct spg_actor_step_config actor_config = {
         .actor_id            = config->actor_id,

@@ -67,6 +67,25 @@ struct spg_load_sample {
  * dependency can only point one way. */
 #define SPG_PROCESS_ID_CAP 32u
 
+/* Which parts of the snapshot to leave OUT of the rendered block (roadmap
+ * phase 11, #71).
+ *
+ * A mask rather than a variant per experiment: six hand-written renderers would
+ * drift apart, and the question is what the model needs, not how many ways
+ * there are to print a struct. Mask 0 is the full block, byte-identical to
+ * before this existed.
+ *
+ * Ablating a field REMOVES it. It does not set it to `unknown` — that would
+ * measure how the model handles a broken sensor, which is a different
+ * question. */
+#define SPG_ABLATE_NONE 0u
+#define SPG_ABLATE_ROLE (1u << 0)        /* process roles */
+#define SPG_ABLATE_TEMPERATURE (1u << 1) /* temperature and throttle */
+#define SPG_ABLATE_FREQUENCY (1u << 2)
+#define SPG_ABLATE_MEMORY (1u << 3)    /* memory and swap */
+#define SPG_ABLATE_PROCESSES (1u << 4) /* the process list entirely */
+#define SPG_ABLATE_LOAD (1u << 5)      /* cpu load and load average */
+
 /* Upper bound on a rendered (machine-state ...) block: the header fields plus
  * SPG_MACHINE_MAX_PROCESSES process entries. A caller can size a stack buffer
  * from this and never truncate. */
@@ -297,6 +316,12 @@ spg_machine_sample(uint64_t timestamp_ns, const struct spg_cpu_sample *prev,
 spg_machine_state_render(const struct spg_machine_state *state,
                          size_t dst_capacity, char dst[static dst_capacity],
                          size_t *out_required);
+
+/* Same, with parts left out. spg_machine_state_render is this with mask 0 —
+ * one implementation, so an ablated block cannot drift from the full one. */
+[[nodiscard]] enum spg_status spg_machine_state_render_masked(
+    const struct spg_machine_state *state, uint32_t ablate, size_t dst_capacity,
+    char dst[static dst_capacity], size_t *out_required);
 
 [[nodiscard]] const char *
 spg_throttle_state_to_string(enum spg_throttle_state state);

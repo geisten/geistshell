@@ -92,6 +92,7 @@ enum spg_status spg_agent_run(const struct spg_agent_run_inputs *inputs,
         .machine       = inputs->machine,
         .machine_after = inputs->machine_after,
         .machine_goal  = inputs->machine_goal,
+        .machine_ablate = inputs->machine_ablate,
         .profile       = inputs->profile,
         .pause_ledger  = inputs->pause_ledger,
     };

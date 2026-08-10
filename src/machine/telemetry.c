@@ -384,50 +384,70 @@ static void put_field(struct writer *w, const char *name,
     put(w, ")");
 }
 
-enum spg_status spg_machine_state_render(const struct spg_machine_state *state,
-                                         const size_t dst_capacity,
-                                         char         dst[static dst_capacity],
-                                         size_t      *out_required) {
+enum spg_status spg_machine_state_render_masked(
+    const struct spg_machine_state *state, const uint32_t ablate,
+    const size_t dst_capacity, char dst[static dst_capacity],
+    size_t *out_required) {
     if (state == nullptr || out_required == nullptr || dst_capacity == 0u) {
         return SPG_E_INVALID_ARG;
     }
     struct writer w = {.capacity = dst_capacity, .dst = dst};
 
-    /* Fixed field order — the whole point of this function. */
+    /* Fixed field order — the whole point of this function. An ablated field
+     * is OMITTED, not blanked: writing `unknown` would measure how the model
+     * copes with a dead sensor, which is a different question (#71). */
     put(&w, "(machine-state");
-    put_field(&w, "cpu-load-bp", state->cpu_utilisation_bp);
-    put_field(&w, "load-1-cbp", state->load.avg_1_cbp);
-    put_field(&w, "memory-total-bytes", state->memory.total_bytes);
-    put_field(&w, "memory-used-bytes", state->memory.used_bytes);
-    put_field(&w, "swap-used-bytes", state->memory.swap_used_bytes);
-    put(&w, " (temperature-mc ");
-    if (state->temperature_mc == SPG_MACHINE_UNKNOWN_S) {
-        put(&w, "unknown");
-    } else {
-        put_i64(&w, state->temperature_mc);
+    if ((ablate & SPG_ABLATE_LOAD) == 0u) {
+        put_field(&w, "cpu-load-bp", state->cpu_utilisation_bp);
+        put_field(&w, "load-1-cbp", state->load.avg_1_cbp);
     }
-    put(&w, ")");
-    put_field(&w, "cpu-freq-khz", state->cpu_freq_khz);
-    put(&w, " (throttle ");
-    put(&w, spg_throttle_state_to_string(state->throttle));
-    put(&w, ")");
+    if ((ablate & SPG_ABLATE_MEMORY) == 0u) {
+        put_field(&w, "memory-total-bytes", state->memory.total_bytes);
+        put_field(&w, "memory-used-bytes", state->memory.used_bytes);
+        put_field(&w, "swap-used-bytes", state->memory.swap_used_bytes);
+    }
+    if ((ablate & SPG_ABLATE_TEMPERATURE) == 0u) {
+        put(&w, " (temperature-mc ");
+        if (state->temperature_mc == SPG_MACHINE_UNKNOWN_S) {
+            put(&w, "unknown");
+        } else {
+            put_i64(&w, state->temperature_mc);
+        }
+        put(&w, ")");
+    }
+    if ((ablate & SPG_ABLATE_FREQUENCY) == 0u) {
+        put_field(&w, "cpu-freq-khz", state->cpu_freq_khz);
+    }
+    if ((ablate & SPG_ABLATE_TEMPERATURE) == 0u) {
+        /* Throttling goes with the temperature: it is the same signal seen
+         * from the firmware side, and leaving it behind would make the
+         * "no thermal information" variant a half-measure. */
+        put(&w, " (throttle ");
+        put(&w, spg_throttle_state_to_string(state->throttle));
+        put(&w, ")");
+    }
     put_field(&w, "process-count", state->process_count);
 
-    for (size_t i = 0u; i < state->n_processes; i += 1u) {
+    for (size_t i = 0u;
+         (ablate & SPG_ABLATE_PROCESSES) == 0u && i < state->n_processes;
+         i += 1u) {
         const struct spg_process_sample *p = &state->processes[i];
         put(&w, " (process (id ");
         /* One shape for managed and unmanaged: the profile id when there is
          * one, the process name otherwise. Two shapes would cost a small model
          * accuracy for no gain. */
         put_quoted(&w, p->profile_id[0] != '\0' ? p->profile_id : p->name);
-        put(&w, ") (role ");
-        put(&w, spg_process_role_to_string(p->role));
         put(&w, ")");
+        if ((ablate & SPG_ABLATE_ROLE) == 0u) {
+            put(&w, " (role ");
+            put(&w, spg_process_role_to_string(p->role));
+            put(&w, ")");
+        }
         put_field(&w, "cpu-bp", p->cpu_bp);
         put_field(&w, "rss-bytes", p->rss_bytes);
         put(&w, ")");
     }
-    if (state->processes_truncated) {
+    if (state->processes_truncated && (ablate & SPG_ABLATE_PROCESSES) == 0u) {
         /* A list that looks complete but is not would invite wrong
          * conclusions; say how many were dropped. */
         const uint64_t shown   = (uint64_t)state->n_processes;
@@ -446,4 +466,12 @@ enum spg_status spg_machine_state_render(const struct spg_machine_state *state,
     }
     dst[w.used] = '\0';
     return SPG_OK;
+}
+
+enum spg_status spg_machine_state_render(const struct spg_machine_state *state,
+                                         const size_t dst_capacity,
+                                         char         dst[static dst_capacity],
+                                         size_t      *out_required) {
+    return spg_machine_state_render_masked(state, SPG_ABLATE_NONE, dst_capacity,
+                                           dst, out_required);
 }

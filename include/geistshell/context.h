@@ -55,6 +55,9 @@ struct spg_context_sources {
      * the model reads what the run is FOR before what it is looking at. Null =
      * no goal, the default, and the context is unchanged. */
     const struct spg_machine_goal *machine_goal;
+    /* Which parts of the snapshot to leave out (phase 11, #71). 0 = the full
+     * block, which is the default and byte-identical to before. */
+    uint32_t machine_ablate;
     /* Optional standing directive (a learned lesson) rendered prominently as
      * (directive "...") every step — a stronger channel than the mind-palace
      * index for steering a small model's behaviour (geistshell#40 follow-up).

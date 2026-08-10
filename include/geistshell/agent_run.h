@@ -65,6 +65,9 @@ struct spg_agent_run_inputs {
     /* Optional goal for the context (phase 9). The harness, not the loop,
      * decides whether it was met. */
     const struct spg_machine_goal  *machine_goal;
+    /* Phase 11 (#71): parts of the snapshot to withhold, to measure what the
+     * model actually needs. 0 = everything, the default. */
+    uint32_t                        machine_ablate;
 };
 
 struct spg_agent_run_config {

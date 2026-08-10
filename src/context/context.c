@@ -714,8 +714,9 @@ static void render_machine(const struct spg_context_sources *sources,
     }
     char   block[SPG_MACHINE_RENDER_CAP];
     size_t required = 0u;
-    if (spg_machine_state_render(sources->machine, sizeof block, block,
-                                 &required) != SPG_OK) {
+    if (spg_machine_state_render_masked(sources->machine,
+                                        sources->machine_ablate, sizeof block,
+                                        block, &required) != SPG_OK) {
         return; /* cannot happen at this capacity; emitting nothing beats
                  * emitting a truncated form the model would misread */
     }
