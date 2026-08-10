@@ -23,6 +23,7 @@
 #include <geist.h>
 
 #include <errno.h>
+#include <fcntl.h>
 #include <math.h> /* isfinite: --temperature validation */
 #include <signal.h>
 #include <stdbool.h>
@@ -30,6 +31,7 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <sys/file.h>
 #include <unistd.h> /* mkstemp/write/close/unlink: the guard-gate temp suite */
 
 #define CLI_TOKEN_CAPACITY 1024u
@@ -720,6 +722,33 @@ static void install_interrupt_handler(void) {
     sa.sa_flags = 0;
     (void)sigaction(SIGINT, &sa, nullptr);
     (void)sigaction(SIGTERM, &sa, nullptr);
+}
+
+/* One machine run per journal, enforced by an advisory lock on a sibling file.
+ *
+ * Recovery reads the journal and resumes whatever looks stranded — with two
+ * runs sharing a journal it would resume the other run's pauses mid-flight.
+ * The lock also prevents something that was already broken and simply had not
+ * been hit: two writers appending to one hash-chained journal interleave their
+ * records and destroy the chain.
+ *
+ * Advisory and non-blocking: a second run is told to use its own journal
+ * rather than made to wait for a run that may take hours. Returns -1 when the
+ * lock is held elsewhere. */
+static int lock_machine_journal(const char *journal_path) {
+    char path[4096];
+    if (snprintf(path, sizeof path, "%s.lock", journal_path) < 0) {
+        return -1;
+    }
+    const int fd = open(path, O_RDWR | O_CREAT | O_CLOEXEC, 0600);
+    if (fd < 0) {
+        return -1;
+    }
+    if (flock(fd, LOCK_EX | LOCK_NB) != 0) {
+        (void)close(fd);
+        return -1;
+    }
+    return fd;
 }
 
 static void update_run_usage(struct spg_policy_usage              *usage,
@@ -1855,6 +1884,9 @@ static int agent_command(int argc, char **argv) {
     uint64_t seed_override = 0u; /* per-attempt seed for best-of-N sampling */
     size_t   best_of       = 1u; /* #2: verifier-guided best-of-N attempts */
     bool     with_machine  = false; /* roadmap phase 3: (machine-state ...) */
+    /* Declared up here because every early `goto done` must find it defined —
+     * the cleanup path releases it. */
+    int         machine_lock = -1;
     const char *profile_path = nullptr; /* (process-profile ...) file */
     for (int i = 2; i < argc; i += 1) {
         if ((strcmp(argv[i], "--config") == 0 ||
@@ -2190,6 +2222,15 @@ static int agent_command(int argc, char **argv) {
     const struct spg_machine_executor_workspace release_ws = {
         .payload_capacity = sizeof machine_payload, .payload = machine_payload};
     if (with_machine) {
+        machine_lock = lock_machine_journal(journal_path);
+        if (machine_lock < 0) {
+            fprintf(stderr,
+                    "agent: another machine run holds %s — give this one its "
+                    "own journal\n",
+                    journal_path);
+            rc = 2;
+            goto done;
+        }
         install_interrupt_handler();
         /* Second line of defence first: a previous run may have been killed
          * between a pause and its resume, and that process is still stopped
@@ -2332,6 +2373,11 @@ done:
             printf("released=%zu%s\n", resumed,
                    interrupt_requested ? " (interrupted)" : "");
         }
+    }
+    if (machine_lock >= 0) {
+        /* Released after the pauses are: a second run must not start recovery
+         * while this one is still handing processes back. */
+        (void)close(machine_lock);
     }
     if (journal_open) {
         (void)spg_journal_writer_close(&journal);

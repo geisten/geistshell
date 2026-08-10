@@ -160,6 +160,83 @@ static int recovery_scenario(void) {
     return rc;
 }
 
+/* The window the ledger cannot cover: the agent is SIGKILLed while a process
+ * is paused. Nothing in the dying process gets to run, so the only thing that
+ * can help is something that was already running — the guardian.
+ *
+ * Modelled by forking a stand-in agent that pauses a target and then dies
+ * without releasing. If the guardian works, the target is running again a
+ * moment later, with no next agent start involved. */
+static int guardian_scenario(void) {
+    const pid_t target = fork();
+    if (target < 0) {
+        return 1;
+    }
+    if (target == 0) {
+        for (;;) {
+            (void)pause();
+        }
+    }
+    struct timespec ts = {.tv_sec = 0, .tv_nsec = 150000000};
+    (void)nanosleep(&ts, nullptr);
+
+    const pid_t agent = fork();
+    if (agent < 0) {
+        (void)kill(target, SIGKILL);
+        return 1;
+    }
+    if (agent == 0) {
+        /* The stand-in agent: pause, then hang. It will be killed. */
+        struct spg_machine_state m = {.n_processes = 1u};
+        if (!read_identity((uint64_t)target, &m.processes[0])) {
+            _exit(1);
+        }
+        memcpy(m.processes[0].profile_id, "batch_job", sizeof "batch_job");
+        char                                     payload[512];
+        struct spg_machine_pause_ledger          ledger = {};
+        const struct spg_machine_executor_state  st     = {.machine = &m,
+                                                           .ledger  = &ledger};
+        const struct spg_machine_executor_config cfg    = {
+            .actor_id = 1u, .execution_enabled = true};
+        const struct spg_machine_executor_workspace ws = {
+            .payload_capacity = sizeof payload, .payload = payload};
+        struct spg_machine_executor_result r = {};
+        if (spg_machine_executor_step(&st, &cfg, SPG_ACTION_MACHINE_PAUSE,
+                                      "batch_job", &ws, &r) != SPG_OK ||
+            r.outcome != SPG_MACHINE_EXEC_OK) {
+            _exit(1);
+        }
+        for (;;) {
+            (void)pause();
+        }
+    }
+
+    (void)nanosleep(&ts, nullptr);
+    int rc = 0;
+    if (process_state((uint64_t)target) != 'T') {
+        printf("FAIL: guardian setup did not pause the target\n");
+        rc = 1;
+    }
+    /* The kill the ledger cannot survive. */
+    (void)kill(agent, SIGKILL);
+    int status = 0;
+    (void)waitpid(agent, &status, 0);
+    (void)nanosleep(&ts, nullptr);
+    (void)nanosleep(&ts, nullptr);
+
+    if (process_state((uint64_t)target) == 'T') {
+        printf("FAIL: target still stopped after the agent was killed\n");
+        rc = 1;
+    }
+    (void)kill(target, SIGKILL);
+    (void)waitpid(target, &status, 0);
+    if (rc == 0) {
+        printf("machine_action_probe: guardian released a killed agent's "
+               "pause\n");
+    }
+    return rc;
+}
+
 int main(void) {
     const pid_t child = fork();
     if (child < 0) {
@@ -229,7 +306,11 @@ int main(void) {
         return rc;
     }
     printf("machine_action_probe: pause/resume/identity all correct\n");
-    return recovery_scenario();
+    rc = recovery_scenario();
+    if (rc != 0) {
+        return rc;
+    }
+    return guardian_scenario();
 }
 
 #else

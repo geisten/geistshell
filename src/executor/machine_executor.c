@@ -92,6 +92,65 @@ static bool identity_still_matches(const uint64_t pid,
 }
 #endif
 
+#if defined(SPG_MACHINE_SIGNALS)
+/* Fork a guardian that outlives us if we are killed.
+ *
+ * It holds the read end of a pipe and blocks on it. Two things can happen:
+ * a byte arrives (we released the pause ourselves) and it exits without acting,
+ * or the pipe closes because we died and it resumes the process. No timer, no
+ * heartbeat, no state — the kernel closing our fds IS the signal.
+ *
+ * Returns the write end, or -1 when no guardian could be created. A pause with
+ * no guardian is refused by the caller: an unguarded stop is exactly the
+ * damage this is here to prevent. */
+static int spawn_guardian(const uint64_t pid, const uint64_t start_identity) {
+    int fds[2];
+    if (pipe(fds) != 0) {
+        return -1;
+    }
+    const pid_t child = fork();
+    if (child < 0) {
+        (void)close(fds[0]);
+        (void)close(fds[1]);
+        return -1;
+    }
+    if (child == 0) {
+        (void)close(fds[1]);
+        char    byte = 0;
+        ssize_t n    = 0;
+        do {
+            n = read(fds[0], &byte, 1u);
+        } while (n < 0 && errno == EINTR);
+        if (n == 0) {
+            /* The parent died without releasing. Re-check identity first: a
+             * guardian that wakes a recycled pid is worse than one that does
+             * nothing. */
+            if (identity_still_matches(pid, start_identity)) {
+                (void)kill((pid_t)pid, SIGCONT);
+            }
+        }
+        _exit(0);
+    }
+    (void)close(fds[0]);
+    return fds[1];
+}
+
+/* Tell a guardian to stand down. Writing the byte is what distinguishes "we
+ * handled it" from "we died"; closing alone would look like death. */
+static void dismiss_guardian(int *fd) {
+    if (fd == nullptr || *fd < 0) {
+        return;
+    }
+    const char byte = 1;
+    ssize_t    n    = 0;
+    do {
+        n = write(*fd, &byte, 1u);
+    } while (n < 0 && errno == EINTR);
+    (void)close(*fd);
+    *fd = -1;
+}
+#endif
+
 /* Ledger bookkeeping. A pause that cannot be recorded is not performed: the
  * alternative is a stopped process nobody owes a resume for. */
 static bool ledger_remember(struct spg_machine_pause_ledger *ledger,
@@ -113,9 +172,27 @@ static bool ledger_remember(struct spg_machine_pause_ledger *ledger,
     e->start_identity                  = p->start_identity;
     memcpy(e->profile_id, p->profile_id, SPG_PROCESS_ID_CAP);
     e->profile_id[SPG_PROCESS_ID_CAP - 1u] = '\0';
+    e->guard_fd                            = -1;
     ledger->count += 1u;
     return true;
 }
+
+#if defined(SPG_MACHINE_SIGNALS)
+static void ledger_set_guard(struct spg_machine_pause_ledger *ledger,
+                             const uint64_t pid, const uint64_t start_identity,
+                             const int fd) {
+    if (ledger == nullptr) {
+        return;
+    }
+    for (size_t i = 0u; i < ledger->count; i += 1u) {
+        if (ledger->entries[i].pid == pid &&
+            ledger->entries[i].start_identity == start_identity) {
+            ledger->entries[i].guard_fd = fd;
+            return;
+        }
+    }
+}
+#endif
 
 static void ledger_forget(struct spg_machine_pause_ledger *ledger,
                           const uint64_t pid, const uint64_t start_identity) {
@@ -125,6 +202,11 @@ static void ledger_forget(struct spg_machine_pause_ledger *ledger,
     for (size_t i = 0u; i < ledger->count; i += 1u) {
         if (ledger->entries[i].pid == pid &&
             ledger->entries[i].start_identity == start_identity) {
+#if defined(SPG_MACHINE_SIGNALS)
+            /* Dismissed, not just dropped: a guardian left waiting would
+             * resume this process again when we exit normally. */
+            dismiss_guardian(&ledger->entries[i].guard_fd);
+#endif
             ledger->entries[i] = ledger->entries[ledger->count - 1u];
             ledger->count -= 1u;
             return;
@@ -242,7 +324,22 @@ enum spg_status spg_machine_executor_step(
     } else {
         result->pid      = p->pid;
         result->identity = p->start_identity;
-        result->outcome  = send_signal(p->pid, p->start_identity, kind);
+#if defined(SPG_MACHINE_SIGNALS)
+        if (kind == SPG_ACTION_MACHINE_PAUSE) {
+            /* Armed BEFORE the stop, not after: a crash in between would
+             * otherwise leave exactly the stopped-and-forgotten process the
+             * guardian exists to prevent. */
+            const int guard = spawn_guardian(p->pid, p->start_identity);
+            if (guard < 0) {
+                ledger_forget(state->ledger, p->pid, p->start_identity);
+                result->outcome = SPG_MACHINE_EXEC_REFUSED;
+                journal_action(state, config, kind, target, workspace, result);
+                return SPG_OK;
+            }
+            ledger_set_guard(state->ledger, p->pid, p->start_identity, guard);
+        }
+#endif
+        result->outcome = send_signal(p->pid, p->start_identity, kind);
         if (kind == SPG_ACTION_MACHINE_PAUSE &&
             result->outcome != SPG_MACHINE_EXEC_OK) {
             ledger_forget(state->ledger, p->pid, p->start_identity);
@@ -327,6 +424,9 @@ enum spg_status spg_machine_ledger_release(
             SPG_MACHINE_EXEC_OK) {
             *out_resumed += 1u;
         }
+#if defined(SPG_MACHINE_SIGNALS)
+        dismiss_guardian(&ledger->entries[i].guard_fd);
+#endif
     }
     ledger->count = 0u;
     return SPG_OK;

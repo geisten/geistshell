@@ -47,6 +47,16 @@ enum spg_machine_exec_outcome {
 
 struct spg_machine_paused_entry {
     uint64_t pid;
+    /* Write end of a pipe to a guardian child that resumes this process if we
+     * die without releasing it. -1 when there is none (non-Linux, or the fork
+     * failed — in which case the pause does not happen at all).
+     *
+     * This closes the one window the ledger cannot: SIGKILL and power loss are
+     * not catchable, so between the kill and the next agent start the process
+     * would otherwise stay stopped indefinitely. The guardian is not a second
+     * lifecycle to manage — it holds no state, waits on one pipe, and exits as
+     * soon as either end of the story is told. */
+    int guard_fd;
     /* Recorded so the release can refuse to signal a recycled pid. A cleanup
      * path that resumes strangers is worse than one that resumes nothing. */
     uint64_t start_identity;

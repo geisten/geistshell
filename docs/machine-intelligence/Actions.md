@@ -169,16 +169,39 @@ Recovery ist **wiederholbar**, nicht idempotent im engeren Sinn: ein `SIGCONT`
 auf einen laufenden Prozess ist harmlos. Genau das macht es sicher, sie bei
 jedem Start bedingungslos auszuführen.
 
-### Verbleibende Lücke, benannt
+### Dritte Linie: der Wächter
 
-Zwischen `SIGKILL` und dem nächsten Start bleibt der Prozess gestoppt. Dagegen
-hilft nur ein externer Watchdog, und der ist bewusst nicht gebaut — er wäre ein
-zweiter Lebenszyklus mit eigenen Fehlermodi für ein Zeitfenster, das ein
-Neustart schließt.
+`SIGKILL` lässt den sterbenden Prozess nichts mehr ausführen. Helfen kann nur
+etwas, das **schon lief**: bei jeder Pause forkt der Executor einen Wächter, der
+das Leseende einer Pipe hält und darauf blockiert.
 
-Ebenfalls offen: zwei parallele Läufe teilen sich das Journal nicht. Recovery
-eines Laufs sieht die Pausen des anderen und könnte sie freigeben. Für einen
-Agenten pro Maschine ist das kein Problem; für mehrere wäre es eines.
+- Kommt ein Byte an, haben wir die Pause selbst zurückgenommen — der Wächter
+  endet, ohne zu handeln.
+- Schließt die Pipe, weil wir gestorben sind, prüft er die Identität und sendet
+  `SIGCONT`.
+
+Kein Timer, kein Heartbeat, kein Zustand: dass der Kernel unsere Deskriptoren
+schließt, **ist** das Signal. Der Wächter wird **vor** dem Stopp scharfgestellt —
+ein Absturz dazwischen hinterließe sonst genau den vergessenen gestoppten
+Prozess, den er verhindern soll. Lässt er sich nicht forken, findet die Pause
+nicht statt.
+
+Damit ist das Fenster zwischen `SIGKILL` und dem nächsten Agentenstart
+geschlossen. Recovery aus dem Journal bleibt als zweite Absicherung für den
+Fall, dass auch der Wächter stirbt — Stromausfall, `kill -9` auf die ganze
+Prozessgruppe, OOM-Killer.
+
+### Ein Lauf pro Journal
+
+Zwei Läufe am selben Journal würden ihre Records in **eine** Hash-Chain
+verschränken und sie damit zerstören — ein Fehler, den bisher nur niemand
+getroffen hatte. Zusätzlich sähe die Recovery des einen die Pausen des anderen.
+
+Ein Machine-Run nimmt deshalb ein `flock` auf `<journal>.lock`. Advisory und
+nicht blockierend: der zweite Lauf wird auf ein eigenes Journal verwiesen,
+statt auf einen Lauf zu warten, der Stunden dauern kann. Das Lock fällt
+**nach** der Freigabe der Pausen, damit kein zweiter Lauf Recovery startet,
+während dieser noch Prozesse zurückgibt.
 
 ### Auf Hardware verifiziert
 
@@ -188,8 +211,12 @@ wieder. Der Absturz wird durch Weglassen der Freigabe simuliert, nicht durch
 Töten des Agenten mitten im Signal: das wäre ein Race, und ein Race im Test ist
 ein Flake.
 
-`test_cli_machine_recovery.sh` prüft die erste Linie über die CLI: nach einem
-Lauf, der pausiert hat, meldet er `released=1` und das Kind läuft.
+Der Wächter wird ebenso hart geprüft: ein Ersatz-Agent pausiert ein Ziel und
+wird dann mit `SIGKILL` getötet. Kurz darauf läuft das Ziel wieder — ohne dass
+ein neuer Agentenstart beteiligt war.
+
+`test_cli_machine_recovery.sh` prüft die erste Linie über die CLI (`released=1`,
+Kind läuft) und dass ein zweiter Lauf am selben Journal abgewiesen wird.
 
 ## Was Phase 6 nicht tut
 
