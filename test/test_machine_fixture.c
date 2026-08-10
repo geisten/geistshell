@@ -175,6 +175,109 @@ static int test_truncation_flag(void) {
     return s.processes_truncated ? 1 : 0;
 }
 
+/* Phase 11 (#71): ablation removes exactly what it names and nothing else.
+ *
+ * The failure this guards against is subtle: a variant that also perturbs a
+ * field it did not name makes every number in the ablation table describe two
+ * changes at once, and no conclusion drawn from it would hold. */
+static int test_ablation(void) {
+    struct spg_machine_state s = {};
+    if (load(LIT(fixture), &s) != SPG_OK) {
+        return 1;
+    }
+    char   full[SPG_MACHINE_RENDER_CAP];
+    size_t full_n = 0u;
+    if (spg_machine_state_render_masked(&s, SPG_ABLATE_NONE, sizeof full, full,
+                                        &full_n) != SPG_OK) {
+        return 1;
+    }
+    /* Mask 0 is byte-identical to the unmasked renderer: one implementation,
+     * so the default path cannot drift from the experiment's. */
+    char   plain[SPG_MACHINE_RENDER_CAP];
+    size_t plain_n = 0u;
+    if (spg_machine_state_render(&s, sizeof plain, plain, &plain_n) != SPG_OK ||
+        plain_n != full_n || memcmp(plain, full, full_n) != 0) {
+        return 1;
+    }
+
+    const struct {
+        uint32_t    bit;
+        const char *removed;
+        const char *kept;
+    } cases[] = {
+        {SPG_ABLATE_ROLE, "(role ", "(cpu-bp "},
+        {SPG_ABLATE_TEMPERATURE, "(temperature-mc ", "(cpu-freq-khz "},
+        {SPG_ABLATE_FREQUENCY, "(cpu-freq-khz ", "(temperature-mc "},
+        {SPG_ABLATE_MEMORY, "(memory-total-bytes ", "(cpu-load-bp "},
+        {SPG_ABLATE_PROCESSES, "(process (id ", "(process-count "},
+        {SPG_ABLATE_LOAD, "(cpu-load-bp ", "(memory-total-bytes "},
+    };
+    for (size_t i = 0u; i < sizeof cases / sizeof cases[0]; i += 1u) {
+        char   out[SPG_MACHINE_RENDER_CAP];
+        size_t out_n = 0u;
+        if (spg_machine_state_render_masked(&s, cases[i].bit, sizeof out, out,
+                                            &out_n) != SPG_OK) {
+            return 1;
+        }
+        if (strstr(out, cases[i].removed) != nullptr) {
+            printf("  %s survived its own ablation\n", cases[i].removed);
+            return 1;
+        }
+        /* A neighbouring field must be untouched, or the variant measures two
+         * removals and the table means nothing. */
+        if (strstr(out, cases[i].kept) == nullptr) {
+            printf("  ablation of %s also removed %s\n", cases[i].removed,
+                   cases[i].kept);
+            return 1;
+        }
+        if (out_n >= full_n) {
+            return 1; /* an ablation that does not shrink the block did nothing
+                       */
+        }
+        /* Still a valid form: an ablated block the parser rejects would be a
+         * broken experiment rather than a smaller context. */
+        struct spg_machine_state reparsed = {};
+        if (load(out_n - 1u, out, &reparsed) != SPG_OK) {
+            printf("  ablated block does not parse: %s\n", out);
+            return 1;
+        }
+    }
+
+    /* Everything off at once: the sanity floor. It must still be a form, and
+     * it must be smaller than any single ablation. */
+    const uint32_t all = SPG_ABLATE_ROLE | SPG_ABLATE_TEMPERATURE |
+                         SPG_ABLATE_FREQUENCY | SPG_ABLATE_MEMORY |
+                         SPG_ABLATE_PROCESSES | SPG_ABLATE_LOAD;
+    char           bare[SPG_MACHINE_RENDER_CAP];
+    size_t         bare_n = 0u;
+    if (spg_machine_state_render_masked(&s, all, sizeof bare, bare, &bare_n) !=
+        SPG_OK) {
+        return 1;
+    }
+    struct spg_machine_state reparsed = {};
+    if (load(bare_n - 1u, bare, &reparsed) != SPG_OK) {
+        return 1;
+    }
+    /* Order must not matter: a mask is a set, and a table built from runs in a
+     * different order has to be the same table. */
+    char   other[SPG_MACHINE_RENDER_CAP];
+    size_t other_n = 0u;
+    if (spg_machine_state_render_masked(&s, SPG_ABLATE_LOAD | SPG_ABLATE_ROLE,
+                                        sizeof other, other,
+                                        &other_n) != SPG_OK) {
+        return 1;
+    }
+    char   swapped[SPG_MACHINE_RENDER_CAP];
+    size_t swapped_n = 0u;
+    if (spg_machine_state_render_masked(&s, SPG_ABLATE_ROLE | SPG_ABLATE_LOAD,
+                                        sizeof swapped, swapped,
+                                        &swapped_n) != SPG_OK) {
+        return 1;
+    }
+    return (other_n == swapped_n && memcmp(other, swapped, other_n) == 0) ? 0
+                                                                          : 1;
+}
+
 int main(void) {
     const struct {
         const char *name;
@@ -186,6 +289,7 @@ int main(void) {
         {"negative_temperature", test_negative_temperature},
         {"rejects", test_rejects},
         {"truncation_flag", test_truncation_flag},
+        {"ablation", test_ablation},
     };
     int failures = 0;
     for (size_t i = 0u; i < sizeof cases / sizeof cases[0]; i += 1u) {

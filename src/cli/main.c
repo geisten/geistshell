@@ -31,9 +31,9 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <sys/file.h>
 #include <sys/resource.h>
 #include <time.h>
-#include <sys/file.h>
 #include <unistd.h> /* mkstemp/write/close/unlink: the guard-gate temp suite */
 
 #define CLI_TOKEN_CAPACITY 1024u
@@ -2763,6 +2763,7 @@ static void eval_tally_ladder(struct eval_run_report            *report,
 /* Per-invocation knobs. A null pointer (or zeroed struct) reproduces the
  * historical behaviour: one sample per case, no remote endpoint. */
 struct eval_run_opts {
+    uint32_t    ablate;     /* phase 11: parts of the snapshot to withhold */
     const char *remote_url; /* nullable: enables (model "remote") cases      */
     const char *remote_model; /* nullable: model name for remote cases */
     size_t      samples; /* 0/1 => run each case once                     */
@@ -2974,9 +2975,9 @@ static enum spg_status eval_run_suite(const char                 *suite_path,
                                     nod[head].span, "case")) {
             continue;
         }
-        const size_t   case_idx  = report->ncases;
+        const size_t   case_idx   = report->ncases;
         const uint64_t case_start = bench_now_ms();
-        char        *name     = report->names[case_idx];
+        char          *name       = report->names[case_idx];
         (void)snprintf(name, sizeof report->names[0], "case");
         char script_path[CLI_PATH_MAX];
         char obs[256];
@@ -3072,8 +3073,12 @@ static enum spg_status eval_run_suite(const char                 *suite_path,
              * real-model path. */
             char   block[SPG_MACHINE_RENDER_CAP];
             size_t block_n = 0u;
-            if (spg_machine_state_render(&case_machine, sizeof block, block,
-                                         &block_n) == SPG_OK) {
+            /* Measured with the SAME mask the model saw, or the ablation
+             * table would report the full context size for every variant and
+             * the whole experiment would be unfalsifiable. */
+            if (spg_machine_state_render_masked(&case_machine, o->ablate,
+                                                sizeof block, block,
+                                                &block_n) == SPG_OK) {
                 report->case_ctx_bytes[case_idx] = block_n - 1u;
             }
         }
@@ -3296,6 +3301,7 @@ static enum spg_status eval_run_suite(const char                 *suite_path,
                     if (has_goal_file) {
                         gin.machine_goal = &case_machine_goal;
                     }
+                    gin.machine_ablate = o->ablate;
                     if (has_fixture) {
                         if (!eval_sandbox_prepare(&sandbox_state, name, s,
                                                   fixture, store)) {
@@ -3380,6 +3386,7 @@ static enum spg_status eval_run_suite(const char                 *suite_path,
                 if (has_goal_file) {
                     cin.machine_goal = &case_machine_goal;
                 }
+                cin.machine_ablate = o->ablate;
                 if (has_fixture) {
                     if (!eval_sandbox_prepare(&sandbox_state, name, s, fixture,
                                               store)) {
@@ -3449,8 +3456,8 @@ static enum spg_status eval_run_suite(const char                 *suite_path,
 
         report->case_latency_ms[case_idx] = bench_now_ms() - case_start;
         report->results[case_idx]         = last;
-        report->runs[case_idx]        = runs_in_case;
-        report->case_passed[case_idx] = passed_in_case;
+        report->runs[case_idx]            = runs_in_case;
+        report->case_passed[case_idx]     = passed_in_case;
         report->ncases += 1u;
     }
 
@@ -3464,7 +3471,6 @@ done:
     free_file_buffer(&scenario_text);
     return rc;
 }
-
 
 static void eval_print_report(const char                   *suite_path,
                               const struct eval_run_report *report) {
@@ -3541,14 +3547,45 @@ static void eval_print_report(const char                   *suite_path,
 }
 
 static int eval_command(int argc, char **argv) {
-    const char *suite_path   = nullptr;
-    const char *remote_url   = nullptr;
-    const char *remote_model = nullptr;
-    size_t      samples      = 1u;
-    bool        constrained  = false;
-    float       temperature  = 0.0f;
-    bool report_timing = false;
+    const char *suite_path    = nullptr;
+    const char *remote_url    = nullptr;
+    const char *remote_model  = nullptr;
+    size_t      samples       = 1u;
+    bool        constrained   = false;
+    float       temperature   = 0.0f;
+    bool        report_timing = false;
+    /* Phase 11 (#71): withhold parts of the snapshot to find out what the
+     * model actually uses. One mask applied at render time — no variant of the
+     * renderer per experiment. */
+    uint32_t ablate = SPG_ABLATE_NONE;
     for (int i = 2; i < argc; i += 1) {
+        if (strcmp(argv[i], "--ablate") == 0 && i + 1 < argc) {
+            const char *spec = argv[++i];
+            const struct {
+                const char *name;
+                uint32_t    bit;
+            } names[] = {
+                {"role", SPG_ABLATE_ROLE},
+                {"temperature", SPG_ABLATE_TEMPERATURE},
+                {"frequency", SPG_ABLATE_FREQUENCY},
+                {"memory", SPG_ABLATE_MEMORY},
+                {"processes", SPG_ABLATE_PROCESSES},
+                {"load", SPG_ABLATE_LOAD},
+            };
+            for (size_t k = 0u; k < sizeof names / sizeof names[0]; k += 1u) {
+                if (strstr(spec, names[k].name) != nullptr) {
+                    ablate |= names[k].bit;
+                }
+            }
+            if (ablate == SPG_ABLATE_NONE) {
+                /* An unrecognised spec would quietly run the full context and
+                 * be recorded as an ablation — the silent kind of wrong number
+                 * this phase is meant to avoid producing. */
+                fprintf(stderr, "eval: --ablate %s matched nothing\n", spec);
+                return 2;
+            }
+            continue;
+        }
         if (strcmp(argv[i], "--timing") == 0) {
             /* Adds wall-clock and peak RSS to the report. Off by default so
              * two identical runs stay byte-identical — the property the
@@ -3604,7 +3641,8 @@ static int eval_command(int argc, char **argv) {
                                           .remote_model = remote_model,
                                           .samples      = samples,
                                           .constrained  = constrained,
-                                          .temperature  = temperature};
+                                          .temperature  = temperature,
+                                          .ablate       = ablate};
     const enum spg_status         status =
         eval_run_suite(suite_path, nullptr, &opts, &report);
     if (status != SPG_OK) {
