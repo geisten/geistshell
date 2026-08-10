@@ -1,0 +1,3 @@
+; Verify without touching anything. Not a contradiction: a machine that already
+; meets its constraints satisfies this. Any action at all fails it.
+(machine-goal (max-temperature-mc 70000) (max-actions 0))

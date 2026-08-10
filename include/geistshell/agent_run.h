@@ -62,6 +62,9 @@ struct spg_agent_run_inputs {
      * spg_agent_loop_config.machine_settle_ms — without it a live run measures
      * the load from before its own action. */
     uint64_t                        machine_settle_ms;
+    /* Optional goal for the context (phase 9). The harness, not the loop,
+     * decides whether it was met. */
+    const struct spg_machine_goal  *machine_goal;
 };
 
 struct spg_agent_run_config {

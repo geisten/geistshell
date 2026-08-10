@@ -42,6 +42,7 @@ struct spg_actor_state {
     const char *directive;
     /* Optional machine snapshot for the context (roadmap phase 3). */
     const struct spg_machine_state *machine;
+    const struct spg_machine_goal  *machine_goal;
 };
 
 struct spg_actor_step_config {

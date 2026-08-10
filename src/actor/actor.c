@@ -152,6 +152,7 @@ enum spg_status spg_actor_step(struct spg_actor_state                *state,
         .goal                 = state->goal,
         .directive            = state->directive,
         .machine              = state->machine,
+        .machine_goal         = state->machine_goal,
     };
 
     enum spg_status status = spg_context_build(

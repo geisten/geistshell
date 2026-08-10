@@ -222,6 +222,7 @@ spg_agent_loop_run(struct spg_orchestrator_state           *state,
             return SPG_OK;
         }
         made_progress = true; /* reached only on an allowed, executed step */
+        result->actions_executed += 1u;
 
         /* Phase 7: observe again, so the next tick reasons about the world the
          * action left behind rather than the one it decided on. This is the

@@ -109,6 +109,7 @@ SPG_SOURCES := \
     src/memory/memory.c \
     src/machine/diagnose.c \
     src/machine/machine_fixture.c \
+    src/machine/machine_goal.c \
     src/machine/process.c \
     src/machine/process_profile.c \
     src/machine/telemetry.c \

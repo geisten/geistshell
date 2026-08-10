@@ -1,0 +1,5 @@
+; Still too hot after the run: whatever the model says, this goal is not met.
+(machine-state (cpu-load-bp 2000) (temperature-mc 82000)
+ (memory-total-bytes 4245815296) (memory-used-bytes 1000000000)
+ (process (id "critical_app") (role critical) (cpu-bp 1200) (rss-bytes 52428800))
+ (process (id "batch_job") (role batch) (cpu-bp 0) (rss-bytes 104857600)))
