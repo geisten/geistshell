@@ -2,6 +2,7 @@
 #define GEISTSHELL_ORCHESTRATOR_H
 
 #include "geistshell/actor.h"
+#include "geistshell/machine_executor.h"
 #include "geistshell/mem_executor.h"
 #include "geistshell/policy_gate.h"
 #include "geistshell/recommendation.h"
@@ -29,14 +30,22 @@ enum spg_orchestrator_stage {
     SPG_ORCHESTRATOR_STAGE_SIM_EXECUTED,
     SPG_ORCHESTRATOR_STAGE_MEMORY_EXECUTED,
     SPG_ORCHESTRATOR_STAGE_SHELL_EXECUTED,
+    SPG_ORCHESTRATOR_STAGE_MACHINE_EXECUTED,
 };
 
 struct spg_orchestrator_state {
     struct spg_graph          *graph;
     struct spg_memory         *memory;
     struct spg_journal_writer *journal;
-    /* Optional machine snapshot for the context (roadmap phase 3). */
-    const struct spg_machine_state *machine;
+    /* Optional machine snapshot for the context (roadmap phase 3) and the
+     * process profile the gate judges machine actions against (phase 6).
+     * Without a profile every machine action is denied as unmanaged. */
+    const struct spg_machine_state   *machine;
+    const struct spg_process_profile *profile;
+    /* Where pauses are recorded so the run can undo them (phase 6b, #80).
+     * Null means a pause cannot be tracked, and an untracked pause is refused
+     * rather than performed. */
+    struct spg_machine_pause_ledger *pause_ledger;
     struct spg_model_adapter  *model;
     struct spg_sim_config     *sim;
     struct spg_mem_store      *store;
@@ -132,7 +141,8 @@ struct spg_orchestrator_result {
     struct spg_policy_gate_result    policy_gate;
     struct spg_sim_executor_result   sim;
     struct spg_mem_executor_result   memory;
-    struct spg_shell_executor_result shell;
+    struct spg_shell_executor_result   shell;
+    struct spg_machine_executor_result machine_action;
 };
 
 [[nodiscard]] enum spg_status
@@ -167,6 +177,11 @@ spg_orchestrator_memory_executed(const struct spg_orchestrator_result *result);
 /* A local_shell action executed this tick (ran or was boundary-denied). */
 [[nodiscard]] bool
 spg_orchestrator_shell_executed(const struct spg_orchestrator_result *result);
+
+/* A machine action reached the executor (roadmap phase 6). True regardless of
+ * the outcome: a refused signal still spent the decision. */
+[[nodiscard]] bool
+spg_orchestrator_machine_executed(const struct spg_orchestrator_result *result);
 
 /* The agent emitted `finish`: the loop should terminate as task-complete. */
 [[nodiscard]] bool

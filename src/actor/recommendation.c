@@ -124,6 +124,16 @@ static bool parse_action_kind(const size_t input_n, const char input[],
         *out = SPG_ACTION_MEMORY_READ;
         return true;
     }
+    if (spg_sexpr_span_eq_cstr(input_n, input, span,
+                               "machine_pause_process")) {
+        *out = SPG_ACTION_MACHINE_PAUSE;
+        return true;
+    }
+    if (spg_sexpr_span_eq_cstr(input_n, input, span,
+                               "machine_resume_process")) {
+        *out = SPG_ACTION_MACHINE_RESUME;
+        return true;
+    }
     if (spg_sexpr_span_eq_cstr(input_n, input, span, "finish")) {
         *out = SPG_ACTION_FINISH;
         return true;
@@ -162,6 +172,14 @@ static bool kind_fields_match(const struct spg_recommendation *out) {
         /* delete/read need only a slug. */
         return !out->action.uses_network && !out->has_command &&
                !out->has_target && out->has_slug && !out->has_description &&
+               !out->has_body;
+    case SPG_ACTION_MACHINE_PAUSE:
+    case SPG_ACTION_MACHINE_RESUME:
+        /* A machine action names a target and nothing else. No command field:
+         * the whole point of a typed action is that the model cannot hand the
+         * executor a string to run. */
+        return !out->action.uses_network && !out->has_command &&
+               out->has_target && !out->has_slug && !out->has_description &&
                !out->has_body;
     case SPG_ACTION_FINISH:
         /* finish carries no side-effect fields. */

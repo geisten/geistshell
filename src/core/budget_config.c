@@ -25,6 +25,12 @@ static const struct budget_field budget_fields[] = {
     {"sim_actions", offsetof(struct spg_run_budgets, sim_actions), false, 0u},
     {"memory_actions", offsetof(struct spg_run_budgets, memory_actions), true,
      UINT64_MAX},
+    /* Optional like memory_actions: a config written before machine actions
+     * existed must keep loading, and an absent budget means unlimited rather
+     * than zero — zero would silently disable a capability the operator
+     * explicitly enabled. */
+    {"machine_actions", offsetof(struct spg_run_budgets, machine_actions), true,
+     UINT64_MAX},
     {"wall_ms", offsetof(struct spg_run_budgets, wall_ms), false, 0u},
     {"journal_bytes", offsetof(struct spg_run_budgets, journal_bytes), false,
      0u},

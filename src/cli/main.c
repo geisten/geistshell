@@ -23,12 +23,15 @@
 #include <geist.h>
 
 #include <errno.h>
+#include <fcntl.h>
 #include <math.h> /* isfinite: --temperature validation */
+#include <signal.h>
 #include <stdbool.h>
 #include <stdint.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <sys/file.h>
 #include <unistd.h> /* mkstemp/write/close/unlink: the guard-gate temp suite */
 
 #define CLI_TOKEN_CAPACITY 1024u
@@ -142,6 +145,8 @@ policy_capability_kind_name(const enum spg_policy_capability_kind kind) {
         return "simulator";
     case SPG_POLICY_CAP_MEMORY:
         return "memory";
+    case SPG_POLICY_CAP_MACHINE_PROCESS:
+        return "machine_process";
     }
     return "unknown";
 }
@@ -694,6 +699,56 @@ latest_result_sequence(const struct spg_orchestrator_result *result,
         return result->actor.model_input_sequence;
     }
     return fallback_sequence;
+}
+
+/* Set by SIGINT/SIGTERM and read by the cleanup path. A handler may only touch
+ * a volatile sig_atomic_t and call async-signal-safe functions; resuming
+ * processes from inside it would mean journalling from a signal handler, so the
+ * handler does the one safe thing and the normal path does the work. */
+static volatile sig_atomic_t interrupt_requested = 0;
+
+static void note_interrupt(int signum) {
+    (void)signum;
+    interrupt_requested = 1;
+}
+
+static void install_interrupt_handler(void) {
+    struct sigaction sa = {};
+    sa.sa_handler       = note_interrupt;
+    (void)sigemptyset(&sa.sa_mask);
+    /* No SA_RESTART on purpose: a blocking read should return EINTR so the run
+     * unwinds to the cleanup path instead of sitting there while a process
+     * stays stopped. */
+    sa.sa_flags = 0;
+    (void)sigaction(SIGINT, &sa, nullptr);
+    (void)sigaction(SIGTERM, &sa, nullptr);
+}
+
+/* One machine run per journal, enforced by an advisory lock on a sibling file.
+ *
+ * Recovery reads the journal and resumes whatever looks stranded — with two
+ * runs sharing a journal it would resume the other run's pauses mid-flight.
+ * The lock also prevents something that was already broken and simply had not
+ * been hit: two writers appending to one hash-chained journal interleave their
+ * records and destroy the chain.
+ *
+ * Advisory and non-blocking: a second run is told to use its own journal
+ * rather than made to wait for a run that may take hours. Returns -1 when the
+ * lock is held elsewhere. */
+static int lock_machine_journal(const char *journal_path) {
+    char path[4096];
+    if (snprintf(path, sizeof path, "%s.lock", journal_path) < 0) {
+        return -1;
+    }
+    const int fd = open(path, O_RDWR | O_CREAT | O_CLOEXEC, 0600);
+    if (fd < 0) {
+        return -1;
+    }
+    if (flock(fd, LOCK_EX | LOCK_NB) != 0) {
+        (void)close(fd);
+        return -1;
+    }
+    return fd;
 }
 
 static void update_run_usage(struct spg_policy_usage              *usage,
@@ -1829,6 +1884,9 @@ static int agent_command(int argc, char **argv) {
     uint64_t seed_override = 0u; /* per-attempt seed for best-of-N sampling */
     size_t   best_of       = 1u; /* #2: verifier-guided best-of-N attempts */
     bool     with_machine  = false; /* roadmap phase 3: (machine-state ...) */
+    /* Declared up here because every early `goto done` must find it defined —
+     * the cleanup path releases it. */
+    int         machine_lock = -1;
     const char *profile_path = nullptr; /* (process-profile ...) file */
     for (int i = 2; i < argc; i += 1) {
         if ((strcmp(argv[i], "--config") == 0 ||
@@ -2159,6 +2217,39 @@ static int agent_command(int argc, char **argv) {
             return 2;
         }
     }
+    static struct spg_machine_pause_ledger      pause_ledger;
+    char                                        machine_payload[1024];
+    const struct spg_machine_executor_workspace release_ws = {
+        .payload_capacity = sizeof machine_payload, .payload = machine_payload};
+    if (with_machine) {
+        machine_lock = lock_machine_journal(journal_path);
+        if (machine_lock < 0) {
+            fprintf(stderr,
+                    "agent: another machine run holds %s — give this one its "
+                    "own journal\n",
+                    journal_path);
+            rc = 2;
+            goto done;
+        }
+        install_interrupt_handler();
+        /* Second line of defence first: a previous run may have been killed
+         * between a pause and its resume, and that process is still stopped
+         * right now. Recover before observing, so the snapshot this run reasons
+         * about is not one we ourselves left broken. */
+        const struct spg_machine_executor_config recover_cfg = {
+            .actor_id          = 1u,
+            .timestamp_ns      = 1u,
+            .write_journal     = false,
+            .execution_enabled = true,
+        };
+        size_t recovered = 0u;
+        if (spg_machine_recover_journal(journal_path, &recover_cfg, &release_ws,
+                                        nullptr, &recovered) == SPG_OK &&
+            recovered > 0u) {
+            printf("recovered=%zu (processes left paused by an earlier run)\n",
+                   recovered);
+        }
+    }
     if (with_machine) {
         (void)spg_machine_sample_with_processes(
             1u, nullptr, 0u, nullptr,
@@ -2179,6 +2270,11 @@ static int agent_command(int argc, char **argv) {
          * to before this phase, which is what keeps the phase-0 freeze valid.
          */
         .machine = with_machine ? &machine : nullptr,
+        /* No profile means nothing is managed, and the gate denies every
+         * machine action as unmanaged. That is the right default: a run that
+         * never declared what it may touch may not touch anything. */
+        .profile      = profile_path != nullptr ? &profile : nullptr,
+        .pause_ledger = with_machine ? &pause_ledger : nullptr,
     };
     const struct spg_agent_run_config rcfg = {
         .max_steps   = max_steps,
@@ -2255,6 +2351,34 @@ static int agent_command(int argc, char **argv) {
     }
 
 done:
+    /* Nothing stays paused. Every path lands here — success, failure, max
+     * steps, budget, policy denial, interrupt — so the promise does not depend
+     * on how the run ended. */
+    if (with_machine) {
+        const struct spg_machine_executor_state release_state = {
+            .machine = &machine,
+            .journal = journal_open ? &journal : nullptr,
+            .ledger  = &pause_ledger,
+        };
+        const struct spg_machine_executor_config release_cfg = {
+            .actor_id          = 1u,
+            .timestamp_ns      = 1u,
+            .write_journal     = journal_open,
+            .execution_enabled = true,
+        };
+        size_t resumed = 0u;
+        (void)spg_machine_ledger_release(&pause_ledger, &release_state,
+                                         &release_cfg, &release_ws, &resumed);
+        if (resumed > 0u) {
+            printf("released=%zu%s\n", resumed,
+                   interrupt_requested ? " (interrupted)" : "");
+        }
+    }
+    if (machine_lock >= 0) {
+        /* Released after the pauses are: a second run must not start recovery
+         * while this one is still handing processes back. */
+        (void)close(machine_lock);
+    }
     if (journal_open) {
         (void)spg_journal_writer_close(&journal);
     }

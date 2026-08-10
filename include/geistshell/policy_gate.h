@@ -3,6 +3,7 @@
 
 #include "geistshell/graph.h"
 #include "geistshell/journal.h"
+#include "geistshell/process_profile.h"
 #include "geistshell/policy.h"
 #include "geistshell/policy_config.h"
 #include "geistshell/recommendation.h"
@@ -26,6 +27,16 @@ struct spg_policy_gate_state {
 
     struct spg_journal_writer *journal;
     struct spg_graph          *graph;
+
+    /* Roadmap phase 6 (#66). A machine action names a profile id; whether it
+     * may be performed depends on the profile's role and permissions, and on
+     * the process still being where it was observed. Both live HERE rather
+     * than in the executor: a safety property enforced downstream of the gate
+     * is one the journal cannot show was checked. Null = machine actions are
+     * denied outright, which is the right default for a run that never
+     * configured a profile. */
+    const struct spg_process_profile *profile;
+    const struct spg_machine_state   *machine;
 };
 
 struct spg_policy_gate_config {

@@ -54,6 +54,10 @@ static void accumulate_usage(struct spg_policy_usage *usage,
         add_u64(&usage->consumed.memory_actions,
                 result->recommendation.action.cost);
     }
+    if (spg_orchestrator_machine_executed(result)) {
+        add_u64(&usage->consumed.machine_actions,
+                result->recommendation.action.cost);
+    }
     if (spg_orchestrator_shell_executed(result)) {
         add_u64(&usage->consumed.shell_actions,
                 result->recommendation.action.cost);
