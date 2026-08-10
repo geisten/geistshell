@@ -1,7 +1,9 @@
 #ifndef GEISTSHELL_GRAMMAR_MASK_H
 #define GEISTSHELL_GRAMMAR_MASK_H
 
-#include "geistshell/policy.h" /* enum spg_action_kind */
+#include "geistshell/model_adapter.h" /* struct spg_model_capability */
+#include "geistshell/policy.h"        /* enum spg_action_kind */
+#include "geistshell/policy_config.h" /* struct spg_policy_config */
 
 #include <stdbool.h>
 #include <stddef.h>
@@ -77,6 +79,32 @@ struct spg_scaffold_seg {
  * *out and returns its length (0 for an unknown kind). */
 [[nodiscard]] size_t spg_scaffold_for_kind(enum spg_action_kind kind,
                                            const struct spg_scaffold_seg **out);
+
+/* The capability mask table for a policy, ready for
+ * spg_model_adapter_config.capabilities. Only ENABLED capabilities are
+ * included — a disabled one would let the decoder emit a value the policy gate
+ * then denies, which wastes a step and teaches the model nothing. A memory
+ * capability expands to one entry per memory_* action kind, because the mask is
+ * applied per chosen kind.
+ *
+ * Names live in the policy TEXT as spans, but the adapter borrows
+ * null-terminated strings that must outlive it — so they are copied into
+ * name_buf (caller-provided, no allocation) and out[].name points into it.
+ * name_buf must outlive the adapter just as out[] does.
+ *
+ * Returns the number of entries written. Entries stop at out_cap or when
+ * name_buf is full; a truncated table is still valid (a narrower mask), never
+ * malformed. Every caller that wants `agent --constrained` behaviour must build
+ * its table through here — `eval` building its own was how the two ended up
+ * running different decoders. */
+size_t spg_model_capabilities_from_policy(
+    const struct spg_policy_config *policy, size_t text_n, const char text[],
+    size_t name_buf_cap, char name_buf[], size_t out_cap,
+    struct spg_model_capability out[]);
+
+/* Capacity out[] needs so no enabled capability is dropped: the memory kind
+ * expands three-fold. */
+#define SPG_MODEL_CAPABILITY_MAX (SPG_POLICY_MAX_CAPABILITIES * 3u)
 
 #ifdef __cplusplus
 }

@@ -1,0 +1,10 @@
+(run
+ (model "fake.gguf")
+ (policy "examples/eval/fixture_policy.spg")
+ (scenario "examples/scenario.spg")
+ (corpus "examples/corpus.spg")
+ (journal "build/eval/fixture-demo.sgj")
+ (seed 42)
+ (budgets
+  (inference_steps 8) (tokens 256) (shell_actions 4) (sim_actions 8)
+  (memory_actions 8) (wall_ms 10000) (journal_bytes 1048576) (risk_bp 10000)))

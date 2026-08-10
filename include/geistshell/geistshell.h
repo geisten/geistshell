@@ -2,7 +2,6 @@
 #define GEISTSHELL_H
 
 #include "geistshell/agent_loop.h"
-#include "geistshell/allocator.h"
 #include "geistshell/actor.h"
 #include "geistshell/context.h"
 #include "geistshell/executor_boundary.h"

@@ -137,6 +137,68 @@ static const struct spg_scaffold_seg SEG_MEM_SLUG[] = {
     LIT(") (capability \""), CAP, LIT("\"" BUREAU_OK "(slug \""), STR,
     LIT("\") (reason \""), STR, LIT("\"))")};
 
+/* The action kinds one policy capability kind covers. Memory is one capability
+ * over three kinds, so the mask needs an entry per kind. */
+static size_t kinds_for_cap(const enum spg_policy_capability_kind cap,
+                            enum spg_action_kind out[static 3]) {
+    switch (cap) {
+    case SPG_POLICY_CAP_LOCAL_SHELL:
+        out[0] = SPG_ACTION_LOCAL_SHELL;
+        return 1u;
+    case SPG_POLICY_CAP_SSH_AUTH_PROBE:
+        out[0] = SPG_ACTION_SSH_AUTH_PROBE;
+        return 1u;
+    case SPG_POLICY_CAP_SIMULATOR:
+        out[0] = SPG_ACTION_SIMULATOR;
+        return 1u;
+    case SPG_POLICY_CAP_MEMORY:
+        out[0] = SPG_ACTION_MEMORY_SAVE;
+        out[1] = SPG_ACTION_MEMORY_DELETE;
+        out[2] = SPG_ACTION_MEMORY_READ;
+        return 3u;
+    }
+    return 0u;
+}
+
+size_t spg_model_capabilities_from_policy(
+    const struct spg_policy_config *policy, const size_t text_n,
+    const char text[], const size_t name_buf_cap, char name_buf[],
+    const size_t out_cap, struct spg_model_capability out[]) {
+    if (policy == nullptr || text == nullptr || name_buf == nullptr ||
+        out == nullptr || name_buf_cap == 0u) {
+        return 0u;
+    }
+    size_t n    = 0u;
+    size_t used = 0u; /* bytes taken in name_buf, including terminators */
+    for (size_t i = 0u; i < policy->capability_count && n < out_cap; i += 1u) {
+        const struct spg_policy_capability *cap = &policy->capabilities[i];
+        if (!cap->enabled) {
+            continue;
+        }
+        const struct spg_text_span span = cap->name;
+        if (span.offset > text_n || span.length > text_n - span.offset ||
+            span.length == 0u) {
+            continue;
+        }
+        if (span.length + 1u > name_buf_cap - used) {
+            break; /* names exhausted: a narrower mask, still valid */
+        }
+        char *name = name_buf + used;
+        memcpy(name, text + span.offset, span.length);
+        name[span.length] = '\0';
+        used += span.length + 1u;
+
+        enum spg_action_kind kinds[3];
+        const size_t         nk = kinds_for_cap(cap->kind, kinds);
+        for (size_t k = 0u; k < nk && n < out_cap; k += 1u) {
+            out[n].name = name;
+            out[n].kind = kinds[k];
+            n += 1u;
+        }
+    }
+    return n;
+}
+
 size_t spg_scaffold_for_kind(enum spg_action_kind kind,
                              const struct spg_scaffold_seg **out) {
     if (out == nullptr) {

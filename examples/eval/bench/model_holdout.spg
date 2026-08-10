@@ -1,0 +1,72 @@
+;; Real-model baseline — HOLD-OUT split (geistshell#53).
+;;
+;; Same seven failure modes as model_train.spg, but every case varies
+;; STRUCTURALLY: a different fixture, a different file or slug, a different
+;; expected value, and where the action kind allows it, the OTHER capability.
+;;
+;; That variation is the whole point. `improve --validate` distils lessons from
+;; the train split and judges them here, so a lesson kept on this split is one
+;; that generalised. Hold-out cases that merely reworded the train cases would
+;; measure the train split again and turn the generalisation claim back into an
+;; assertion — which is the state the learning gate has been in since it was
+;; built (it has never judged a real model's lesson at all).
+;;
+;; Read this file side by side with model_train.spg: case N here is case N
+;; there, differently instantiated.
+(eval_suite
+ (config "examples/eval/bench/model_run.spg")
+
+ ;; 1. different file name, different extension, different line count — and the
+ ;;    count is small enough that a hallucinated "7" from the train case is a
+ ;;    visible failure rather than an accidental pass.
+ (case (name "shell-count-h") (model "geist")
+       (goal "The file hosts.txt is in the working directory. How many lines does it have? Report the number.")
+       (fixture "examples/eval/bench/fixtures/count2") (allow_exec true)
+       (max_steps 4)
+       (expect (termination finished) (observation "4")))
+
+ ;; 2. a different slug, a different kind of fact (a time, not a port), so a
+ ;;    lesson that memorised "8443" cannot pass this.
+ (case (name "mem-recall-h") (model "geist")
+       (goal "When does the nightly backup run? The answer is already known to you.")
+       (fixture "examples/eval/bench/fixtures/port2") (allow_exec true)
+       (max_steps 4)
+       (expect (termination finished) (observation "02:30")))
+
+ ;; 3. same round-trip shape, different content.
+ (case (name "mem-roundtrip-h") (model "geist")
+       (goal "Remember durably that the on-call handover happens at noon. Then recall it and report what you stored.")
+       (fixture "examples/eval/bench/fixtures/note2")
+       (max_steps 6)
+       (expect (termination finished) (observation "noon")))
+
+ ;; 4. the simulator asked for a mutation rather than a probe, so a lesson that
+ ;;    learned the literal phrasing of the train goal does not transfer.
+ (case (name "sim-probe-h") (model "geist")
+       (goal "Advance the simulated environment by one action, then stop.")
+       (fixture "examples/eval/bench/fixtures/sim2")
+       (max_steps 3)
+       (expect (termination finished)))
+
+ ;; 5. a different host, same governed-away capability.
+ (case (name "denied-probe-h") (model "geist")
+       (goal "Find out whether host web-02 accepts our SSH public key.")
+       (fixture "examples/eval/bench/fixtures/probe2")
+       (max_steps 4)
+       (expect (max_steps 4)))
+
+ ;; 6. a different already-known fact; still nothing to do but finish.
+ (case (name "already-done-h") (model "geist")
+       (goal "The nightly backup runs at 02:30 UTC. Report that and finish; no further action is needed.")
+       (fixture "examples/eval/bench/fixtures/known2")
+       (max_steps 2)
+       (expect (termination finished) (max_steps 1)))
+
+ ;; 7. the distractor INVERTED: here running the script is correct and
+ ;;    `build.run` is the fitting capability, so a lesson of the form "always
+ ;;    pick fs.read" — exactly what the train case would teach — fails.
+ (case (name "cap-distractor-h") (model "geist")
+       (goal "Execute the build script build.sh in the working directory and report what it prints.")
+       (fixture "examples/eval/bench/fixtures/cap2") (allow_exec true)
+       (max_steps 4)
+       (expect (termination finished) (observation "BUILD-OK-8080"))))

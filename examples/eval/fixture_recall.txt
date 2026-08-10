@@ -1,0 +1,2 @@
+(recommend (kind memory_read) (capability "mem.rw") (cost 1) (uses_network false) (confidence_bp 6000) (reason "recall the seeded memory") (slug "staging-port"))
+(recommend (kind finish) (reason "done"))

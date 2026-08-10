@@ -9,6 +9,8 @@
 #include "geistshell/agent_run.h"
 #include "geistshell/eval.h"
 #include "geistshell/exec_command.h"
+#include "geistshell/fixture.h"
+#include "geistshell/grammar_mask.h"
 #include "geistshell/guard_ring.h"
 #include "geistshell/improve.h"
 #include "geistshell/mem_command.h"
@@ -17,6 +19,7 @@
 #include <geist.h>
 
 #include <errno.h>
+#include <math.h> /* isfinite: --temperature validation */
 #include <stdbool.h>
 #include <stdio.h>
 #include <stdint.h>
@@ -31,6 +34,10 @@
 #define CLI_PAYLOAD_BYTES 8192u
 #define CLI_CONTEXT_REFS 64u
 #define CLI_JOURNAL_VERIFY_PAYLOAD_BYTES 8192u
+/* Backing store for the constrained decoder's capability names: 32 caps of a
+ * plausible length with room to spare. Overflow narrows the mask, never
+ * corrupts it (see spg_model_capabilities_from_policy). */
+#define CLI_CAP_NAMES_BYTES 2048u
 #define CLI_REPLAY_PAYLOAD_BYTES CLI_CONTEXT_BYTES
 #define CLI_REPLAY_PREVIEW_BYTES 96u
 
@@ -619,6 +626,22 @@ static bool parse_positive_size(const char *text, size_t *out) {
     return parse_size(text, out) && *out > 0u;
 }
 
+/* Sampling temperature: finite and >= 0 (0 = greedy). Validated here rather
+ * than letting a typo reach the adapter as a NaN, where it surfaces as an
+ * opaque model-init failure. */
+static bool parse_temperature(const char *text, float *out) {
+    if (text == nullptr || out == nullptr || text[0] == '\0') {
+        return false;
+    }
+    char        *end = nullptr;
+    const double v   = strtod(text, &end);
+    if (end == text || *end != '\0' || !isfinite(v) || v < 0.0) {
+        return false;
+    }
+    *out = (float)v;
+    return true;
+}
+
 static void add_budget_u64(uint64_t *value, const uint64_t delta) {
     if (value == nullptr) {
         return;
@@ -1009,11 +1032,22 @@ static int sim_validate_command(const char *path) {
     return 0;
 }
 
+/* free + null the caller's pointer. Was geist's safe_free, reached through a
+ * PRIVATE engine header (deps/geist/src/base/heap.h) that moved in v0.3.1; the
+ * CLI already mixed it with plain free(), so this is the same behaviour without
+ * the cross-repo coupling. */
+static void free_ptr(void **ptr) {
+    if (ptr != nullptr && *ptr != nullptr) {
+        free(*ptr);
+        *ptr = nullptr;
+    }
+}
+
 static void free_file_buffer(struct file_buffer *buffer) {
     if (buffer == nullptr) {
         return;
     }
-    safe_free((void **)&buffer->data);
+    free_ptr((void **)&buffer->data);
     buffer->n = 0u;
 }
 
@@ -1044,18 +1078,18 @@ static enum spg_status read_file(const char *path, struct file_buffer *out) {
         return SPG_E_IO;
     }
     const size_t n = (size_t)end;
-    char *data = heap_alloc_aligned(n + 1u, alignof(char));
+    char *data = malloc(n + 1u);
     if (data == nullptr) {
         (void)fclose(file);
         return SPG_E_OOM;
     }
     if (n > 0u && fread(data, 1u, n, file) != n) {
-        safe_free((void **)&data);
+        free_ptr((void **)&data);
         (void)fclose(file);
         return SPG_E_IO;
     }
     if (fclose(file) != 0) {
-        safe_free((void **)&data);
+        free_ptr((void **)&data);
         return SPG_E_IO;
     }
     data[n] = '\0';
@@ -1072,7 +1106,7 @@ static enum spg_status span_to_cstr(const size_t input_n, const char input[],
         return SPG_E_INVALID_ARG;
     }
     *out = nullptr;
-    char *text = heap_alloc_aligned(span.length + 1u, alignof(char));
+    char *text = malloc(span.length + 1u);
     if (text == nullptr) {
         return SPG_E_OOM;
     }
@@ -1331,9 +1365,9 @@ done:
     if (model_open) {
         spg_model_adapter_destroy(&model);
     }
-    safe_free((void **)&policy_path);
-    safe_free((void **)&scenario_path);
-    safe_free((void **)&journal_path);
+    free_ptr((void **)&policy_path);
+    free_ptr((void **)&scenario_path);
+    free_ptr((void **)&journal_path);
     free_file_buffer(&run_text);
     free_file_buffer(&policy_text);
     free_file_buffer(&scenario_text);
@@ -1636,10 +1670,10 @@ done:
     if (model_open) {
         spg_model_adapter_destroy(&model);
     }
-    safe_free((void **)&policy_path);
-    safe_free((void **)&scenario_path);
-    safe_free((void **)&journal_path);
-    safe_free((void **)&model_path);
+    free_ptr((void **)&policy_path);
+    free_ptr((void **)&scenario_path);
+    free_ptr((void **)&journal_path);
+    free_ptr((void **)&model_path);
     free_file_buffer(&run_text);
     free_file_buffer(&policy_text);
     free_file_buffer(&scenario_text);
@@ -1841,7 +1875,10 @@ static int agent_command(int argc, char **argv) {
             continue;
         }
         if (strcmp(argv[i], "--temperature") == 0 && i + 1 < argc) {
-            sample_temp = (float)atof(argv[i + 1]);
+            if (!parse_temperature(argv[i + 1], &sample_temp)) {
+                fprintf(stderr, "agent: invalid --temperature value\n");
+                return 2;
+            }
             i += 1;
             continue;
         }
@@ -1965,51 +2002,18 @@ static int agent_command(int argc, char **argv) {
     }
     journal_open = true;
 
-    /* Constrained-decode capability table (#34): enabled policy caps only,
-     * names materialized to cstrings (heap, outlive the adapter), memory caps
-     * expanded to one entry per memory_* action kind. Empty unless --constrained. */
-    static struct spg_model_capability agent_caps[SPG_POLICY_MAX_CAPABILITIES *
-                                                  3u];
-    size_t agent_caps_n = 0u;
-    if (constrained) {
-        for (size_t i = 0u; i < policy.capability_count; i += 1u) {
-            const struct spg_policy_capability *cap = &policy.capabilities[i];
-            if (!cap->enabled) {
-                continue;
-            }
-            char *name = nullptr;
-            if (span_to_cstr(policy_text.n, policy_text.data, cap->name,
-                             &name) != SPG_OK) {
-                continue;
-            }
-            enum spg_action_kind kinds[3];
-            size_t               nk = 0u;
-            switch (cap->kind) {
-            case SPG_POLICY_CAP_LOCAL_SHELL:
-                kinds[nk++] = SPG_ACTION_LOCAL_SHELL;
-                break;
-            case SPG_POLICY_CAP_SSH_AUTH_PROBE:
-                kinds[nk++] = SPG_ACTION_SSH_AUTH_PROBE;
-                break;
-            case SPG_POLICY_CAP_SIMULATOR:
-                kinds[nk++] = SPG_ACTION_SIMULATOR;
-                break;
-            case SPG_POLICY_CAP_MEMORY:
-                kinds[nk++] = SPG_ACTION_MEMORY_SAVE;
-                kinds[nk++] = SPG_ACTION_MEMORY_DELETE;
-                kinds[nk++] = SPG_ACTION_MEMORY_READ;
-                break;
-            }
-            for (size_t k = 0u;
-                 k < nk &&
-                 agent_caps_n < sizeof agent_caps / sizeof agent_caps[0];
-                 k += 1u) {
-                agent_caps[agent_caps_n].name = name;
-                agent_caps[agent_caps_n].kind = kinds[k];
-                agent_caps_n += 1u;
-            }
-        }
-    }
+    /* Constrained-decode capability table (#34). Built through the shared
+     * helper so `eval` decodes identically (#51) — the two having their own
+     * copies is how they ended up on different decoders. Empty unless
+     * --constrained. */
+    static struct spg_model_capability agent_caps[SPG_MODEL_CAPABILITY_MAX];
+    static char                        agent_cap_names[CLI_CAP_NAMES_BYTES];
+    const size_t                       agent_caps_n =
+        constrained ? spg_model_capabilities_from_policy(
+                          &policy, policy_text.n, policy_text.data,
+                          sizeof agent_cap_names, agent_cap_names,
+                          sizeof agent_caps / sizeof agent_caps[0], agent_caps)
+                                            : 0u;
 
     /* Best-of-N needs the choice slots to vary between attempts (#2); if the
      * caller asked for it without a temperature, sample. */
@@ -2310,7 +2314,36 @@ struct eval_run_report {
     struct spg_eval_case_result results[EVAL_MAX_CASES]; /* last sample/case   */
     size_t                      runs[EVAL_MAX_CASES];        /* samples per case */
     size_t                      case_passed[EVAL_MAX_CASES]; /* k passed of N    */
+    /* #53 ladder, per case and summed. Monotone by construction:
+     * task <= gate <= parse. A pass-rate alone cannot tell "the model cannot
+     * produce the form" from "it produces a valid form and picks the wrong
+     * action", and those want opposite fixes. */
+    size_t                      case_parsed[EVAL_MAX_CASES];
+    size_t                      case_gated[EVAL_MAX_CASES];
+    size_t                      parsed; /* runs whose form was accepted        */
+    size_t                      gated;  /* ... and the policy gate allowed it  */
 };
+
+/* One run's rungs. REJECTED means the loop ran out of repairs on a malformed
+ * reply — the form never parsed. DENIED means it parsed and the policy gate
+ * refused it. Anything else got past both, whether or not it reached the goal. */
+static void eval_tally_ladder(struct eval_run_report *report,
+                              const size_t case_idx,
+                              const struct spg_eval_case_result *r) {
+    if (r->outcome == SPG_EVAL_FAIL_RUN_ERROR) {
+        return; /* the harness failed, not the model — no rung is earned */
+    }
+    if (r->termination == SPG_AGENT_LOOP_REJECTED) {
+        return;
+    }
+    report->case_parsed[case_idx] += 1u;
+    report->parsed += 1u;
+    if (r->termination == SPG_AGENT_LOOP_DENIED) {
+        return;
+    }
+    report->case_gated[case_idx] += 1u;
+    report->gated += 1u;
+}
 
 /* Per-invocation knobs. A null pointer (or zeroed struct) reproduces the
  * historical behaviour: one sample per case, no remote endpoint. */
@@ -2318,7 +2351,62 @@ struct eval_run_opts {
     const char *remote_url;   /* nullable: enables (model "remote") cases      */
     const char *remote_model; /* nullable: model name for remote cases         */
     size_t      samples;      /* 0/1 => run each case once                     */
+    /* #51: run (model "geist") cases through the SAME decoder as
+     * `agent --constrained`. Off by default so the shipped scripted-fake
+     * suites keep their recorded free-decode behaviour. */
+    bool        constrained;
+    /* #51: sampling temperature for real-model cases. 0.0 (the default) is
+     * greedy — which makes --samples N produce N identical runs, so a suite
+     * that wants variance must ask for it. */
+    float       temperature;
 };
+
+/* #52: one case-sample's sandbox. Big (the store carries an index cache), so
+ * the single instance lives in static storage at the call site. */
+struct eval_sandbox {
+    char                 dir[CLI_PATH_MAX];
+    struct spg_mem_store store;
+    bool                 store_open;
+};
+
+#define EVAL_SANDBOX_ROOT "build/eval"
+
+/* Rebuild sb for (case_name, sample): a pristine copy of fixture_dir, with the
+ * shared mind-palace overlaid into <dir>/mem when there is one.
+ *
+ * The overlay is what lets `improve` keep working: its candidate lesson lives
+ * in the shared store, and a case that simply ignored it would make the mint
+ * gate measure a run that never saw the lesson. Copying instead of sharing
+ * means the agent can also *write* memory without leaking into the next sample.
+ *
+ * Returns false if any step fails; the caller scores that sample as a run
+ * error rather than reporting a result measured against a dirty directory. */
+static bool eval_sandbox_prepare(struct eval_sandbox *sb, const char *case_name,
+                                 const size_t sample, const char *fixture_dir,
+                                 const struct spg_mem_store *shared) {
+    sb->store_open = false;
+    if (spg_fixture_sample_dir(EVAL_SANDBOX_ROOT, case_name, sample,
+                               sizeof sb->dir, sb->dir) != SPG_OK ||
+        spg_fixture_reset(sb->dir) != SPG_OK ||
+        spg_fixture_copy_into(sb->dir, fixture_dir) != SPG_OK) {
+        return false;
+    }
+    char mem[CLI_PATH_MAX];
+    const int n = snprintf(mem, sizeof mem, "%s/mem", sb->dir);
+    if (n < 0 || (size_t)n >= sizeof mem) {
+        return false;
+    }
+    /* The store creates the directory, so it exists before the overlay. */
+    if (spg_mem_store_open(&sb->store, mem) != SPG_OK) {
+        return false;
+    }
+    if (shared != nullptr &&
+        spg_fixture_copy_into(mem, shared->dir) != SPG_OK) {
+        return false;
+    }
+    sb->store_open = true;
+    return true;
+}
 
 /* Load a suite + its shared run/policy/scenario config and run every case with
  * the given mind-palace store (nullable) threaded into each run; fill *report.
@@ -2386,6 +2474,16 @@ static enum spg_status eval_run_suite(const char *suite_path,
         rc = SPG_E_FORMAT;
         goto done;
     }
+
+    /* #51: the constrained decoder's capability mask, built through the same
+     * helper the agent uses. Both buffers must outlive every adapter built
+     * below, hence static. */
+    static struct spg_model_capability eval_caps[SPG_MODEL_CAPABILITY_MAX];
+    static char                        eval_cap_names[CLI_CAP_NAMES_BYTES];
+    const size_t                       eval_caps_n =
+        spg_model_capabilities_from_policy(
+                                  &policy, policy_text.n, policy_text.data, sizeof eval_cap_names,
+                                  eval_cap_names, sizeof eval_caps / sizeof eval_caps[0], eval_caps);
 
     static struct spg_context_graph_ref   graph_refs[CLI_CONTEXT_REFS];
     static struct spg_context_memory_ref  memory_refs[CLI_CONTEXT_REFS];
@@ -2513,6 +2611,24 @@ static enum spg_status eval_run_suite(const char *suite_path,
             }
         }
 
+        /* #52: a case that declares a (fixture ...) runs inside a sandbox,
+         * rebuilt from the pristine fixture before EVERY sample. Without it a
+         * stateful case finds its own previous mutation and passes without
+         * performing the action under test. No fixture -> the historical
+         * behaviour (workdir ".", the shared store), byte for byte. */
+        /* #53: a real-model baseline needs a task per case; without this every
+         * case would inherit the one goal in the shared run config. */
+        static char case_goal[1024];
+        const bool  has_goal =
+            eval_str(nod, c, suite_text.n, suite_text.data, "goal", case_goal,
+                     sizeof case_goal);
+        char        fixture[CLI_PATH_MAX];
+        const bool  has_fixture =
+            eval_str(nod, c, suite_text.n, suite_text.data, "fixture", fixture,
+                     sizeof fixture);
+        static struct eval_sandbox sandbox_state;
+        const char *const          sandbox = sandbox_state.dir;
+
         const struct spg_agent_run_config rcfg = {
             .max_steps         = (size_t)max_steps,
             .max_repairs       = (size_t)max_repairs,
@@ -2521,6 +2637,8 @@ static enum spg_status eval_run_suite(const char *suite_path,
             .exec_stdout_cap   = sizeof sh_out,
             .exec_stderr_cap   = sizeof sh_err,
             .context_refs      = CLI_CONTEXT_REFS,
+            .exec_working_dir    = has_fixture ? sandbox : nullptr,
+            .exec_workdir_prefix = has_fixture ? sandbox : nullptr,
         };
         char       model_kind[16];
         const bool has_model =
@@ -2541,7 +2659,7 @@ static enum spg_status eval_run_suite(const char *suite_path,
             struct spg_model_adapter        model = {};
             struct spg_model_adapter_config mc    = {
                    .sampling = {.max_seq_len = 4096u,
-                                .temperature = 0.0f,
+                                .temperature = o->temperature,
                                 .top_p       = 1.0f,
                                 .top_k       = 0,
                                 .random_seed = run.seed},
@@ -2549,6 +2667,14 @@ static enum spg_status eval_run_suite(const char *suite_path,
             if (geist_case) {
                 mc.kind       = SPG_MODEL_ADAPTER_GEIST;
                 mc.model_path = model_path;
+                /* #51: the same decoder `agent --constrained` runs. Without
+                 * this the suite measures free decode — a configuration
+                 * nobody ships, and the one a tool-less model cannot pass. */
+                if (o->constrained) {
+                    mc.force_prefix     = "(recommend (kind ";
+                    mc.capabilities     = eval_caps;
+                    mc.capability_count = eval_caps_n;
+                }
             } else {
                 mc.kind         = SPG_MODEL_ADAPTER_REMOTE;
                 mc.endpoint_url = remote_url; /* may be null -> handled below */
@@ -2581,6 +2707,21 @@ static enum spg_status eval_run_suite(const char *suite_path,
                 for (size_t s = 0u; s < samples; s += 1u) {
                     struct spg_agent_run_inputs gin = inputs;
                     gin.model                       = &model;
+                    if (has_goal) {
+                        gin.goal = case_goal;
+                    }
+                    if (has_fixture) {
+                        if (!eval_sandbox_prepare(&sandbox_state, name, s,
+                                                  fixture, store)) {
+                            last = (struct spg_eval_case_result){
+                                .outcome = SPG_EVAL_FAIL_RUN_ERROR,
+                                .status  = SPG_E_IO};
+                            report->total += 1u;
+                            runs_in_case += 1u;
+                            continue;
+                        }
+                        gin.store = &sandbox_state.store;
+                    }
                     struct spg_policy_usage      usage = {};
                     struct spg_agent_loop_result loop  = {};
                     const enum spg_status        rs =
@@ -2593,6 +2734,7 @@ static enum spg_status eval_run_suite(const char *suite_path,
                         .repairs_used = loop.repairs_used,
                         .status       = rs,
                     };
+                    eval_tally_ladder(report, case_idx, &last);
                     if (last.outcome == SPG_EVAL_PASS) {
                         passed_in_case += 1u;
                         report->passed += 1u;
@@ -2616,9 +2758,25 @@ static enum spg_status eval_run_suite(const char *suite_path,
             const size_t script_n = split_script_lines(
                 script_text.data, script_text.n, script, EVAL_SCRIPT_MAX);
             for (size_t s = 0u; s < samples; s += 1u) {
+                struct spg_agent_run_inputs cin = inputs;
+                if (has_goal) {
+                    cin.goal = case_goal;
+                }
+                if (has_fixture) {
+                    if (!eval_sandbox_prepare(&sandbox_state, name, s,
+                                              fixture, store)) {
+                        last = (struct spg_eval_case_result){
+                            .outcome = SPG_EVAL_FAIL_RUN_ERROR,
+                            .status  = SPG_E_IO};
+                        report->total += 1u;
+                        runs_in_case += 1u;
+                        continue;
+                    }
+                    cin.store = &sandbox_state.store;
+                }
                 struct spg_eval_case_result r  = {};
                 const enum spg_status       cs = spg_eval_run_case(
-                          script, script_n, gate_marker, &inputs, &rcfg, &ws,
+                          script, script_n, gate_marker, &cin, &rcfg, &ws,
                           &expect, &r);
                 if (cs != SPG_OK) {
                     free_file_buffer(&script_text);
@@ -2626,6 +2784,7 @@ static enum spg_status eval_run_suite(const char *suite_path,
                     goto done;
                 }
                 last = r;
+                eval_tally_ladder(report, case_idx, &r);
                 if (r.outcome == SPG_EVAL_PASS) {
                     passed_in_case += 1u;
                     report->passed += 1u;
@@ -2667,10 +2826,15 @@ static void eval_print_report(const char *suite_path,
             printf(",\"runs\":%zu,\"passed\":%zu", report->runs[i],
                    report->case_passed[i]);
         }
+        /* #53: the ladder, appended so existing consumers keep matching. */
+        printf(",\"parsed\":%zu,\"gated\":%zu", report->case_parsed[i],
+               report->case_gated[i]);
         printf("}\n");
     }
-    printf("{\"suite\":\"%s\",\"total\":%zu,\"passed\":%zu}\n", suite_path,
-           report->total, report->passed);
+    printf("{\"suite\":\"%s\",\"total\":%zu,\"passed\":%zu"
+           ",\"parsed\":%zu,\"gated\":%zu}\n",
+           suite_path, report->total, report->passed, report->parsed,
+           report->gated);
 }
 
 static int eval_command(int argc, char **argv) {
@@ -2678,6 +2842,8 @@ static int eval_command(int argc, char **argv) {
     const char *remote_url   = nullptr;
     const char *remote_model = nullptr;
     size_t      samples      = 1u;
+    bool        constrained  = false;
+    float       temperature  = 0.0f;
     for (int i = 2; i < argc; i += 1) {
         if (strcmp(argv[i], "--remote-url") == 0 && i + 1 < argc) {
             remote_url = argv[++i];
@@ -2694,6 +2860,17 @@ static int eval_command(int argc, char **argv) {
             }
             continue;
         }
+        if (strcmp(argv[i], "--constrained") == 0) {
+            constrained = true;
+            continue;
+        }
+        if (strcmp(argv[i], "--temperature") == 0 && i + 1 < argc) {
+            if (!parse_temperature(argv[++i], &temperature)) {
+                fprintf(stderr, "eval: invalid --temperature value\n");
+                return 2;
+            }
+            continue;
+        }
         if (suite_path == nullptr && argv[i][0] != '-') {
             suite_path = argv[i];
             continue;
@@ -2704,14 +2881,17 @@ static int eval_command(int argc, char **argv) {
     if (suite_path == nullptr) {
         fprintf(stderr,
                 "usage: %s eval <suite.spg> [--remote-url <url>] "
-                "[--remote-model <name>] [--samples <N>]\n",
+                "[--remote-model <name>] [--samples <N>] [--constrained] "
+                "[--temperature <t>]\n",
                 argv[0]);
         return 2;
     }
     static struct eval_run_report report;
     const struct eval_run_opts    opts = {.remote_url   = remote_url,
                                           .remote_model = remote_model,
-                                          .samples      = samples};
+                                          .samples      = samples,
+                                          .constrained  = constrained,
+                                          .temperature  = temperature};
     const enum spg_status status = eval_run_suite(suite_path, nullptr, &opts,
                                                   &report);
     if (status != SPG_OK) {
@@ -2970,6 +3150,8 @@ static int improve_command(int argc, char **argv) {
     const char *remote_model  = nullptr;
     const char *validate_path = nullptr;
     size_t      samples       = 1u;
+    bool        constrained   = false;
+    float       temperature   = 0.0f;
     struct spg_guard_ring guards;
     spg_guard_ring_init(&guards);
     for (int i = 2; i < argc; i += 1) {
@@ -2996,6 +3178,19 @@ static int improve_command(int argc, char **argv) {
             }
             continue;
         }
+        /* #51: the gate must measure the decoder the agent actually runs — a
+         * lesson kept under free decode says nothing about a constrained one. */
+        if (strcmp(argv[i], "--constrained") == 0) {
+            constrained = true;
+            continue;
+        }
+        if (strcmp(argv[i], "--temperature") == 0 && i + 1 < argc) {
+            if (!parse_temperature(argv[++i], &temperature)) {
+                fprintf(stderr, "improve: invalid --temperature value\n");
+                return 2;
+            }
+            continue;
+        }
         if (strcmp(argv[i], "--guard") == 0 && i + 1 < argc) {
             /* a real run config re-run live to gate lessons (P5, Weg 2);
              * repeatable, deduped by shape=path in the ring */
@@ -3015,7 +3210,7 @@ static int improve_command(int argc, char **argv) {
                 "usage: %s improve <suite.spg> [--validate <holdout.spg>] "
                 "[--guard <run.spg>]... "
                 "[--memory-dir <d>] [--remote-url <url>] [--remote-model <name>] "
-                "[--samples <N>]\n",
+                "[--samples <N>] [--constrained] [--temperature <t>]\n",
                 argv[0]);
         return 2;
     }
@@ -3029,7 +3224,9 @@ static int improve_command(int argc, char **argv) {
 
     const struct eval_run_opts opts = {.remote_url   = remote_url,
                                        .remote_model = remote_model,
-                                       .samples      = samples};
+                                       .samples      = samples,
+                                       .constrained  = constrained,
+                                       .temperature  = temperature};
     static struct eval_run_report baseline;
     if (eval_run_suite(suite_path, &store, &opts, &baseline) != SPG_OK) {
         fprintf(stderr, "improve: baseline run failed\n");

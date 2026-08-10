@@ -5,7 +5,7 @@ GEIST_DIR := $(DEPS_DIR)/geist
 # Official upstream engine. Pin GEIST_REF to a commit/tag for reproducible
 # builds; override either on the command line to track a fork or branch.
 GEIST_REPO ?= https://github.com/geisten/geistlib.git
-GEIST_REF  ?= v0.2.1
+GEIST_REF  ?= v0.8.2
 
 BUILD_MODE ?= host-debug
 
@@ -62,7 +62,10 @@ else
     GEIST_LINK_FLAGS :=
 endif
 
-CPPFLAGS := -Iinclude -Iinclude/geistshell -I$(GEIST_DIR)/include -I$(GEIST_DIR) -I$(DEPS_DIR)/jsmn
+# Only the engine's PUBLIC headers. -I$(GEIST_DIR) (the repo root, which reached
+# private headers like src/base/heap.h) was dropped with the arena wrapper in
+# v0.3.1 — geistshell must not depend on libgeist internals.
+CPPFLAGS := -Iinclude -Iinclude/geistshell -I$(GEIST_DIR)/include -I$(DEPS_DIR)/jsmn
 WARNINGS := -Wall -Wextra -Wpedantic -Wconversion -Wshadow -Wstrict-prototypes
 CFLAGS := -std=c23 $(WARNINGS) $(SPG_OPT_FLAGS) $(CPPFLAGS) $(REMOTE_DEFS)
 LDLIBS := $(GEIST_LINK_FLAGS) -lm -lpthread $(REMOTE_LIBS)
@@ -73,7 +76,6 @@ SPG_SOURCES := \
     src/actor/recommendation.c \
     src/chat/chat_template.c \
     src/chat/chat_tools.c \
-    src/core/allocator.c \
     src/core/budget_config.c \
     src/core/hash.c \
     src/core/hmac.c \
@@ -83,6 +85,7 @@ SPG_SOURCES := \
     src/dsl/schema.c \
     src/dsl/sexpr.c \
     src/eval/eval.c \
+    src/eval/fixture.c \
     src/eval/guard_ring.c \
     src/exec/cmd_executor.c \
     src/exec/cmd_registry.c \
@@ -127,7 +130,7 @@ CHAT_OBJECTS := $(patsubst %.c,$(OBJ_DIR)/%.o,$(CHAT_SOURCES))
 TEST_BINS := $(patsubst test/%.c,$(TEST_DIR)/%,$(TEST_SOURCES))
 DEPS := $(SPG_OBJECTS:.o=.d) $(CLI_OBJECTS:.o=.d) $(CHAT_OBJECTS:.o=.d)
 
-.PHONY: all build-mode host-debug host-release sync-engine update-engine lib test clean distclean help
+.PHONY: all build-mode host-debug host-release sync-engine update-engine lib test bench clean distclean help
 
 all: host-debug
 
@@ -193,12 +196,18 @@ test: $(TEST_BINS) $(SPG_BIN)
 	done; \
 	exit $$status
 
+# Real-model benchmark. Deliberately NOT part of `test`: it needs a GGUF and
+# minutes, so a fresh checkout would be red. A missing model reports "skipped"
+# and exits 0 — see examples/eval/bench/model_bench.sh.
+bench: $(SPG_BIN)
+	@SPG_BIN="$(SPG_BIN)" sh examples/eval/bench/model_bench.sh
+
 $(TEST_DIR)/%: test/%.c $(SPG_LIB) $(GEIST_LIB)
 	@mkdir -p $(@D)
 	$(CC) $(CFLAGS) $(SPG_LD_FLAGS) -o $@ $< $(SPG_LIB) $(GEIST_LIB) $(LDLIBS)
 
 clean:
-	rm -rf build/host-debug build/host-release dist
+	rm -rf build/host-debug build/host-release build/eval build/test-fixture dist
 
 distclean: clean
 	rm -rf $(DEPS_DIR)
@@ -209,6 +218,7 @@ help:
 	@echo "  make host-debug      build ASan/UBSan host binary"
 	@echo "  make host-release    build optimized host binary"
 	@echo "  make test            build and run standalone tests"
+	@echo "  make bench           real-model benchmark (skips when no GGUF)"
 	@echo "  make REMOTE=1 ...     build with the libcurl remote model adapter"
 	@echo "  make sync-engine     clone deps/geist from GitHub if missing"
 	@echo "  make update-engine   checkout the pinned GEIST_REF in deps/geist"

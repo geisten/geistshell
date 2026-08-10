@@ -30,6 +30,7 @@ geistshell.**
 ```
 make            # build (host-debug: ASan/UBSan, strict warnings)
 make test       # framework-free C tests + CLI system tests
+make bench      # real-model benchmark (reports "skipped" when no GGUF is present)
 ./build/host-debug/bin/geistshell            # CLI: agent / eval / improve / run / exec / memory / replay / seal-journal / ...
 ./build/host-debug/bin/geistshell-chat       # governed chat REPL
 ```
@@ -134,12 +135,50 @@ through the remote adapter (`eval`/`improve` take `--remote-url`/`--remote-model
 key from `GEISTSHELL_API_KEY`) — so the *same* governed, journaled measurement
 now works against a strong model.
 
-Because a real model is non‑deterministic, `--samples N` runs each case N times
-and the per‑case verdict reports `k of N`; the self‑improvement gate compares the
-**summed** pass counts and still keeps a lesson only when the total does not drop
-(no net regression — larger N just lowers the variance). Each individual run
-stays byte‑identical‑replayable from its journal; only *which* run you get
-varies.
+`--samples N` runs each case N times and the per‑case verdict reports `k of N`;
+the self‑improvement gate compares the **summed** pass counts and still keeps a
+lesson only when the total does not drop (no net regression — larger N just
+lowers the variance). Each individual run stays byte‑identical‑replayable from
+its journal; only *which* run you get varies.
+
+Sampling has to be **asked for**, though: a local `(model "geist")` case is
+greedy by default, so `--samples 5` alone yields five identical runs. Pass
+`--temperature <t>` for the variance `k of N` is supposed to measure. A
+`(model "remote")` case varies on its own, server‑side.
+
+A case may declare `(fixture "<dir>")`. That directory is copied into
+`build/eval/<case>-<sample>/` **before every sample**, and the run's working
+directory and mind‑palace point there. Without it a stateful case finds its own
+previous mutation already in place and passes *without performing the action
+under test* — with `--samples N` that is N‑1 fabricated successes. A `mem/`
+subdirectory inside the fixture seeds the mind‑palace, so a case can be given
+memories to recall; when `improve` supplies a store, its contents are overlaid
+on top so a candidate lesson stays visible. Cases without a `(fixture ...)`
+behave exactly as before.
+
+Each case may carry its own `(goal "...")`, so a suite is a set of *tasks*
+rather than one task repeated — and no goal in the shipped baseline names an
+action kind or a capability, because that choice is the thing being measured.
+
+Verdicts report a **ladder**, not just a pass rate: `parsed` (the model emitted
+a form the parser accepts) → `gated` (…and the policy gate allowed the action)
+→ `passed` (…and the run reached the goal). The rungs are monotone, and they
+separate two failures that want opposite fixes — "cannot produce the form" and
+"produces a valid form, picks the wrong action".
+
+The real‑model baseline lives in `examples/eval/bench/`: seven `model_train.spg`
+cases and seven structurally varied `model_holdout.spg` twins (different
+fixture, different value, and where the kind allows it the other capability), so
+`improve --validate` judges a lesson on cases it was never derived from. Run
+them with `make bench`; they need a GGUF and are deliberately absent from
+`make test`, which instead checks that the suite is *structurally* sound.
+
+`--constrained` runs `(model "geist")` cases through the *same* decoder as
+`geistshell agent --constrained` — forced prefix, kind and capability masked
+against the policy. Without it the suite measures free decode, which is not a
+configuration anyone ships. Off by default so the scripted‑fake suites stay
+byte‑identical. Both flags also exist on `improve`, so the learning gate can
+measure the decoder the agent actually runs.
 
 ```
 $ geistshell improve examples/eval/improve_gated.spg --memory-dir ./mem
@@ -220,14 +259,19 @@ geistshell is arguably **ahead** of them.
 
 ### Where we are honestly behind
 
-- **Reasoning capability.** geistshell is *not* a smart agent. It runs a single
-  small local model with no constrained/grammar‑guided decoding (the engine does
-  not expose logit masking), so the model must emit a custom s‑expression
-  grammar from free text — which small models do unreliably. Real‑model runs
-  today frequently end in `rejected`. Frontier‑model agents with native
-  function‑calling and explicit planning are far ahead here. A **remote model
+- **Reasoning capability.** geistshell is *not* a smart agent. Structure is no
+  longer the bottleneck: `--constrained` decodes the recommendation form by
+  construction (forced opening, `kind` and `capability` masked against the
+  engine's logits via `geist_session_peek_logits`, the rest of the form emitted
+  as a per‑kind scaffold), so a model that was never tool‑trained still produces
+  a schema‑valid action. What remains behind is *choosing the right* action, and
+  the model adaptation around it — one hardcoded prompt shape for every model
+  family, no planner, no per‑model profile. Frontier agents with native
+  function‑calling and explicit planning are ahead here. A **remote model
   adapter** (shipped — see Roadmap) lets the *same* governed loop drive a
-  frontier model, closing this gap without touching the spine.
+  frontier model, closing that gap without touching the spine — at the cost of
+  the constrained decoder, which needs in‑process logit access. See
+  [docs/MODEL-ADAPTATION.md](docs/MODEL-ADAPTATION.md).
 - **Memory.** The mind‑palace is recency/keyword‑ranked Markdown — no embeddings
   or semantic retrieval. Behind SOTA agent memory.
 - **No planner / multi‑agent.** One action per tick; the loop is multi‑step but
@@ -284,7 +328,7 @@ the same governed loop** rather than compete on local‑model capability.
 | `src/eval/`, `src/improve/`             | evaluation harness + self‑improvement loop             |
 | `src/journal/`, `src/core/`, `src/dsl/` | hash‑chained journal, primitives, s‑expression DSL     |
 | `src/cli/`, `src/chat/`                 | CLI and chat REPL surfaces                             |
-| `deps/geist/`                           | the external inference engine (pinned `v0.2.1`)        |
+| `deps/geist/`                           | the external inference engine (pinned `v0.8.2`)        |
 
 ## Constraints
 
