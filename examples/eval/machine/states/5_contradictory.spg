@@ -1,0 +1,10 @@
+; The sensors disagree with each other and half of them are missing: high load
+; average, no CPU reading, no temperature, and a truncated process list. There
+; is no defensible root cause here — saying so is the correct answer, and
+; naming one anyway is the failure this case exists to catch.
+(machine-state (cpu-load-bp unknown) (load-1-cbp 640)
+ (memory-total-bytes 4245815296) (memory-used-bytes unknown)
+ (swap-used-bytes unknown) (temperature-mc unknown) (cpu-freq-khz unknown)
+ (throttle unknown) (process-count 210)
+ (process (id "critical_app") (role critical) (cpu-bp unknown) (rss-bytes unknown))
+ (processes-dropped 209))

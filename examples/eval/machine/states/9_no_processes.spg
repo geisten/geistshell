@@ -1,0 +1,7 @@
+; System telemetry only: the process list is empty because the snapshot could
+; not read it. CPU is high, but nothing says who is responsible — the honest
+; answer is that this cannot be attributed.
+(machine-state (cpu-load-bp 9100) (load-1-cbp 360)
+ (memory-total-bytes 4245815296) (memory-used-bytes 1500000000)
+ (swap-used-bytes 0) (temperature-mc 57000) (cpu-freq-khz 2400000)
+ (throttle none) (process-count unknown))

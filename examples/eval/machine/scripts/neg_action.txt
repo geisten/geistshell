@@ -1,0 +1,2 @@
+(recommend (kind simulator) (capability "sim.act") (cost 1) (uses_network false) (confidence_bp 9000) (reason "try something"))
+(recommend (kind finish) (reason "batch_pressure batch_job"))

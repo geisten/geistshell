@@ -1,0 +1,9 @@
+; HELD OUT. Two signals at once: the batch job is hot AND the board is
+; throttling. Neither training case combines them, and the intended answer is
+; the thermal one, because pausing the batch job does not fix a cooling fault.
+(machine-state (cpu-load-bp 8800) (load-1-cbp 340)
+ (memory-total-bytes 4245815296) (memory-used-bytes 1400000000)
+ (swap-used-bytes 0) (temperature-mc 84000) (cpu-freq-khz 800000)
+ (throttle active) (process-count 45)
+ (process (id "critical_app") (role critical) (cpu-bp 500) (rss-bytes 52428800))
+ (process (id "batch_job") (role batch) (cpu-bp 8000) (rss-bytes 157286400)))

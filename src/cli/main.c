@@ -14,6 +14,7 @@
 #include "geistshell/grammar_mask.h"
 #include "geistshell/guard_ring.h"
 #include "geistshell/improve.h"
+#include "geistshell/machine_fixture.h"
 #include "geistshell/mem_command.h"
 #include "geistshell/mem_store.h"
 #include "geistshell/process_profile.h"
@@ -2387,7 +2388,182 @@ struct eval_run_report {
     size_t case_gated[EVAL_MAX_CASES];
     size_t parsed; /* runs whose form was accepted        */
     size_t gated;  /* ... and the policy gate allowed it  */
+
+    /* #64 diagnosis metrics. A diagnosis case asks one question — what is
+     * wrong — so a bare pass rate hides the two failures that matter: naming
+     * the wrong cause, and proposing an action when none was asked for. */
+    bool diagnosis_suite; /* any case declared (expect (diagnosis ...)) */
+    char case_expected[EVAL_MAX_CASES][32];
+    char case_emitted[EVAL_MAX_CASES][32]; /* last sample's category */
+    /* The reason verbatim. A metric nobody can audit is a metric nobody
+     * should trust: the benchmark shows what the model actually wrote. */
+    char   case_reason[EVAL_MAX_CASES][96];
+    size_t case_diag_ok[EVAL_MAX_CASES]; /* samples naming the right cause */
+    size_t case_halluc[EVAL_MAX_CASES];  /* ... naming a process not present */
+    size_t case_action[EVAL_MAX_CASES];  /* ... proposing an action anyway */
+    size_t case_ctx_bytes[EVAL_MAX_CASES];
+    bool   case_heldout[EVAL_MAX_CASES];
 };
+
+/* The closed set of root causes. A diagnosis outside it is not a diagnosis:
+ * scoring free text would measure how the grader feels, not what the model
+ * concluded. */
+static const char *const diagnosis_categories[] = {
+    "healthy",         "batch_pressure",  "critical_pressure",
+    "memory_pressure", "thermal_anomaly", "inconclusive",
+};
+
+/* Diagnosis convention: (recommend (kind finish) (reason "<category> [<id>]")).
+ * `finish` carries no capability, consumes no budget and never reaches the
+ * policy gate, so a pure-diagnosis run needs no new action kind and no
+ * executor — the reason IS the output, and it is journalled like any other. */
+static void diagnosis_from_output(const char *text, char category[static 32],
+                                  char process[static 32]) {
+    category[0] = '\0';
+    process[0]  = '\0';
+    if (text == nullptr) {
+        return;
+    }
+    const char *reason = strstr(text, "(reason \"");
+    if (reason == nullptr) {
+        return;
+    }
+    reason += sizeof "(reason \"" - 1u;
+    size_t i = 0u;
+    while (i + 1u < 32u && reason[i] != '\0' && reason[i] != '"' &&
+           reason[i] != ' ') {
+        category[i] = reason[i];
+        i += 1u;
+    }
+    category[i] = '\0';
+    /* Gemma answered "healthy))" — the category is there, the model just kept
+     * closing parens inside the string. Scoring that as "no diagnosis" would
+     * measure punctuation, not reasoning. */
+    while (i > 0u && (category[i - 1u] == ')' || category[i - 1u] == '.' ||
+                      category[i - 1u] == ',')) {
+        i -= 1u;
+        category[i] = '\0';
+    }
+    bool known = false;
+    for (size_t k = 0u;
+         k < sizeof diagnosis_categories / sizeof diagnosis_categories[0];
+         k += 1u) {
+        known = known || strcmp(category, diagnosis_categories[k]) == 0;
+    }
+    if (!known) {
+        category[0] = '\0'; /* unrecognised -> no diagnosis, not a wrong one */
+        return;
+    }
+    (void)process;
+}
+
+/* Every token after the category, stripped of the punctuation a model wraps
+ * lists in. Returns false when there are no more.
+ *
+ * The first version of this read only the SECOND token and treated it as an
+ * id. Gemma writes `memory_pressure [critical_app, batch_job]`, so that
+ * counted "[critical_app," as an invented process and reported an 8/9
+ * hallucination rate for a model that had named two processes that were both
+ * present. Measuring the punctuation instead of the claim is worse than not
+ * measuring at all. */
+static bool next_reason_token(const char **cursor, char token[static 32]) {
+    const char *p = *cursor;
+    while (*p == ' ' || *p == '[' || *p == ']' || *p == ',' || *p == '(' ||
+           *p == ')') {
+        p += 1;
+    }
+    if (*p == '\0' || *p == '"') {
+        return false;
+    }
+    size_t n = 0u;
+    while (n + 1u < 32u && p[n] != '\0' && p[n] != '"' && p[n] != ' ' &&
+           p[n] != ',' && p[n] != ']' && p[n] != '[' && p[n] != ')') {
+        token[n] = p[n];
+        n += 1u;
+    }
+    token[n] = '\0';
+    *cursor  = p + n;
+    return n > 0u;
+}
+
+/* A named process that is not in the snapshot is invented — the sharpest
+ * hallucination signal available without a grader. */
+static bool
+diagnosis_names_absent_process(const struct spg_machine_state *state,
+                               const char                     *reason_text) {
+    if (state == nullptr || reason_text == nullptr) {
+        return false;
+    }
+    const char *cursor = strstr(reason_text, "(reason \"");
+    if (cursor == nullptr) {
+        return false;
+    }
+    cursor += sizeof "(reason \"" - 1u;
+    char token[32];
+    bool first = true;
+    while (next_reason_token(&cursor, token)) {
+        if (first) {
+            first = false; /* the category, not a process claim */
+            continue;
+        }
+        /* Only tokens that claim to be an id are judged. Process ids carry an
+         * underscore by convention (critical_app, batch_job); prose does not,
+         * and a model is allowed to write prose. */
+        if (strchr(token, '_') == nullptr) {
+            continue;
+        }
+        bool present = false;
+        for (size_t i = 0u; i < state->n_processes; i += 1u) {
+            present = present ||
+                      strcmp(state->processes[i].profile_id, token) == 0 ||
+                      strcmp(state->processes[i].name, token) == 0;
+        }
+        if (!present) {
+            return true;
+        }
+    }
+    return false;
+}
+
+/* Score one diagnosis run. Everything here is derived from what the run
+ * actually emitted — no grader, no second model judging the first. */
+static bool eval_tally_diagnosis(struct eval_run_report *report,
+                                 const size_t case_idx, const char *expected,
+                                 const char                     *model_output,
+                                 const struct spg_machine_state *state,
+                                 const struct spg_agent_loop_result *loop) {
+    char category[32];
+    char process[32];
+    diagnosis_from_output(model_output, category, process);
+    const char *reason =
+        model_output != nullptr ? strstr(model_output, "(reason \"") : nullptr;
+    if (reason != nullptr) {
+        reason += sizeof "(reason \"" - 1u;
+        size_t i = 0u;
+        while (i + 1u < sizeof report->case_reason[0] && reason[i] != '\0' &&
+               reason[i] != '"') {
+            report->case_reason[case_idx][i] = reason[i];
+            i += 1u;
+        }
+        report->case_reason[case_idx][i] = '\0';
+    }
+    (void)snprintf(report->case_emitted[case_idx],
+                   sizeof report->case_emitted[0], "%s",
+                   category[0] != '\0' ? category : "-");
+    if (category[0] != '\0' && strcmp(category, expected) == 0) {
+        report->case_diag_ok[case_idx] += 1u;
+    }
+    if (diagnosis_names_absent_process(state, model_output)) {
+        report->case_halluc[case_idx] += 1u;
+    }
+    /* A diagnosis needs exactly one step: emit finish. More means the model
+     * proposed something to DO — which nobody asked for, and which phase 6
+     * would have to deny. */
+    if (loop->steps_taken > 1u) {
+        report->case_action[case_idx] += 1u;
+    }
+    return category[0] != '\0' && strcmp(category, expected) == 0;
+}
 
 /* One run's rungs. REJECTED means the loop ran out of repairs on a malformed
  * reply — the form never parsed. DENIED means it parsed and the policy gate
@@ -2689,6 +2865,56 @@ static enum spg_status eval_run_suite(const char                 *suite_path,
         char        fixture[CLI_PATH_MAX];
         const bool has_fixture = eval_str(nod, c, suite_text.n, suite_text.data,
                                           "fixture", fixture, sizeof fixture);
+
+        /* #64: the scenario is a machine state. Reading it from a file rather
+         * than sampling the host is what makes a diagnosis case reproducible
+         * on a laptop with no Pi attached. */
+        static struct spg_machine_state case_machine;
+        char                            machine_path[CLI_PATH_MAX];
+        bool                            has_machine =
+            eval_str(nod, c, suite_text.n, suite_text.data, "machine",
+                     machine_path, sizeof machine_path);
+        if (has_machine) {
+            struct file_buffer mtext = {};
+            if (read_file(machine_path, &mtext) != SPG_OK) {
+                fprintf(stderr, "eval: cannot read machine fixture %s\n",
+                        machine_path);
+                rc = SPG_E_IO;
+                goto done;
+            }
+            const enum spg_status ms = spg_machine_state_parse(
+                mtext.n, mtext.data, ws.token_capacity, ws.tokens,
+                ws.node_capacity, ws.nodes, &case_machine);
+            free_file_buffer(&mtext);
+            if (ms != SPG_OK) {
+                fprintf(stderr, "eval: invalid machine fixture %s: %s\n",
+                        machine_path, spg_status_to_string(ms));
+                rc = ms;
+                goto done;
+            }
+            /* What this scenario costs the model's window. Measured from the
+             * block itself, so it is the same number on the scripted and the
+             * real-model path. */
+            char   block[SPG_MACHINE_RENDER_CAP];
+            size_t block_n = 0u;
+            if (spg_machine_state_render(&case_machine, sizeof block, block,
+                                         &block_n) == SPG_OK) {
+                report->case_ctx_bytes[case_idx] = block_n - 1u;
+            }
+        }
+        char       expected_diag[32] = {};
+        const bool has_diagnosis =
+            exp != SPG_SEXPR_INVALID_INDEX &&
+            eval_str(nod, exp, suite_text.n, suite_text.data, "diagnosis",
+                     expected_diag, sizeof expected_diag);
+        if (has_diagnosis) {
+            report->diagnosis_suite = true;
+            (void)snprintf(report->case_expected[case_idx],
+                           sizeof report->case_expected[0], "%s",
+                           expected_diag);
+            report->case_heldout[case_idx] =
+                eval_flag(nod, c, suite_text.n, suite_text.data, "heldout");
+        }
         static struct eval_sandbox sandbox_state;
         const char *const          sandbox = sandbox_state.dir;
 
@@ -2773,6 +2999,9 @@ static enum spg_status eval_run_suite(const char                 *suite_path,
                     if (has_goal) {
                         gin.goal = case_goal;
                     }
+                    if (has_machine) {
+                        gin.machine = &case_machine;
+                    }
                     if (has_fixture) {
                         if (!eval_sandbox_prepare(&sandbox_state, name, s,
                                                   fixture, store)) {
@@ -2798,6 +3027,17 @@ static enum spg_status eval_run_suite(const char                 *suite_path,
                         .status       = rs,
                     };
                     eval_tally_ladder(report, case_idx, &last);
+                    if (has_diagnosis &&
+                        !eval_tally_diagnosis(
+                            report, case_idx, expected_diag, model_output,
+                            has_machine ? &case_machine : nullptr, &loop) &&
+                        last.outcome == SPG_EVAL_PASS) {
+                        /* Terminating cleanly is not the same as being right.
+                         * A wrong root cause is a failed expectation, or the
+                         * suite's headline number would report agreement it
+                         * never measured. */
+                        last.outcome = SPG_EVAL_FAIL_OBSERVATION;
+                    }
                     if (last.outcome == SPG_EVAL_PASS) {
                         passed_in_case += 1u;
                         report->passed += 1u;
@@ -2825,6 +3065,9 @@ static enum spg_status eval_run_suite(const char                 *suite_path,
                 if (has_goal) {
                     cin.goal = case_goal;
                 }
+                if (has_machine) {
+                    cin.machine = &case_machine;
+                }
                 if (has_fixture) {
                     if (!eval_sandbox_prepare(&sandbox_state, name, s, fixture,
                                               store)) {
@@ -2848,6 +3091,18 @@ static enum spg_status eval_run_suite(const char                 *suite_path,
                 }
                 last = r;
                 eval_tally_ladder(report, case_idx, &r);
+                if (has_diagnosis) {
+                    const struct spg_agent_loop_result synth = {
+                        .steps_taken = r.steps_taken,
+                        .termination = r.termination};
+                    if (!eval_tally_diagnosis(
+                            report, case_idx, expected_diag, model_output,
+                            has_machine ? &case_machine : nullptr, &synth) &&
+                        r.outcome == SPG_EVAL_PASS) {
+                        r.outcome    = SPG_EVAL_FAIL_OBSERVATION;
+                        last.outcome = SPG_EVAL_FAIL_OBSERVATION;
+                    }
+                }
                 if (r.outcome == SPG_EVAL_PASS) {
                     passed_in_case += 1u;
                     report->passed += 1u;
@@ -2892,12 +3147,50 @@ static void eval_print_report(const char                   *suite_path,
         /* #53: the ladder, appended so existing consumers keep matching. */
         printf(",\"parsed\":%zu,\"gated\":%zu", report->case_parsed[i],
                report->case_gated[i]);
+        /* #64: only for diagnosis cases, so every other suite's output stays
+         * byte-identical to what its consumers already parse. */
+        if (report->case_expected[i][0] != '\0') {
+            printf(",\"expected\":\"%s\",\"emitted\":\"%s\",\"correct\":%zu"
+                   ",\"hallucinated\":%zu,\"action_proposed\":%zu"
+                   ",\"context_bytes\":%zu,\"heldout\":%s,\"reason\":\"%s\"",
+                   report->case_expected[i], report->case_emitted[i],
+                   report->case_diag_ok[i], report->case_halluc[i],
+                   report->case_action[i], report->case_ctx_bytes[i],
+                   report->case_heldout[i] ? "true" : "false",
+                   report->case_reason[i]);
+        }
         printf("}\n");
     }
     printf("{\"suite\":\"%s\",\"total\":%zu,\"passed\":%zu"
-           ",\"parsed\":%zu,\"gated\":%zu}\n",
+           ",\"parsed\":%zu,\"gated\":%zu",
            suite_path, report->total, report->passed, report->parsed,
            report->gated);
+    if (report->diagnosis_suite) {
+        size_t known_runs = 0u, known_ok = 0u, held_runs = 0u, held_ok = 0u;
+        size_t halluc = 0u, actions = 0u;
+        for (size_t i = 0u; i < report->ncases; i += 1u) {
+            if (report->case_expected[i][0] == '\0') {
+                continue;
+            }
+            /* Known and held-out are reported apart, never averaged: a suite
+             * that hides the held-out split can look strong while having
+             * learnt only the cases it was shown. */
+            if (report->case_heldout[i]) {
+                held_runs += report->runs[i];
+                held_ok += report->case_diag_ok[i];
+            } else {
+                known_runs += report->runs[i];
+                known_ok += report->case_diag_ok[i];
+            }
+            halluc += report->case_halluc[i];
+            actions += report->case_action[i];
+        }
+        printf(",\"diagnosis\":{\"known\":%zu,\"known_runs\":%zu"
+               ",\"heldout\":%zu,\"heldout_runs\":%zu"
+               ",\"hallucinated\":%zu,\"action_proposed\":%zu}",
+               known_ok, known_runs, held_ok, held_runs, halluc, actions);
+    }
+    printf("}\n");
 }
 
 static int eval_command(int argc, char **argv) {

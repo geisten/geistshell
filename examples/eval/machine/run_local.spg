@@ -1,0 +1,19 @@
+; Run config for the model-driven diagnosis suite. The model path is relative to
+; the checkout: symlink your GGUF directory in (`ln -s ~/models models`). Kept
+; out of examples/run.spg so the scripted suites stay hardware-independent.
+(run
+ (model "models/gemma4-e2b-Q4_K_M.gguf")
+ (policy "examples/policy.spg")
+ (scenario "examples/scenario.spg")
+ (corpus "examples/corpus.spg")
+ (journal "build/diagnosis-model.sgj")
+ (seed 42)
+ (budgets
+  (inference_steps 8)
+  (tokens 512)
+  (shell_actions 0)
+  (sim_actions 2)
+  (memory_actions 0)
+  (wall_ms 600000)
+  (journal_bytes 4194304)
+  (risk_bp 10000)))
