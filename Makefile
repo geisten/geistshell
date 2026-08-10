@@ -49,6 +49,11 @@ TEST_DIR  := $(BUILD_DIR)/test
 SPG_LIB := $(LIB_DIR)/libgeistshell.a
 SPG_BIN := $(BIN_DIR)/$(APP_NAME)
 CHAT_BIN := $(BIN_DIR)/geistshell-chat
+# Defined here rather than next to its rule: build-mode names it as a
+# prerequisite, and `:=` is expanded where it is read — a definition further
+# down would leave that list silently empty. The Pi found this; locally only
+# `make test` referenced it, and that line comes after the definition.
+WORKLOAD_BIN := $(BIN_DIR)/workload
 
 GEIST_LIB := $(GEIST_DIR)/lib/$(GEIST_TARGET)/$(GEIST_MODE)/libgeist.a
 
@@ -145,7 +150,7 @@ DEPS := $(SPG_OBJECTS:.o=.d) $(CLI_OBJECTS:.o=.d) $(CHAT_OBJECTS:.o=.d)
 
 all: host-debug
 
-build-mode: $(SPG_BIN) $(CHAT_BIN)
+build-mode: $(SPG_BIN) $(CHAT_BIN) $(WORKLOAD_BIN)
 
 host-debug:
 	$(MAKE) BUILD_MODE=host-debug build-mode
@@ -195,7 +200,12 @@ $(OBJ_DIR)/%.o: %.c
 	@mkdir -p $(@D)
 	$(CC) $(CFLAGS) -MMD -MP -c $< -o $@
 
-test: $(TEST_BINS) $(PROBE_BINS) $(SPG_BIN)
+# Phase 8 (#68): reproducible load for machine experiments. Same flags as
+# everything else, so a sanitiser build covers it too.
+$(WORKLOAD_BIN): examples/machine/workloads/workload.c | $(BIN_DIR)
+	$(CC) $(CFLAGS) -o $@ $<
+
+test: $(TEST_BINS) $(PROBE_BINS) $(SPG_BIN) $(WORKLOAD_BIN)
 	@status=0; \
 	for t in $(TEST_BINS); do \
 		echo "$$t"; \

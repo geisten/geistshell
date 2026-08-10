@@ -1887,6 +1887,10 @@ static int agent_command(int argc, char **argv) {
     /* Declared up here because every early `goto done` must find it defined —
      * the cleanup path releases it. */
     int         machine_lock = -1;
+    /* Milliseconds to let the machine settle before re-observing. Default 0
+     * keeps a scripted run synchronous; a live experiment needs enough for the
+     * counters to reflect its own action. */
+    uint64_t    settle_ms    = 0u;
     const char *profile_path = nullptr; /* (process-profile ...) file */
     for (int i = 2; i < argc; i += 1) {
         if ((strcmp(argv[i], "--config") == 0 ||
@@ -1962,6 +1966,11 @@ static int agent_command(int argc, char **argv) {
         }
         if (strcmp(argv[i], "--machine") == 0) {
             with_machine = true;
+            continue;
+        }
+        if (strcmp(argv[i], "--machine-settle-ms") == 0 && i + 1 < argc) {
+            settle_ms = (uint64_t)strtoull(argv[i + 1], nullptr, 10);
+            i += 1;
             continue;
         }
         if (strcmp(argv[i], "--process-profile") == 0 && i + 1 < argc) {
@@ -2270,6 +2279,12 @@ static int agent_command(int argc, char **argv) {
          * to before this phase, which is what keeps the phase-0 freeze valid.
          */
         .machine = with_machine ? &machine : nullptr,
+        /* Phase 7: re-observe between ticks. Without this the agent decides
+         * every tick on the snapshot it started with — the loop was closed in
+         * the eval harness and open in the real agent, which is precisely the
+         * gap only a real experiment could show. */
+        .refresh_machine   = with_machine,
+        .machine_settle_ms = settle_ms,
         /* No profile means nothing is managed, and the gate denies every
          * machine action as unmanaged. That is the right default: a run that
          * never declared what it may touch may not touch anything. */

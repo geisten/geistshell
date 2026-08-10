@@ -47,6 +47,18 @@ struct spg_agent_loop_config {
      * action has executed. Off = phase 6 behaviour, one snapshot per run. */
     bool refresh_machine;
 
+    /* How long to let the machine settle before re-observing, in milliseconds.
+     *
+     * A pause takes effect instantly, but the counters do not: CPU utilisation
+     * is a delta, and a sample taken microseconds after SIGSTOP still describes
+     * the load from before it. The first real experiment measured 100% CPU
+     * immediately after successfully pausing the process causing it.
+     *
+     * 0 keeps the loop synchronous, which is what a scripted case wants. A live
+     * experiment needs a value on the order of the sampling interval — this is
+     * an observation parameter, not hidden behaviour, so the caller sets it. */
+    uint64_t machine_settle_ms;
+
     /* Self-repair: when a step's recommendation is malformed, write the parse
      * error into the observation channel and retry instead of terminating, up
      * to this many times total. 0 = terminate on the first rejection. Repairs
