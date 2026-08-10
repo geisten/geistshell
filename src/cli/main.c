@@ -3472,6 +3472,46 @@ done:
     return rc;
 }
 
+/* Print a model-supplied string as a JSON value.
+ *
+ * The reason is verbatim model output — the one field in this report that an
+ * outside party writes. Emitting it raw put a newline inside a JSONL string
+ * and truncated the line, and the tooling downstream read the unparseable line
+ * as "this model produced no scoreable run". A measurement bug that looks like
+ * a model result is the worst kind, so the escaping lives at the boundary
+ * where the text becomes JSON. */
+static void print_json_string(const char *text) {
+    putchar('"');
+    for (size_t i = 0u; text != nullptr && text[i] != '\0'; i += 1u) {
+        const unsigned char c = (unsigned char)text[i];
+        switch (c) {
+        case '"':
+            fputs("\\\"", stdout);
+            break;
+        case '\\':
+            fputs("\\\\", stdout);
+            break;
+        case '\n':
+            fputs("\\n", stdout);
+            break;
+        case '\r':
+            fputs("\\r", stdout);
+            break;
+        case '\t':
+            fputs("\\t", stdout);
+            break;
+        default:
+            if (c < 0x20u) {
+                printf("\\u%04x", c);
+            } else {
+                putchar((int)c);
+            }
+            break;
+        }
+    }
+    putchar('"');
+}
+
 static void eval_print_report(const char                   *suite_path,
                               const struct eval_run_report *report) {
     for (size_t i = 0u; i < report->ncases; i += 1u) {
@@ -3498,14 +3538,15 @@ static void eval_print_report(const char                   *suite_path,
         /* #64: only for diagnosis cases, so every other suite's output stays
          * byte-identical to what its consumers already parse. */
         if (report->case_expected[i][0] != '\0') {
-            printf(",\"expected\":\"%s\",\"emitted\":\"%s\",\"correct\":%zu"
-                   ",\"hallucinated\":%zu,\"action_proposed\":%zu"
-                   ",\"context_bytes\":%zu,\"heldout\":%s,\"reason\":\"%s\"",
-                   report->case_expected[i], report->case_emitted[i],
+            printf(",\"expected\":\"%s\",\"emitted\":", report->case_expected[i]);
+            print_json_string(report->case_emitted[i]);
+            printf(",\"correct\":%zu,\"hallucinated\":%zu"
+                   ",\"action_proposed\":%zu,\"context_bytes\":%zu"
+                   ",\"heldout\":%s,\"reason\":",
                    report->case_diag_ok[i], report->case_halluc[i],
                    report->case_action[i], report->case_ctx_bytes[i],
-                   report->case_heldout[i] ? "true" : "false",
-                   report->case_reason[i]);
+                   report->case_heldout[i] ? "true" : "false");
+            print_json_string(report->case_reason[i]);
         }
         printf("}\n");
     }

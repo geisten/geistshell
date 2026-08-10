@@ -47,7 +47,21 @@ assert by["action_proposed"]["action_proposed"] == 1, by["action_proposed"]
 assert by["bracketed_ids"]["hallucinated"] == 0, by["bracketed_ids"]
 assert by["bracketed_ids"]["correct"] == 1, by["bracketed_ids"]
 assert by["punctuated_category"]["emitted"] == "healthy", by["punctuated_category"]
+# A model-supplied reason is the one field an outside party writes into this
+# report, and BitNet-large put a newline in one. Emitted raw it truncated the
+# JSONL line mid-string, and the tooling read the unparseable line as "this
+# model produced no scoreable run" — a measurement bug wearing a model result's
+# clothes. The guarantee is now unconditional: every line parses, whatever the
+# model wrote. The json.loads above IS that assertion, on every line.
+#
+# The case itself is rejected, and that is correct: a literal newline inside an
+# s-expression string is not valid input. The escaping matters for the RAW
+# output that reaches the report after such a rejection.
+assert by["reason_with_newline"]["parsed"] == 0, by["reason_with_newline"]
+assert by["reason_with_newline"]["termination"] == "rejected", \
+    by["reason_with_newline"]
 assert nsummary["passed"] == 4, nsummary
+assert nsummary["total"] == 6, nsummary
 PY
 
 echo "test_cli_diagnosis: PASS"

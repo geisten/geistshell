@@ -36,6 +36,16 @@
        (max_steps 2)
        (expect (termination finished) (diagnosis "batch_pressure")))
 
+ ; A reason containing a newline and quotes. BitNet-large produced one, the
+ ; report emitted it raw, the JSONL line was truncated mid-string, and the
+ ; tooling read the unparseable line as "this model produced no scoreable run".
+ ; A measurement bug that looks like a model result.
+ (case (name "reason_with_newline")
+       (machine "examples/eval/machine/states/6_healthy.spg")
+       (script "examples/eval/machine/scripts/neg_newline.txt")
+       (max_steps 2)
+       (expect (termination finished) (diagnosis "healthy")))
+
  ; Also a real Gemma answer: the category is right, the model just kept closing
  ; parens inside the string. Scoring that as "no diagnosis" would measure
  ; punctuation instead of reasoning.
