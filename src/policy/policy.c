@@ -41,6 +41,8 @@ cap_kind_for_action(const enum spg_action_kind kind) {
     case SPG_ACTION_MACHINE_PAUSE:
     case SPG_ACTION_MACHINE_RESUME:
         return SPG_POLICY_CAP_MACHINE_PROCESS;
+    case SPG_ACTION_MACHINE_FAN:
+        return SPG_POLICY_CAP_MACHINE_THERMAL;
     default:
         return SPG_POLICY_CAP_LOCAL_SHELL;
     }
@@ -50,7 +52,8 @@ static bool action_kind_valid(const enum spg_action_kind kind) {
     return kind == SPG_ACTION_LOCAL_SHELL || kind == SPG_ACTION_SSH_AUTH_PROBE ||
            kind == SPG_ACTION_SIMULATOR || kind == SPG_ACTION_MEMORY_SAVE ||
            kind == SPG_ACTION_MEMORY_DELETE || kind == SPG_ACTION_MEMORY_READ ||
-           kind == SPG_ACTION_MACHINE_PAUSE || kind == SPG_ACTION_MACHINE_RESUME;
+           kind == SPG_ACTION_MACHINE_PAUSE ||
+           kind == SPG_ACTION_MACHINE_RESUME || kind == SPG_ACTION_MACHINE_FAN;
 }
 
 static uint64_t consumed_for_action(const struct spg_policy_usage *usage,
@@ -68,6 +71,7 @@ static uint64_t consumed_for_action(const struct spg_policy_usage *usage,
         return usage->consumed.memory_actions;
     case SPG_ACTION_MACHINE_PAUSE:
     case SPG_ACTION_MACHINE_RESUME:
+    case SPG_ACTION_MACHINE_FAN:
         return usage->consumed.machine_actions;
     default:
         return UINT64_MAX;
@@ -89,6 +93,7 @@ static uint64_t global_budget_for_action(const struct spg_policy_config *policy,
         return policy->budgets.memory_actions;
     case SPG_ACTION_MACHINE_PAUSE:
     case SPG_ACTION_MACHINE_RESUME:
+    case SPG_ACTION_MACHINE_FAN:
         return policy->budgets.machine_actions;
     default:
         return 0u;

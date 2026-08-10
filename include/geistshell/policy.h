@@ -27,6 +27,9 @@ enum spg_action_kind {
      * "the policy said yes". */
     SPG_ACTION_MACHINE_PAUSE,
     SPG_ACTION_MACHINE_RESUME,
+    /* Machine B (#75): the fan. Continuous rather than discrete, and the world
+     * answers with a lag — but the governance path is identical. */
+    SPG_ACTION_MACHINE_FAN,
     /* Control action: the agent declares the task complete. Carries no
      * capability and consumes no budget; the loop terminates on it and it never
      * reaches the policy gate. */
