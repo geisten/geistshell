@@ -9,7 +9,7 @@
  * of the strings. */
 static const enum spg_action_kind ALL_KINDS[] = {
     SPG_ACTION_LOCAL_SHELL, SPG_ACTION_SSH_AUTH_PROBE, SPG_ACTION_SIMULATOR,
-    SPG_ACTION_MEMORY_SAVE, SPG_ACTION_MEMORY_DELETE, SPG_ACTION_MEMORY_READ,
+    SPG_ACTION_MEMORY_SAVE, SPG_ACTION_MEMORY_DELETE,  SPG_ACTION_MEMORY_READ,
     SPG_ACTION_FINISH,
 };
 static const size_t KIND_COUNT = sizeof ALL_KINDS / sizeof ALL_KINDS[0];
@@ -90,7 +90,8 @@ bool spg_kind_prefix_ok(const char *emitted, const char *piece) {
 
 bool spg_kind_complete(const char *emitted) {
     const char *names[KIND_COUNT];
-    return spg_choice_complete(names, spg_kind_names(names, KIND_COUNT), emitted);
+    return spg_choice_complete(names, spg_kind_names(names, KIND_COUNT),
+                               emitted);
 }
 
 bool spg_kind_from_text(const char *emitted, enum spg_action_kind *out) {
@@ -118,30 +119,74 @@ bool spg_kind_from_text(const char *emitted, enum spg_action_kind *out) {
 #define BUREAU_OK ") (cost 1) (uses_network false) (confidence_bp 5000) "
 #define BUREAU_NET ") (cost 1) (uses_network true) (confidence_bp 5000) "
 
-static const struct spg_scaffold_seg SEG_FINISH[] = {
-    LIT(") (reason \""), STR, LIT("\"))")};
+static const struct spg_scaffold_seg SEG_FINISH[] = {LIT(") (reason \""), STR,
+                                                     LIT("\"))")};
+
+/* Machine actions carry a target and no command — the shape that keeps a shell
+ * string out of the action space (#66, #75). */
+static const struct spg_scaffold_seg SEG_MACHINE[] = {
+    LIT(") (capability \""),
+    CAP,
+    LIT("\"" BUREAU_OK "(target \""),
+    STR,
+    LIT("\") (reason \""),
+    STR,
+    LIT("\"))")};
 static const struct spg_scaffold_seg SEG_SIMULATOR[] = {
     LIT(") (capability \""), CAP, LIT("\"" BUREAU_OK "(reason \""), STR,
     LIT("\"))")};
 static const struct spg_scaffold_seg SEG_LOCAL_SHELL[] = {
-    LIT(") (capability \""), CAP, LIT("\"" BUREAU_OK "(command \""), STR,
-    LIT("\") (reason \""), STR, LIT("\"))")};
+    LIT(") (capability \""),
+    CAP,
+    LIT("\"" BUREAU_OK "(command \""),
+    STR,
+    LIT("\") (reason \""),
+    STR,
+    LIT("\"))")};
 static const struct spg_scaffold_seg SEG_SSH[] = {
-    LIT(") (capability \""), CAP, LIT("\"" BUREAU_NET "(target \""), STR,
-    LIT("\") (reason \""), STR, LIT("\"))")};
+    LIT(") (capability \""),
+    CAP,
+    LIT("\"" BUREAU_NET "(target \""),
+    STR,
+    LIT("\") (reason \""),
+    STR,
+    LIT("\"))")};
 static const struct spg_scaffold_seg SEG_MEM_SAVE[] = {
-    LIT(") (capability \""), CAP, LIT("\"" BUREAU_OK "(slug \""), STR,
-    LIT("\") (description \""), STR, LIT("\") (body \""), STR,
-    LIT("\") (reason \""), STR, LIT("\"))")};
+    LIT(") (capability \""),
+    CAP,
+    LIT("\"" BUREAU_OK "(slug \""),
+    STR,
+    LIT("\") (description \""),
+    STR,
+    LIT("\") (body \""),
+    STR,
+    LIT("\") (reason \""),
+    STR,
+    LIT("\"))")};
 static const struct spg_scaffold_seg SEG_MEM_SLUG[] = {
-    LIT(") (capability \""), CAP, LIT("\"" BUREAU_OK "(slug \""), STR,
-    LIT("\") (reason \""), STR, LIT("\"))")};
+    LIT(") (capability \""),
+    CAP,
+    LIT("\"" BUREAU_OK "(slug \""),
+    STR,
+    LIT("\") (reason \""),
+    STR,
+    LIT("\"))")};
 
 /* The action kinds one policy capability kind covers. Memory is one capability
  * over three kinds, so the mask needs an entry per kind. */
 static size_t kinds_for_cap(const enum spg_policy_capability_kind cap,
                             enum spg_action_kind out[static 3]) {
     switch (cap) {
+    /* Machine kinds were missing here since #66 — the constrained decoder
+     * could not offer them at all, which -Wswitch only surfaced when #75 added
+     * a third. A closed enum is only closed if every switch over it is. */
+    case SPG_POLICY_CAP_MACHINE_PROCESS:
+        out[0] = SPG_ACTION_MACHINE_PAUSE;
+        out[1] = SPG_ACTION_MACHINE_RESUME;
+        return 2u;
+    case SPG_POLICY_CAP_MACHINE_THERMAL:
+        out[0] = SPG_ACTION_MACHINE_FAN;
+        return 1u;
     case SPG_POLICY_CAP_LOCAL_SHELL:
         out[0] = SPG_ACTION_LOCAL_SHELL;
         return 1u;
@@ -199,7 +244,7 @@ size_t spg_model_capabilities_from_policy(
     return n;
 }
 
-size_t spg_scaffold_for_kind(enum spg_action_kind kind,
+size_t spg_scaffold_for_kind(enum spg_action_kind            kind,
                              const struct spg_scaffold_seg **out) {
     if (out == nullptr) {
         return 0u;
@@ -210,6 +255,10 @@ size_t spg_scaffold_for_kind(enum spg_action_kind kind,
         return sizeof(arr) / sizeof(arr)[0];                                   \
     } while (0)
     switch (kind) {
+    case SPG_ACTION_MACHINE_PAUSE:
+    case SPG_ACTION_MACHINE_RESUME:
+    case SPG_ACTION_MACHINE_FAN:
+        RET(SEG_MACHINE);
     case SPG_ACTION_FINISH:
         RET(SEG_FINISH);
     case SPG_ACTION_SIMULATOR:

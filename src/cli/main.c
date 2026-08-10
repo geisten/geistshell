@@ -18,6 +18,7 @@
 #include "geistshell/machine_fixture.h"
 #include "geistshell/mem_command.h"
 #include "geistshell/mem_store.h"
+#include "geistshell/model_profile.h"
 #include "geistshell/process_profile.h"
 
 #include <geist.h>
@@ -149,6 +150,8 @@ policy_capability_kind_name(const enum spg_policy_capability_kind kind) {
         return "memory";
     case SPG_POLICY_CAP_MACHINE_PROCESS:
         return "machine_process";
+    case SPG_POLICY_CAP_MACHINE_THERMAL:
+        return "machine_thermal";
     }
     return "unknown";
 }
@@ -2181,6 +2184,10 @@ static int agent_command(int argc, char **argv) {
     static struct spg_context_memory_ref  memory_refs[CLI_CONTEXT_REFS];
     static struct spg_context_journal_ref journal_refs[CLI_CONTEXT_REFS];
     static char                           context[CLI_CONTEXT_BYTES];
+    /* #54: scratch for the chat-framed prompt. Room for the context plus the
+     * turn markers; a template that would not fit falls back to the bare
+     * prompt rather than sending half a format. */
+    static char framed[CLI_CONTEXT_BYTES + 256u];
     static char                           model_output[CLI_MODEL_OUTPUT_BYTES];
     static struct spg_sexpr_token         rec_tokens[CLI_TOKEN_CAPACITY];
     static struct spg_sexpr_node          rec_nodes[CLI_NODE_CAPACITY];
@@ -2195,6 +2202,11 @@ static int agent_command(int argc, char **argv) {
     const struct spg_agent_run_workspace ws = {
         .context_capacity        = sizeof context,
         .context                 = context,
+        /* #54: scratch for the chat-framed prompt. Sized like the context plus
+         * the markers; a template that would not fit falls back to the bare
+         * prompt rather than sending half a format. */
+        .framed_capacity         = sizeof framed,
+        .framed                  = framed,
         .model_output_capacity   = sizeof model_output,
         .model_output            = model_output,
         .graph_ref_capacity      = CLI_CONTEXT_REFS,
@@ -2764,6 +2776,7 @@ static void eval_tally_ladder(struct eval_run_report            *report,
  * historical behaviour: one sample per case, no remote endpoint. */
 struct eval_run_opts {
     uint32_t    ablate;     /* phase 11: parts of the snapshot to withhold */
+    const char *profile_model_path; /* #54: how to frame the prompt */
     const char *remote_url; /* nullable: enables (model "remote") cases      */
     const char *remote_model; /* nullable: model name for remote cases */
     size_t      samples; /* 0/1 => run each case once                     */
@@ -2904,6 +2917,10 @@ static enum spg_status eval_run_suite(const char                 *suite_path,
     static struct spg_context_memory_ref  memory_refs[CLI_CONTEXT_REFS];
     static struct spg_context_journal_ref journal_refs[CLI_CONTEXT_REFS];
     static char                           context[CLI_CONTEXT_BYTES];
+    /* #54: scratch for the chat-framed prompt. Room for the context plus the
+     * turn markers; a template that would not fit falls back to the bare
+     * prompt rather than sending half a format. */
+    static char framed[CLI_CONTEXT_BYTES + 256u];
     static char                           model_output[CLI_MODEL_OUTPUT_BYTES];
     static struct spg_sexpr_token         rtok[CLI_TOKEN_CAPACITY];
     static struct spg_sexpr_node          rnod[CLI_NODE_CAPACITY];
@@ -2917,6 +2934,11 @@ static enum spg_status eval_run_suite(const char                 *suite_path,
     const struct spg_agent_run_workspace    ws = {
         .context_capacity        = sizeof context,
         .context                 = context,
+        /* #54: scratch for the chat-framed prompt. Sized like the context plus
+         * the markers; a template that would not fit falls back to the bare
+         * prompt rather than sending half a format. */
+        .framed_capacity         = sizeof framed,
+        .framed                  = framed,
         .model_output_capacity   = sizeof model_output,
         .model_output            = model_output,
         .graph_ref_capacity      = CLI_CONTEXT_REFS,
@@ -2963,6 +2985,37 @@ static enum spg_status eval_run_suite(const char                 *suite_path,
         : (env_api_url != nullptr && env_api_url[0] != '\0')   ? env_api_url
                                                                : nullptr;
     const char *api_key = getenv("GEISTSHELL_API_KEY");
+
+    /* #54: loaded once for the whole suite. A profile is the run's provenance —
+     * a benchmark number without the profile that produced it cannot be
+     * reproduced, which is why this is a file and not a set of flags. */
+    static struct spg_model_profile model_profile;
+    model_profile = (struct spg_model_profile){};
+    if (o->profile_model_path != nullptr) {
+        struct file_buffer ptext = {};
+        if (read_file(o->profile_model_path, &ptext) != SPG_OK) {
+            fprintf(stderr, "eval: cannot read model profile %s\n",
+                    o->profile_model_path);
+            rc = SPG_E_IO;
+            goto done;
+        }
+        const enum spg_status ms = spg_model_profile_load(
+            ptext.n, ptext.data, ws.token_capacity, ws.tokens,
+            ws.node_capacity, ws.nodes, &model_profile);
+        free_file_buffer(&ptext);
+        if (ms != SPG_OK) {
+            fprintf(stderr, "eval: invalid model profile %s: %s\n",
+                    o->profile_model_path, spg_status_to_string(ms));
+            rc = ms;
+            goto done;
+        }
+        fprintf(stderr, "eval: model profile %s (template %s)\n",
+                model_profile.name,
+                spg_chat_template_to_string(
+                    model_profile.chat_template == SPG_TEMPLATE_AUTO
+                        ? spg_template_for_arch(model_profile.arch)
+                        : model_profile.chat_template));
+    }
 
     rc = SPG_OK;
     for (uint32_t c = spg_sexpr_first_child(nod, 0u);
@@ -3298,6 +3351,9 @@ static enum spg_status eval_run_suite(const char                 *suite_path,
                         gin.profile      = &case_profile;
                         gin.pause_ledger = &case_pause_ledger;
                     }
+                    if (model_profile.present) {
+                        gin.profile_model = &model_profile;
+                    }
                     if (has_goal_file) {
                         gin.machine_goal = &case_machine_goal;
                     }
@@ -3599,7 +3655,15 @@ static int eval_command(int argc, char **argv) {
      * model actually uses. One mask applied at render time — no variant of the
      * renderer per experiment. */
     uint32_t ablate = SPG_ABLATE_NONE;
+    /* #54: how to speak to this model. Precedence is CLI > profile file >
+     * auto-detect, so a flag always beats a file and a file always beats the
+     * guess. */
+    const char *profile_model_path = nullptr;
     for (int i = 2; i < argc; i += 1) {
+        if (strcmp(argv[i], "--model-profile") == 0 && i + 1 < argc) {
+            profile_model_path = argv[++i];
+            continue;
+        }
         if (strcmp(argv[i], "--ablate") == 0 && i + 1 < argc) {
             const char *spec = argv[++i];
             const struct {
@@ -3683,7 +3747,9 @@ static int eval_command(int argc, char **argv) {
                                           .samples      = samples,
                                           .constrained  = constrained,
                                           .temperature  = temperature,
-                                          .ablate       = ablate};
+                                          .ablate       = ablate,
+                                          .profile_model_path =
+                                              profile_model_path};
     const enum spg_status         status =
         eval_run_suite(suite_path, nullptr, &opts, &report);
     if (status != SPG_OK) {

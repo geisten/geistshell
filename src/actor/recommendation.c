@@ -134,6 +134,10 @@ static bool parse_action_kind(const size_t input_n, const char input[],
         *out = SPG_ACTION_MACHINE_RESUME;
         return true;
     }
+    if (spg_sexpr_span_eq_cstr(input_n, input, span, "machine_set_fan")) {
+        *out = SPG_ACTION_MACHINE_FAN;
+        return true;
+    }
     if (spg_sexpr_span_eq_cstr(input_n, input, span, "finish")) {
         *out = SPG_ACTION_FINISH;
         return true;

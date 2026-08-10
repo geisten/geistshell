@@ -113,9 +113,11 @@ SPG_SOURCES := \
     src/machine/process.c \
     src/machine/process_profile.c \
     src/machine/telemetry.c \
+    src/machine/thermal.c \
     src/machine/telemetry_host.c \
     src/model/grammar_mask.c \
     src/model/model_adapter.c \
+    src/model/model_profile.c \
     src/model/model_remote_codec.c \
     src/model/model_resolve.c \
     src/policy/policy.c \

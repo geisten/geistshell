@@ -27,6 +27,8 @@ enum spg_policy_capability_kind {
     SPG_POLICY_CAP_MEMORY,
     /* machine.process.pause / machine.process.resume */
     SPG_POLICY_CAP_MACHINE_PROCESS,
+    /* machine.thermal.fan (#75) */
+    SPG_POLICY_CAP_MACHINE_THERMAL,
 };
 
 struct spg_policy_capability {

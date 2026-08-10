@@ -1,0 +1,11 @@
+; The other hypothesis: BitNet b1.58 is a LLaMA-architecture model, so its
+; tokenizer may well know the llama3 markers even though the weights were never
+; instruction-tuned on them.
+;
+; Both profiles exist so the question is settled by measurement rather than by
+; argument.
+(model_profile
+  (name "bitnet-llama3")
+  (arch "bitnet-b1.58")
+  (template llama3)
+  (constrained true))
