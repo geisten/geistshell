@@ -1,0 +1,9 @@
+; The world before the agent acts: critical_app is being starved by batch_job.
+; Managed processes carry a pid and a start identity because a phase-6 action
+; resolves the target against exactly this snapshot.
+(machine-state (cpu-load-bp 9400) (load-1-cbp 380)
+ (memory-total-bytes 4245815296) (memory-used-bytes 1200000000)
+ (swap-used-bytes 0) (temperature-mc 68000) (cpu-freq-khz 2400000)
+ (throttle none) (process-count 42)
+ (process (id "critical_app") (role critical) (cpu-bp 900) (rss-bytes 52428800))
+ (process (id "batch_job") (role batch) (cpu-bp 8500) (rss-bytes 104857600)))

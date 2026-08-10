@@ -29,6 +29,11 @@ enum spg_machine_exec_outcome {
      * signalling the new owner would be the worst bug this module could have.
      */
     SPG_MACHINE_EXEC_IDENTITY_CHANGED,
+    /* Already stopped by this run. Not an error and not a second SIGSTOP: the
+     * ledger knows we owe a resume for it, so pausing again would spend budget
+     * to change nothing. The loop needs to see this to stop repeating a remedy
+     * it already applied. */
+    SPG_MACHINE_EXEC_ALREADY_PAUSED,
     SPG_MACHINE_EXEC_GONE,        /* ESRCH: it exited on its own */
     SPG_MACHINE_EXEC_FORBIDDEN,   /* EPERM: not ours to signal */
     SPG_MACHINE_EXEC_NOT_FOUND,   /* the target id is not in the snapshot */
