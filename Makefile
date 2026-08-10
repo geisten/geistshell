@@ -101,6 +101,7 @@ SPG_SOURCES := \
     src/memory/mem_executor.c \
     src/memory/mem_store.c \
     src/memory/memory.c \
+    src/machine/diagnose.c \
     src/machine/machine_fixture.c \
     src/machine/process.c \
     src/machine/process_profile.c \

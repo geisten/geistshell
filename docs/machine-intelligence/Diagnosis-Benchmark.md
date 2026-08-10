@@ -1,11 +1,15 @@
-# Diagnosis Benchmark — Phase 4
+# Diagnosis Benchmark — Phasen 4 und 5
 
 Kann ein Modell aus Machine State und Prozess-Semantik eine brauchbare Diagnose
 stellen? Diese Phase misst das — **bevor** irgendeine schreibende Aktion
 existiert.
 
-Ticket: geisten/geistshell#64. Voraussetzung: [Context.md](Context.md).
-Die Regel-Baseline, gegen die sich alles messen lassen muss, ist Phase 5 (#65).
+Tickets: geisten/geistshell#64 (Suite und Metriken) und #65 (Regel-Baseline).
+Voraussetzung: [Context.md](Context.md).
+
+**Ergebnis vorweg:** die Regeln erreichen 9/9, das lokale Modell 3/9. Die
+Begründung steht unter „GO / NO-GO nach Phase 5"; die Empfindlichkeitsprüfung
+darüber zeigt, wo die Regeln ihrerseits brechen.
 
 ## Die Diagnose ist der `finish`-Reason
 
@@ -100,6 +104,60 @@ Harness einen dieser Fälle durchgehen lässt. Er ist Teil von `make test`.
 Das ist keine Modellleistung, sondern der Nachweis, dass Harness und Metriken
 funktionieren.
 
+### Regel-Baseline (Phase 5, #65)
+
+Vier Regeln in fester Priorität über denselben Snapshot, durch dieselbe
+Agent-Schleife und dieselbe Bewertung wie jedes Modell — `(model "rules")` im
+Suite-File, kein zweiter Bewertungspfad.
+
+| Methode | Known | Held-out | Halluzination | Enthaltung | Latenz | Speicher |
+|---|---|---|---|---|---|---|
+| Regeln | **6/6** | **3/3** | 0 | 2 (korrekt) | 12 ns | 0 Heap, 32 B Schwellwerte |
+
+Die Regeln, in dieser Reihenfolge:
+
+1. **Hitze zuerst.** Ein thermischer Fehler ist die einzige Ursache, die keine
+   Prozessänderung behebt — einen Lüfter repariert man nicht durch Pausieren.
+2. **Speicher vor CPU.** Speicherdruck endet im OOM-Killer, CPU-Druck endet in
+   Langsamkeit.
+3. **Gesättigte CPU, zugeordnet über die ROLLE**, nicht über den Namen. Dafür
+   existiert das Process Profile: dieselbe Last ist ein anderes Problem, je
+   nachdem wer sie verursacht.
+4. **Sonst gesund** — aber nur, wenn die Signale, die ein Problem gezeigt
+   hätten, überhaupt lesbar waren.
+
+Enthaltung ist eine erlaubte Antwort und wird getrennt gezählt: bei gesättigter
+CPU ohne dominanten Verursacher, bei unbekannten Signalen, und wenn der
+Verbraucher ein nicht gemanagter Prozess ist.
+
+#### Die Empfindlichkeitsprüfung, und was sie zeigt
+
+Das Ticket verlangt, dass die Regeln „sinnvoll bleiben, wenn man alle
+Schwellwerte um ±10 % verschiebt". Das ist als Test ausgeführt, nicht als
+Zusicherung:
+
+| Verschiebung | Treffer |
+|---|---|
+| Referenz | 9/9 |
+| alle −10 % | 9/9 |
+| **alle +10 %** | **6/9** |
+| nur Speicher +10 % | 7/9 |
+| nur Temperatur +10 % | 8/9 |
+| CPU ±10 %, Anteil ±10 % | 9/9 |
+
+**Das Ergebnis ist unbequem und bleibt so stehen.** Schwellwertregeln
+degradieren nicht, sie kippen: bei +10 % liegt die Speicherschwelle bei 99 %,
+und ein Zustand mit 95 % Belegung und aktivem Swap gilt plötzlich als gesund.
+Die Temperaturschwelle überschreitet 82 °C, und ein drosselndes Board meldet
+`healthy`. Falsch und zuversichtlich, nicht unsicher.
+
+Ob ein Modell robuster gegen die Platzierung der Grenze ist, wäre das stärkste
+Argument für seinen Einsatz. Auf dieser Suite ist das gemessene Modell es
+nicht.
+
+Die Testschranke steht bei 6/9 — dem gemessenen Wert, nicht einem gewünschten.
+Die Einzelzahlen werden bei jedem Lauf gedruckt.
+
 ### Gemma4-E2B, lokal auf dem Pi 5
 
 `--constrained --samples 1`, Release-Build, aarch64.
@@ -168,6 +226,46 @@ Namenskonvention der Profile (`critical_app`, `batch_job`), die Prosa nicht
 erfüllt. Beide echten Gemma-Antworten sind als Regressionsfälle in
 `diagnosis_negative.spg` eingefroren, ebenso `healthy))`, das die
 Kategorie-Extraktion an Satzzeichen scheitern ließ.
+
+## Vergleich
+
+| Methode | Known | Held-out | Halluzination | Unnötige Action | Parse | Latenz |
+|---|---|---|---|---|---|---|
+| **Regeln** | **6/6** | **3/3** | 0 | 0 | 9/9 | 12 ns |
+| Gemma4-E2B (Q4_K_M) | 2/6 | 1/3 | 0 | 0 | 9/9 | ~3 min/Fall |
+| Remote-Modell | nicht konfiguriert | — | — | — | — | — |
+| scripted ground truth | 6/6 | 3/3 | 0 | 0 | 9/9 | — |
+
+## GO / NO-GO nach Phase 5
+
+**Das Modell schlägt die Regelbaseline nicht. Es liegt deutlich darunter.**
+
+Neun von neun gegen drei von neun, bei rund acht Größenordnungen
+Latenzunterschied und ohne jede Abhängigkeit von einem GGUF, einem
+Inferenz-Backend oder 1,4 GB RAM. Für die Aufgabe „benenne die Ursache aus
+diesem Zustand" ist die klassische Lösung auf dieser Suite nicht nur
+konkurrenzfähig, sondern klar überlegen.
+
+Was dieses Ergebnis **nicht** sagt:
+
+- Es sagt nichts über größere Modelle. Getestet wurde ein 2B-Modell auf einem
+  Pi; ein Frontier-Modell über den Remote-Adapter ist ungemessen.
+- Es sagt nichts über Aufgaben mit mehr Zuständen. Neun Szenarien und sechs
+  Kategorien sind eine kleine Welt — genau die kleine Welt, in der die
+  Kernhypothese ein kleines Modell für ausreichend hält. Dass hier stattdessen
+  gar kein Modell nötig ist, ist ein Befund über die Aufgabengröße.
+- Es sagt nichts über die Robustheit der Regeln außerhalb dieser Zustände. Die
+  Empfindlichkeitsprüfung zeigt, dass sie an der Schwelle kippen statt zu
+  zweifeln.
+
+Was es **schon** sagt: Wer ab hier ein Modell einsetzen will, muss zeigen, was
+es besser kann als vier Regeln — und nicht umgekehrt. Die Beweislast hat die
+Seite gewechselt.
+
+Empfehlung für die Roadmap: Phase 6 (typed Actions) trotzdem bauen, weil dort
+die Governance geprüft wird und nicht die Modellqualität. Aber die Frage aus
+Phase 10 („welches Modell ist das beste") sollte um eine vorgelagerte Frage
+ergänzt werden: **welche Aufgabe rechtfertigt überhaupt ein Modell?**
 
 ## Wo einfache Regeln offensichtlich genügen
 

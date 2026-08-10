@@ -8,6 +8,7 @@
 
 #include "geistshell/agent_loop.h"
 #include "geistshell/agent_run.h"
+#include "geistshell/diagnose.h"
 #include "geistshell/eval.h"
 #include "geistshell/exec_command.h"
 #include "geistshell/fixture.h"
@@ -2405,14 +2406,6 @@ struct eval_run_report {
     bool   case_heldout[EVAL_MAX_CASES];
 };
 
-/* The closed set of root causes. A diagnosis outside it is not a diagnosis:
- * scoring free text would measure how the grader feels, not what the model
- * concluded. */
-static const char *const diagnosis_categories[] = {
-    "healthy",         "batch_pressure",  "critical_pressure",
-    "memory_pressure", "thermal_anomaly", "inconclusive",
-};
-
 /* Diagnosis convention: (recommend (kind finish) (reason "<category> [<id>]")).
  * `finish` carries no capability, consumes no budget and never reaches the
  * policy gate, so a pure-diagnosis run needs no new action kind and no
@@ -2444,12 +2437,11 @@ static void diagnosis_from_output(const char *text, char category[static 32],
         i -= 1u;
         category[i] = '\0';
     }
+    /* The closed set lives in diagnose.h, shared with the rule baseline: one
+     * definition, so a category cannot exist for the rules and not for the
+     * scorer. */
     bool known = false;
-    for (size_t k = 0u;
-         k < sizeof diagnosis_categories / sizeof diagnosis_categories[0];
-         k += 1u) {
-        known = known || strcmp(category, diagnosis_categories[k]) == 0;
-    }
+    (void)spg_diagnosis_from_string(category, &known);
     if (!known) {
         category[0] = '\0'; /* unrecognised -> no diagnosis, not a wrong one */
         return;
@@ -2934,6 +2926,31 @@ static enum spg_status eval_run_suite(const char                 *suite_path,
                                         "model", model_kind, sizeof model_kind);
         const bool geist_case  = has_model && strcmp(model_kind, "geist") == 0;
         const bool remote_case = has_model && strcmp(model_kind, "remote") == 0;
+        /* #65: the rule baseline is not a second scoring path. It computes the
+         * answer and then goes through the same agent loop, policy gate and
+         * metrics as any model — otherwise the comparison would be between two
+         * harnesses rather than two methods. */
+        const bool  rules_case = has_model && strcmp(model_kind, "rules") == 0;
+        static char rules_script_line[160];
+        if (rules_case) {
+            if (!has_machine) {
+                fprintf(
+                    stderr,
+                    "eval: (model \"rules\") needs a (machine ...) state\n");
+                rc = SPG_E_INVALID_ARG;
+                goto done;
+            }
+            const struct spg_rule_thresholds th = spg_rule_thresholds_default();
+            struct spg_diagnosis_result      rd = {};
+            if (spg_rule_diagnose(&case_machine, &th, &rd) != SPG_OK) {
+                rc = SPG_E_INTERNAL;
+                goto done;
+            }
+            (void)snprintf(rules_script_line, sizeof rules_script_line,
+                           "(recommend (kind finish) (reason \"%s%s%s\"))",
+                           spg_diagnosis_to_string(rd.diagnosis),
+                           rd.process_id[0] != '\0' ? " " : "", rd.process_id);
+        }
 
         struct spg_eval_case_result last           = {};
         size_t                      passed_in_case = 0u;
@@ -3048,18 +3065,25 @@ static enum spg_status eval_run_suite(const char                 *suite_path,
                 spg_model_adapter_destroy(&model);
             }
         } else {
-            if (!has_script) {
+            if (!has_script && !rules_case) {
                 rc = SPG_E_FORMAT; /* a scripted case needs a script */
                 goto done;
             }
             struct file_buffer script_text = {};
-            if (read_file(script_path, &script_text) != SPG_OK) {
+            if (!rules_case && read_file(script_path, &script_text) != SPG_OK) {
                 rc = SPG_E_IO;
                 goto done;
             }
             static struct spg_fake_response script[EVAL_SCRIPT_MAX];
-            const size_t                    script_n = split_script_lines(
-                script_text.data, script_text.n, script, EVAL_SCRIPT_MAX);
+            size_t                          script_n = 0u;
+            if (rules_case) {
+                script[0] = (struct spg_fake_response){
+                    .n = strlen(rules_script_line), .text = rules_script_line};
+                script_n = 1u;
+            } else {
+                script_n = split_script_lines(script_text.data, script_text.n,
+                                              script, EVAL_SCRIPT_MAX);
+            }
             for (size_t s = 0u; s < samples; s += 1u) {
                 struct spg_agent_run_inputs cin = inputs;
                 if (has_goal) {
