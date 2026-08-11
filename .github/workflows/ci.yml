@@ -48,9 +48,17 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
+      # libomp AND the target it unlocks. detect-target.sh looks for
+      # libomp.dylib under a fixed prefix and silently falls back to the plain
+      # `mac` target when it is absent — a target geistlib's own CI never
+      # builds, and where v0.8.2 has a -Werror unused-function break. Pin both
+      # rather than hope the default prefix matches.
       - name: Install deps (macOS)
         if: runner.os == 'macOS'
-        run: brew install libomp
+        run: |
+          brew install libomp
+          echo "LIBOMP_PREFIX=$(brew --prefix libomp)" >> "$GITHUB_ENV"
+          echo "GEIST_TARGET=mac-omp" >> "$GITHUB_ENV"
 
       - name: Install deps (Linux)
         if: runner.os == 'Linux'
