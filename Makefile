@@ -220,7 +220,23 @@ $(OBJ_DIR)/%.o: %.c
 $(WORKLOAD_BIN): examples/machine/workloads/workload.c | $(BIN_DIR)
 	$(CC) $(CFLAGS) -o $@ $<
 
-test: $(TEST_BINS) $(PROBE_BINS) $(SPG_BIN) $(WORKLOAD_BIN)
+# Link-time backend selection means a build compiles exactly ONE of the three
+# backends — the other two rot unseen. A deletion orphaned a helper in
+# backend_linux.c and macOS could not notice, because macOS never compiles that
+# file. Both of these are pure POSIX, so any host can syntax-check them;
+# backend_macos.c needs Darwin headers and is covered where it actually builds.
+PORTABLE_BACKENDS := src/machine/backend_linux.c src/machine/backend_generic.c
+
+check-backends:
+	@for f in $(PORTABLE_BACKENDS); do \
+		$(CC) $(CFLAGS) -Werror -fsyntax-only $$f || exit 1; \
+	done
+
+# CHAT_BIN belongs here because test_cli_chat.sh runs it. It was missing, and
+# the failure only showed after `make clean`: an incremental tree still had the
+# binary from an earlier `make all`, so the suite was green on a file no rule
+# had promised. A test target must build everything its tests execute.
+test: $(TEST_BINS) $(PROBE_BINS) $(SPG_BIN) $(CHAT_BIN) $(WORKLOAD_BIN) check-backends
 	@status=0; \
 	for t in $(TEST_BINS); do \
 		echo "$$t"; \

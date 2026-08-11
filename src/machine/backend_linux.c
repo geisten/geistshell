@@ -216,20 +216,3 @@ enum spg_status spg_backend_process_identity(const uint64_t pid,
     return SPG_OK;
 }
 
-static bool read_u64_file(const char *path, uint64_t *out) {
-    char         buf[32] = {};
-    const size_t n       = read_file(path, sizeof buf - 1u, buf);
-    if (n == 0u) {
-        return false;
-    }
-    uint64_t value = 0u;
-    bool     any   = false;
-    for (size_t i = 0u; i < n && buf[i] >= '0' && buf[i] <= '9'; i += 1u) {
-        value = value * 10u + (uint64_t)(buf[i] - '0');
-        any   = true;
-    }
-    if (any) {
-        *out = value;
-    }
-    return any;
-}
