@@ -19,6 +19,25 @@ endif
 GEIST_REPO ?= https://github.com/geisten/geistlib.git
 GEIST_REF  ?= v0.8.2
 
+# Build target for the engine. Detected from the HOST, not from deps/geist:
+# the old fallback asked mk/detect-target.sh and echoed `mac` when the engine
+# was not cloned yet — which is every clean checkout, so CI built the mac target
+# on Linux and died inside libgeist. Overridable from the environment or the
+# command line (#105).
+#
+# Mirrors deps/geist/mk/detect-target.sh: mac-omp when Homebrew libomp is there,
+# pi5 for ARM64 Linux, linux otherwise.
+# Build target for the engine. Detected from the HOST, not from deps/geist: the
+# old fallback asked mk/detect-target.sh and echoed `mac` when the engine was
+# not cloned yet — which is every clean checkout, so CI built the mac target on
+# Linux and died inside libgeist. Overridable from the environment or the
+# command line (#105).
+#
+# Mirrors deps/geist/mk/detect-target.sh: mac-omp when Homebrew libomp is
+# present, pi5 for ARM64 Linux, linux otherwise.
+LIBOMP_PREFIX ?= /opt/homebrew/opt/libomp
+GEIST_TARGET  ?= $(shell LIBOMP_PREFIX="$(LIBOMP_PREFIX)" sh scripts/detect-target.sh)
+
 BUILD_MODE ?= host-debug
 
 # Optional REMOTE model adapter (libcurl transport, OpenAI-compatible). Off by
@@ -32,7 +51,6 @@ endif
 HOST_CC ?= clang
 
 AR ?= ar
-LIBOMP_PREFIX ?= /opt/homebrew/opt/libomp
 
 ifeq ($(BUILD_MODE),host-debug)
     MODE_DIR := host-debug
@@ -40,14 +58,12 @@ ifeq ($(BUILD_MODE),host-debug)
     SPG_OPT_FLAGS := -O1 -g -fsanitize=address,undefined -fno-omit-frame-pointer
     SPG_LD_FLAGS := -fsanitize=address,undefined
     GEIST_MODE := asan
-    GEIST_TARGET := $(shell if [ -x "$(GEIST_DIR)/mk/detect-target.sh" ]; then cd "$(GEIST_DIR)" && mk/detect-target.sh; else echo mac; fi)
 else ifeq ($(BUILD_MODE),host-release)
     MODE_DIR := host-release
     CC := $(HOST_CC)
     SPG_OPT_FLAGS := -O3 -DNDEBUG
     SPG_LD_FLAGS :=
     GEIST_MODE := release
-    GEIST_TARGET := $(shell if [ -x "$(GEIST_DIR)/mk/detect-target.sh" ]; then cd "$(GEIST_DIR)" && mk/detect-target.sh; else echo mac; fi)
 else
     $(error Unknown BUILD_MODE=$(BUILD_MODE). Use host-debug or host-release)
 endif
