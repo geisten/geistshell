@@ -34,20 +34,30 @@ HOST_CC ?= clang
 AR ?= ar
 LIBOMP_PREFIX ?= /opt/homebrew/opt/libomp
 
+# Which geist variant to build against. The detection script lives inside the
+# engine, and this line is expanded before any rule can fetch it — so the
+# fallback has to give the same answer, not a placeholder. It used to say
+# `mac`, which meant a fresh clone compiled every object without OpenMP and
+# then threw the whole tree away on the next make, when detection finally
+# worked. Same three questions as deps/geist/mk/detect-target.sh; override with
+# `make GEIST_TARGET=mac` when the answer is wrong.
+# One line and no `case`: make 3.81 — still what Xcode ships — hands a
+# backslash-newline inside $(shell ...) straight to sh, and it ends the
+# function at the first unbalanced `)`, which a case pattern is.
+GEIST_TARGET := $(shell if [ -x "$(GEIST_DIR)/mk/detect-target.sh" ]; then cd "$(GEIST_DIR)" && mk/detect-target.sh; else os=$$(uname -s); m=$$(uname -m); if [ "$$os" = Darwin ]; then if [ -f "$(LIBOMP_PREFIX)/lib/libomp.dylib" ]; then echo mac-omp; else echo mac; fi; elif [ "$$os" = Linux ]; then if [ "$$m" = aarch64 ] || [ "$$m" = arm64 ]; then echo pi5; else echo linux; fi; else echo unknown; fi; fi)
+
 ifeq ($(BUILD_MODE),host-debug)
     MODE_DIR := host-debug
     CC := $(HOST_CC)
     SPG_OPT_FLAGS := -O1 -g -fsanitize=address,undefined -fno-omit-frame-pointer
     SPG_LD_FLAGS := -fsanitize=address,undefined
     GEIST_MODE := asan
-    GEIST_TARGET := $(shell if [ -x "$(GEIST_DIR)/mk/detect-target.sh" ]; then cd "$(GEIST_DIR)" && mk/detect-target.sh; else echo mac; fi)
 else ifeq ($(BUILD_MODE),host-release)
     MODE_DIR := host-release
     CC := $(HOST_CC)
     SPG_OPT_FLAGS := -O3 -DNDEBUG
     SPG_LD_FLAGS :=
     GEIST_MODE := release
-    GEIST_TARGET := $(shell if [ -x "$(GEIST_DIR)/mk/detect-target.sh" ]; then cd "$(GEIST_DIR)" && mk/detect-target.sh; else echo mac; fi)
 else
     $(error Unknown BUILD_MODE=$(BUILD_MODE). Use host-debug or host-release)
 endif
@@ -211,7 +221,11 @@ $(CHAT_BIN): $(CHAT_OBJECTS) $(SPG_LIB) $(GEIST_LIB)
 	@mkdir -p $(@D)
 	$(CC) $(SPG_LD_FLAGS) -o $@ $(CHAT_OBJECTS) $(SPG_LIB) $(GEIST_LIB) $(LDLIBS)
 
-$(OBJ_DIR)/%.o: %.c
+# Order-only on the engine: geist's headers must exist before the first object
+# is compiled, and nothing here said so — a fresh clone died on `geist.h` long
+# before the rule that fetches it ever ran. Order-only, not a real
+# prerequisite, so a relinked libgeist.a does not recompile the world.
+$(OBJ_DIR)/%.o: %.c | $(GEIST_LIB)
 	@mkdir -p $(@D)
 	$(CC) $(CFLAGS) -MMD -MP -c $< -o $@
 
@@ -220,7 +234,10 @@ $(OBJ_DIR)/%.o: %.c
 $(WORKLOAD_BIN): examples/machine/workloads/workload.c | $(BIN_DIR)
 	$(CC) $(CFLAGS) -o $@ $<
 
-test: $(TEST_BINS) $(PROBE_BINS) $(SPG_BIN) $(WORKLOAD_BIN)
+# $(CHAT_BIN) is here because test_cli_chat.sh and test_cli_autoinject.sh run
+# it. It was missing, so `make test` was green only in a tree that had already
+# built everything — a fresh clone went red on a binary nothing had asked for.
+test: $(TEST_BINS) $(PROBE_BINS) $(SPG_BIN) $(CHAT_BIN) $(WORKLOAD_BIN)
 	@status=0; \
 	for t in $(TEST_BINS); do \
 		echo "$$t"; \
