@@ -9,6 +9,8 @@
 
 #include "geistshell/machine_executor.h"
 
+#include "geistshell/machine_backend.h"
+
 #include "geistshell/machine_fixture.h"
 #include "geistshell/sexpr.h"
 
@@ -19,7 +21,12 @@
  * been recycled since the snapshot. An executor that cannot verify what it is
  * about to stop must not stop anything, so every other platform reports
  * UNSUPPORTED rather than acting blind. */
-#if defined(__linux__)
+/* Signals wherever POSIX offers kill() and the backend can answer "is this
+ * still the same process". Both halves are required: an executor that cannot
+ * verify what it is about to stop must not stop anything. The identity now
+ * comes from the port boundary, so adding a platform means writing a backend
+ * rather than touching this file. */
+#if defined(__unix__) || defined(__APPLE__)
 #    include <errno.h>
 #    include <signal.h>
 #    include <stdio.h>
@@ -71,26 +78,14 @@ find_target(const struct spg_machine_state *machine, const char *target) {
  * could be a tick old, and a tick is long enough for a pid to be reused. */
 static bool identity_still_matches(const uint64_t pid,
                                    const uint64_t start_identity) {
-    char path[64];
-    if (snprintf(path, sizeof path, "/proc/%llu/stat",
-                 (unsigned long long)pid) < 0) {
+    /* Asked of the backend at the last possible moment. A pid that no longer
+     * exists answers NOT_FOUND, which is the answer that matters: never signal
+     * something you cannot name. */
+    uint64_t current = 0u;
+    if (spg_backend_process_identity(pid, &current) != SPG_OK) {
         return false;
     }
-    FILE *f = fopen(path, "rbe");
-    if (f == nullptr) {
-        return false;
-    }
-    char         buf[2048];
-    const size_t n = fread(buf, 1u, sizeof buf, f);
-    (void)fclose(f);
-    if (n == 0u) {
-        return false;
-    }
-    struct spg_process_sample now = {};
-    if (spg_process_parse_stat(n, buf, 4096u, &now) != SPG_OK) {
-        return false;
-    }
-    return now.pid == pid && now.start_identity == start_identity;
+    return current == start_identity;
 }
 #endif
 

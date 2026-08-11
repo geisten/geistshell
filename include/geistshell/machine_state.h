@@ -59,6 +59,13 @@ struct spg_load_sample {
  * which ones survive; see spg_process_select. */
 #define SPG_MACHINE_MAX_PROCESSES 64u
 
+/* How many processes the sampler looks at before choosing. Larger than the
+ * snapshot on purpose: a selection that only ever sees the first sixty-four
+ * the kernel listed is not a selection. Found the hard way on a Pi with 167
+ * processes, where kernel threads filled the context and the busiest process
+ * was never considered. */
+#define SPG_MACHINE_RAW_PROCESSES 1024u
+
 /* profile_index of a process no profile entry matched. */
 #define SPG_PROCESS_NO_PROFILE UINT32_MAX
 

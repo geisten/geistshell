@@ -3,6 +3,7 @@
  * Every case runs on static fixtures — nothing here reads /proc, so the result
  * never depends on the CI machine's load, temperature or platform. */
 
+#include "geistshell/machine_backend.h"
 #include "geistshell/machine_state.h"
 
 #include <stdio.h>
@@ -477,23 +478,29 @@ static int test_sample_platform(void) {
     if (s.cpu_utilisation_bp != SPG_MACHINE_UNKNOWN) {
         return 1;
     }
-#if defined(__linux__)
-    if (status != SPG_OK) {
-        return 1;
+    /* Asked of the backend, not of the preprocessor. The assertion is about
+     * the CONTRACT — a live backend produces a usable snapshot, an unported
+     * one produces an honest empty — and it now reads the same on every
+     * platform instead of being rewritten each time one is added. */
+    if (spg_backend_is_live()) {
+        if (status != SPG_OK) {
+            return 1;
+        }
+        /* Every ported platform can report how much memory it has; if it
+         * cannot, the port is incomplete rather than the host exotic. */
+        if (s.memory.total_bytes == SPG_MACHINE_UNKNOWN) {
+            return 1;
+        }
+    } else {
+        if (status != SPG_E_UNSUPPORTED) {
+            return 1;
+        }
+        if (s.memory.total_bytes != SPG_MACHINE_UNKNOWN ||
+            s.temperature_mc != SPG_MACHINE_UNKNOWN_S ||
+            s.throttle != SPG_THROTTLE_UNKNOWN) {
+            return 1;
+        }
     }
-    if (s.memory.total_bytes == SPG_MACHINE_UNKNOWN) {
-        return 1; /* /proc/meminfo always exists on Linux */
-    }
-#else
-    if (status != SPG_E_UNSUPPORTED) {
-        return 1;
-    }
-    if (s.memory.total_bytes != SPG_MACHINE_UNKNOWN ||
-        s.temperature_mc != SPG_MACHINE_UNKNOWN_S ||
-        s.throttle != SPG_THROTTLE_UNKNOWN) {
-        return 1;
-    }
-#endif
     if (spg_machine_sample(1u, nullptr, nullptr) != SPG_E_INVALID_ARG) {
         return 1;
     }
