@@ -45,12 +45,6 @@ struct spg_memory_sample {
     uint64_t swap_used_bytes;
 };
 
-struct spg_load_sample {
-    uint64_t avg_1_cbp; /* load average x100, so 1.75 -> 175 */
-    uint64_t avg_5_cbp;
-    uint64_t avg_15_cbp;
-};
-
 /* Kernel comm is TASK_COMM_LEN (16) including the NUL — names are truncated by
  * the kernel itself, which the profile matcher has to account for. */
 #define SPG_PROCESS_NAME_CAP 16u
@@ -166,7 +160,11 @@ struct spg_machine_state {
     uint64_t timestamp_ns; /* injected by the caller, never read from a clock */
 
     uint64_t cpu_utilisation_bp; /* 0..10000, UNKNOWN on the first sample */
-    struct spg_load_sample   load;
+    /* One-minute load average x100. The five- and fifteen-minute figures were
+     * carried in every snapshot and every fixture for a year and rendered into
+     * nothing — a struct of three where one is read is two fields of upkeep
+     * for no reader. */
+    uint64_t                 load_1_cbp;
     struct spg_memory_sample memory;
     int64_t                  temperature_mc; /* UNKNOWN_S when unavailable */
     uint64_t                 cpu_freq_khz;
@@ -205,10 +203,9 @@ spg_telemetry_parse_stat(size_t n, const char buf[],
 spg_telemetry_parse_meminfo(size_t n, const char buf[],
                             struct spg_memory_sample *out);
 
-/* "0.42 0.31 0.28 1/234 5678" of /proc/loadavg. */
+/* One-minute load average x100 from "0.42 0.31 0.28 1/234 5678". */
 [[nodiscard]] enum spg_status
-spg_telemetry_parse_loadavg(size_t n, const char buf[],
-                            struct spg_load_sample *out);
+spg_telemetry_parse_loadavg(size_t n, const char buf[], uint64_t *out_1_cbp);
 
 /* Single-integer sysfs files (thermal zone temp, scaling_cur_freq). Accepts a
  * trailing newline and a leading '-'. */

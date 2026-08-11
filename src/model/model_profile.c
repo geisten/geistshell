@@ -43,13 +43,13 @@ static bool copy_text(const size_t input_n, const char input[],
 
 static enum spg_status parse_template(const size_t input_n, const char input[],
                                       const struct spg_text_span span,
-                                      enum spg_chat_template     *out) {
+                                      enum spg_chat_template    *out) {
     const struct {
         const char            *name;
         enum spg_chat_template value;
     } names[] = {
-        {"auto", SPG_TEMPLATE_AUTO},     {"none", SPG_TEMPLATE_NONE},
-        {"gemma", SPG_TEMPLATE_GEMMA},   {"llama3", SPG_TEMPLATE_LLAMA3},
+        {"auto", SPG_TEMPLATE_AUTO},       {"none", SPG_TEMPLATE_NONE},
+        {"gemma", SPG_TEMPLATE_GEMMA},     {"llama3", SPG_TEMPLATE_LLAMA3},
         {"generic", SPG_TEMPLATE_GENERIC},
     };
     for (size_t i = 0u; i < sizeof names / sizeof names[0]; i += 1u) {
@@ -63,25 +63,13 @@ static enum spg_status parse_template(const size_t input_n, const char input[],
     return SPG_E_SCHEMA;
 }
 
-static enum spg_status parse_bool(const size_t input_n, const char input[],
-                                  const struct spg_text_span span, bool *out) {
-    if (spg_sexpr_span_eq_cstr(input_n, input, span, "true")) {
-        *out = true;
-        return SPG_OK;
-    }
-    if (spg_sexpr_span_eq_cstr(input_n, input, span, "false")) {
-        *out = false;
-        return SPG_OK;
-    }
-    return SPG_E_SCHEMA;
-}
-
-enum spg_status spg_model_profile_load(
-    const size_t input_n, const char input[], const size_t token_capacity,
-    struct spg_sexpr_token tokens[static token_capacity],
-    const size_t           node_capacity,
-    struct spg_sexpr_node  nodes[static node_capacity],
-    struct spg_model_profile *out) {
+enum spg_status
+spg_model_profile_load(const size_t input_n, const char input[],
+                       const size_t              token_capacity,
+                       struct spg_sexpr_token    tokens[static token_capacity],
+                       const size_t              node_capacity,
+                       struct spg_sexpr_node     nodes[static node_capacity],
+                       struct spg_model_profile *out) {
     if (out == nullptr) {
         return SPG_E_INVALID_ARG;
     }
@@ -122,37 +110,11 @@ enum spg_status spg_model_profile_load(
     }
     node = field_value(input_n, input, nodes, root, "template");
     if (node != SPG_SEXPR_INVALID_INDEX) {
-        const enum spg_status ts =
-            parse_template(input_n, input, nodes[node].span, &out->chat_template);
+        const enum spg_status ts = parse_template(
+            input_n, input, nodes[node].span, &out->chat_template);
         if (ts != SPG_OK) {
             return ts;
         }
-    }
-    node = field_value(input_n, input, nodes, root, "constrained");
-    if (node != SPG_SEXPR_INVALID_INDEX) {
-        const enum spg_status bs =
-            parse_bool(input_n, input, nodes[node].span, &out->constrained);
-        if (bs != SPG_OK) {
-            return bs;
-        }
-        out->has_constrained = true;
-    }
-    node = field_value(input_n, input, nodes, root, "temperature");
-    if (node != SPG_SEXPR_INVALID_INDEX) {
-        if (spg_sexpr_parse_uint64_span(input_n, input, nodes[node].span,
-                                        &out->temperature_bp) != SPG_OK) {
-            return SPG_E_SCHEMA;
-        }
-        out->has_temperature = true;
-    }
-    node = field_value(input_n, input, nodes, root, "best_of");
-    if (node != SPG_SEXPR_INVALID_INDEX) {
-        if (spg_sexpr_parse_uint64_span(input_n, input, nodes[node].span,
-                                        &out->best_of) != SPG_OK ||
-            out->best_of == 0u) {
-            return SPG_E_SCHEMA;
-        }
-        out->has_best_of = true;
     }
     out->present = true;
     return SPG_OK;
@@ -209,7 +171,7 @@ static void put_n(struct frame *f, const size_t n, const char text[]) {
 enum spg_status spg_chat_frame(const enum spg_chat_template tmpl,
                                const char *system, const size_t user_n,
                                const char user[], const size_t dst_capacity,
-                               char dst[static dst_capacity],
+                               char    dst[static dst_capacity],
                                size_t *out_used) {
     if (out_used == nullptr || dst_capacity == 0u ||
         (user_n > 0u && user == nullptr)) {

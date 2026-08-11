@@ -1,5 +1,13 @@
 # Machine B — Phase 15
 
+> **Der Code dieser Phase ist wieder entfernt.** Der Lüfter-Adapter, die
+> `machine_set_fan`-Action und die Fan-Funktionen der Backends hatten nie einen
+> Executor — sie waren in Produktion unerreichbar und nur von einem Test
+> aufrufbar. Was sie liefern sollten, war die **Messung** unten, und die steht
+> hier; der Code selbst steht in der Git-Historie (`git log -- src/machine/thermal.c`).
+> Wer Machine B wirklich anschließt, holt ihn von dort und schreibt den
+> Dispatch dazu, der damals fehlte.
+
 Trägt die Architektur eine zweite Maschine, ohne dass der Agent-Kern für sie
 umgebaut wird?
 

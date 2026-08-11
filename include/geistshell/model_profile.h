@@ -17,10 +17,12 @@ extern "C" {
  *   (model_profile
  *     (name "bitnet-full")
  *     (arch "bitnet-b1.58")
- *     (template llama3)        ; auto | none | gemma | llama3 | generic
- *     (constrained true)
- *     (temperature 8000)       ; basis points: 8000 = 0.8
- *     (best_of 3))
+ *     (template llama3))       ; auto | none | gemma | llama3 | generic
+ *
+ * Deliberately only what is applied. An earlier version also parsed
+ * constrained, temperature and best_of, validated them, stored them — and
+ * never read them anywhere. A config field nobody consumes is worse than a
+ * missing one: it reads like a promise.
  *
  * geistshell drives one governed loop for models that are not comparable, and
  * until now treated them identically: one raw s-expression prompt for all of
@@ -51,25 +53,18 @@ enum spg_chat_template {
 #define SPG_PROFILE_NAME_CAP 64u
 
 struct spg_model_profile {
-    char                   name[SPG_PROFILE_NAME_CAP];
-    char                   arch[SPG_PROFILE_NAME_CAP];
+    char name[SPG_PROFILE_NAME_CAP];
+    char arch[SPG_PROFILE_NAME_CAP];
     /* Named chat_template, not template: the header is extern "C" guarded for
      * C++ consumers, where `template` is a keyword. */
     enum spg_chat_template chat_template;
-    bool                   constrained;
-    /* Basis points, so the config carries no float: 8000 = 0.8. */
-    uint64_t temperature_bp;
-    uint64_t best_of;
-    bool     has_temperature;
-    bool     has_best_of;
-    bool     has_constrained;
-    bool     present;
+    bool                   present;
 };
 
 [[nodiscard]] enum spg_status spg_model_profile_load(
     size_t input_n, const char input[], size_t token_capacity,
     struct spg_sexpr_token tokens[static token_capacity], size_t node_capacity,
-    struct spg_sexpr_node    nodes[static node_capacity],
+    struct spg_sexpr_node     nodes[static node_capacity],
     struct spg_model_profile *out);
 
 /* Pick a template from an architecture string when the profile says `auto`.
@@ -87,13 +82,13 @@ struct spg_model_profile {
  *
  * SPG_E_LIMIT when the framed prompt would not fit; dst is then empty, because
  * half a chat template is worse than none. */
-[[nodiscard]] enum spg_status spg_chat_frame(
-    enum spg_chat_template tmpl, const char *system, size_t user_n,
-    const char user[], size_t dst_capacity, char dst[static dst_capacity],
-    size_t *out_used);
+[[nodiscard]] enum spg_status
+spg_chat_frame(enum spg_chat_template tmpl, const char *system, size_t user_n,
+               const char user[], size_t dst_capacity,
+               char dst[static dst_capacity], size_t *out_used);
 
-[[nodiscard]] const char *spg_chat_template_to_string(
-    enum spg_chat_template tmpl);
+[[nodiscard]] const char *
+spg_chat_template_to_string(enum spg_chat_template tmpl);
 
 #ifdef __cplusplus
 }

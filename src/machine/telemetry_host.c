@@ -14,12 +14,7 @@ static void state_init(struct spg_machine_state *out,
     *out = (struct spg_machine_state){
         .timestamp_ns       = timestamp_ns,
         .cpu_utilisation_bp = SPG_MACHINE_UNKNOWN,
-        .load =
-            {
-                .avg_1_cbp  = SPG_MACHINE_UNKNOWN,
-                .avg_5_cbp  = SPG_MACHINE_UNKNOWN,
-                .avg_15_cbp = SPG_MACHINE_UNKNOWN,
-            },
+        .load_1_cbp         = SPG_MACHINE_UNKNOWN,
         .memory =
             {
                 .total_bytes     = SPG_MACHINE_UNKNOWN,
@@ -103,7 +98,7 @@ enum spg_status spg_machine_sample_with_processes(
      * already arranged. A missing sensor is never an error here — that is the
      * difference between a snapshot and an assertion. */
     (void)spg_backend_memory(&out->memory);
-    (void)spg_backend_load(&out->load);
+    (void)spg_backend_load(&out->load_1_cbp);
     (void)spg_backend_temperature(&out->temperature_mc);
     (void)spg_backend_frequency_khz(&out->cpu_freq_khz);
     (void)spg_backend_throttle(&out->throttle);

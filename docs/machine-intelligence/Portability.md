@@ -49,7 +49,6 @@ sich **Entscheidungen** in **I/O** verstecken.
 | Throttling | hwmon `rpi_volt` | **nicht verfügbar** | – |
 | Prozesse | `/proc/<pid>/stat` | `KERN_PROC_ALL` + `proc_pidinfo` | – |
 | Prozess-Identität | Startzeit in Ticks | `p_starttime` in µs | – |
-| Lüfter | hwmon `pwmfan` | **nicht verfügbar** | – |
 
 **Was fehlt, wird gesagt statt gefälscht.** macOS hat keine öffentliche
 Temperatur- oder Lüfterschnittstelle; die SMC-Schlüssel, die überall
@@ -58,6 +57,10 @@ die auditierbar sein soll, ist eine private API ein schlechter Tausch gegen
 eine Zahl, die das Schema ohnehin als `unknown` zulässt.
 
 ## Zwei Statusarten, ein Unterschied
+
+Der Lüfter stand hier einmal als siebter Kanal. Er ist mit dem Machine-B-Code
+entfernt worden: eine Portschnittstelle für ein Gerät, das kein Executor
+ansteuert, ist Arbeit für drei Plattformen ohne Aufrufer.
 
 `spg_backend_is_live()` unterscheidet **„dieser Sensor fehlt"** von **„diese
 Plattform wurde nie portiert"**. Ein Bericht, der beides gleich behandelt, wird

@@ -184,9 +184,6 @@ static size_t kinds_for_cap(const enum spg_policy_capability_kind cap,
         out[0] = SPG_ACTION_MACHINE_PAUSE;
         out[1] = SPG_ACTION_MACHINE_RESUME;
         return 2u;
-    case SPG_POLICY_CAP_MACHINE_THERMAL:
-        out[0] = SPG_ACTION_MACHINE_FAN;
-        return 1u;
     case SPG_POLICY_CAP_LOCAL_SHELL:
         out[0] = SPG_ACTION_LOCAL_SHELL;
         return 1u;
@@ -257,7 +254,6 @@ size_t spg_scaffold_for_kind(enum spg_action_kind            kind,
     switch (kind) {
     case SPG_ACTION_MACHINE_PAUSE:
     case SPG_ACTION_MACHINE_RESUME:
-    case SPG_ACTION_MACHINE_FAN:
         RET(SEG_MACHINE);
     case SPG_ACTION_FINISH:
         RET(SEG_FINISH);

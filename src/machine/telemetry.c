@@ -187,26 +187,20 @@ static bool scan_cbp(const size_t n, const char buf[], size_t *pos,
 }
 
 enum spg_status spg_telemetry_parse_loadavg(const size_t n, const char buf[],
-                                            struct spg_load_sample *out) {
-    if (out == nullptr) {
+                                            uint64_t *out_1_cbp) {
+    if (out_1_cbp == nullptr) {
         return SPG_E_INVALID_ARG;
     }
-    *out = (struct spg_load_sample){
-        .avg_1_cbp  = SPG_MACHINE_UNKNOWN,
-        .avg_5_cbp  = SPG_MACHINE_UNKNOWN,
-        .avg_15_cbp = SPG_MACHINE_UNKNOWN,
-    };
-    size_t   pos  = 0u;
-    uint64_t v[3] = {};
-    for (size_t i = 0u; i < 3u; i += 1u) {
-        skip_spaces(n, buf, &pos);
-        if (!scan_cbp(n, buf, &pos, &v[i])) {
-            return SPG_E_FORMAT; /* fields stay unknown, never 0 */
-        }
+    /* Unknown rather than 0 on a failed parse: 0 reads as a perfectly idle
+     * machine, which is the opposite of "we could not tell". */
+    *out_1_cbp     = SPG_MACHINE_UNKNOWN;
+    size_t   pos   = 0u;
+    uint64_t value = 0u;
+    skip_spaces(n, buf, &pos);
+    if (!scan_cbp(n, buf, &pos, &value)) {
+        return SPG_E_FORMAT;
     }
-    out->avg_1_cbp  = v[0];
-    out->avg_5_cbp  = v[1];
-    out->avg_15_cbp = v[2];
+    *out_1_cbp = value;
     return SPG_OK;
 }
 
@@ -399,7 +393,7 @@ enum spg_status spg_machine_state_render_masked(
     put(&w, "(machine-state");
     if ((ablate & SPG_ABLATE_LOAD) == 0u) {
         put_field(&w, "cpu-load-bp", state->cpu_utilisation_bp);
-        put_field(&w, "load-1-cbp", state->load.avg_1_cbp);
+        put_field(&w, "load-1-cbp", state->load_1_cbp);
     }
     if ((ablate & SPG_ABLATE_MEMORY) == 0u) {
         put_field(&w, "memory-total-bytes", state->memory.total_bytes);

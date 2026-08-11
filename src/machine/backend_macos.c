@@ -92,24 +92,19 @@ enum spg_status spg_backend_memory(struct spg_memory_sample *out) {
     return SPG_OK;
 }
 
-enum spg_status spg_backend_load(struct spg_load_sample *out) {
-    if (out == nullptr) {
+enum spg_status spg_backend_load(uint64_t *out_1_cbp) {
+    if (out_1_cbp == nullptr) {
         return SPG_E_INVALID_ARG;
     }
-    *out          = (struct spg_load_sample){.avg_1_cbp  = SPG_MACHINE_UNKNOWN,
-                                             .avg_5_cbp  = SPG_MACHINE_UNKNOWN,
-                                             .avg_15_cbp = SPG_MACHINE_UNKNOWN};
-    double avg[3] = {0.0, 0.0, 0.0};
-    if (getloadavg(avg, 3) != 3) {
+    *out_1_cbp    = SPG_MACHINE_UNKNOWN;
+    double avg[1] = {0.0};
+    if (getloadavg(avg, 1) != 1) {
         return SPG_E_IO;
     }
     /* The one place a float touches this codebase, converted immediately: the
-     * kernel offers no integer form, and everything downstream is fixed
-     * point. Truncated rather than rounded, like the Linux parser. */
-    uint64_t *slots[3] = {&out->avg_1_cbp, &out->avg_5_cbp, &out->avg_15_cbp};
-    for (size_t i = 0u; i < 3u; i += 1u) {
-        *slots[i] = avg[i] <= 0.0 ? 0u : (uint64_t)(avg[i] * 100.0);
-    }
+     * kernel offers no integer form and everything downstream is fixed point.
+     * Truncated rather than rounded, like the Linux parser. */
+    *out_1_cbp = avg[0] <= 0.0 ? 0u : (uint64_t)(avg[0] * 100.0);
     return SPG_OK;
 }
 
@@ -264,18 +259,4 @@ enum spg_status spg_backend_process_identity(const uint64_t pid,
     }
     *out_start_identity = start_identity_of(&proc);
     return SPG_OK;
-}
-
-enum spg_status spg_backend_fan_read(uint64_t *out_rpm, uint64_t *out_duty) {
-    if (out_rpm == nullptr || out_duty == nullptr) {
-        return SPG_E_INVALID_ARG;
-    }
-    *out_rpm  = SPG_MACHINE_UNKNOWN;
-    *out_duty = SPG_MACHINE_UNKNOWN;
-    return SPG_E_UNSUPPORTED;
-}
-
-enum spg_status spg_backend_fan_write(const uint64_t duty) {
-    (void)duty;
-    return SPG_E_UNSUPPORTED;
 }

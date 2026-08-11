@@ -22,25 +22,24 @@ static enum spg_status load(const size_t n, const char text[],
 static int test_parse(void) {
     struct spg_model_profile p = {};
     if (load(LIT("(model_profile (name \"bitnet-full\") (arch \"bitnet-b1.58\")"
-                 " (template llama3) (constrained true) (temperature 8000)"
-                 " (best_of 3))"),
+                 " (template llama3))"),
              &p) != SPG_OK) {
         return 1;
     }
     if (strcmp(p.name, "bitnet-full") != 0 ||
         strcmp(p.arch, "bitnet-b1.58") != 0 ||
-        p.chat_template != SPG_TEMPLATE_LLAMA3 || !p.constrained ||
-        p.temperature_bp != 8000u || p.best_of != 3u || !p.present) {
+        p.chat_template != SPG_TEMPLATE_LLAMA3 || !p.present) {
         return 1;
     }
-    /* Absence is recorded, not defaulted: a caller must be able to tell "the
-     * profile said 0.8" from "the profile said nothing", or a CLI flag could
-     * not take precedence over a file that never mentioned the field. */
-    struct spg_model_profile bare = {};
-    if (load(LIT("(model_profile (name \"x\"))"), &bare) != SPG_OK) {
+    /* Unknown fields are ignored rather than rejected: a profile written for a
+     * later version must still load. The earlier draft parsed constrained,
+     * temperature and best_of, stored them, and never read them anywhere — a
+     * config field nobody consumes reads like a promise. */
+    if (load(LIT("(model_profile (name \"x\") (best_of 3) (temperature 8000))"),
+             &p) != SPG_OK) {
         return 1;
     }
-    if (bare.has_temperature || bare.has_best_of || bare.has_constrained) {
+    if (strcmp(p.name, "x") != 0 || !p.present) {
         return 1;
     }
     return 0;
@@ -55,12 +54,6 @@ static int test_rejects(void) {
      * silently become the very experiment the profile exists to replace. */
     if (load(LIT("(model_profile (template chatml))"), &p) != SPG_E_SCHEMA) {
         return 1;
-    }
-    if (load(LIT("(model_profile (constrained yes))"), &p) != SPG_E_SCHEMA) {
-        return 1;
-    }
-    if (load(LIT("(model_profile (best_of 0))"), &p) != SPG_E_SCHEMA) {
-        return 1; /* best-of-zero is not a smaller experiment, it is none */
     }
     if (load(LIT("(model_profile (name \"x\")"), &p) == SPG_OK) {
         return 1;
@@ -113,9 +106,8 @@ static int test_framing(void) {
 
     /* Every template must END with the marker that opens the model's turn, or
      * the decoder continues the user's sentence instead of answering. */
-    const enum spg_chat_template all[] = {SPG_TEMPLATE_GEMMA,
-                                          SPG_TEMPLATE_LLAMA3,
-                                          SPG_TEMPLATE_GENERIC};
+    const enum spg_chat_template all[] = {
+        SPG_TEMPLATE_GEMMA, SPG_TEMPLATE_LLAMA3, SPG_TEMPLATE_GENERIC};
     for (size_t i = 0u; i < sizeof all / sizeof all[0]; i += 1u) {
         if (spg_chat_frame(all[i], "sys", LIT("ctx"), sizeof buf, buf, &used) !=
             SPG_OK) {

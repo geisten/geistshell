@@ -33,13 +33,11 @@ enum spg_status spg_backend_memory(struct spg_memory_sample *out) {
     return SPG_E_UNSUPPORTED;
 }
 
-enum spg_status spg_backend_load(struct spg_load_sample *out) {
-    if (out == nullptr) {
+enum spg_status spg_backend_load(uint64_t *out_1_cbp) {
+    if (out_1_cbp == nullptr) {
         return SPG_E_INVALID_ARG;
     }
-    *out = (struct spg_load_sample){.avg_1_cbp  = SPG_MACHINE_UNKNOWN,
-                                    .avg_5_cbp  = SPG_MACHINE_UNKNOWN,
-                                    .avg_15_cbp = SPG_MACHINE_UNKNOWN};
+    *out_1_cbp = SPG_MACHINE_UNKNOWN;
     return SPG_E_UNSUPPORTED;
 }
 
@@ -92,18 +90,4 @@ enum spg_status spg_backend_process_identity(const uint64_t pid,
      * must look like "this process is gone" rather than like a condition a
      * caller might decide to ignore. */
     return SPG_E_NOT_FOUND;
-}
-
-enum spg_status spg_backend_fan_read(uint64_t *out_rpm, uint64_t *out_duty) {
-    if (out_rpm == nullptr || out_duty == nullptr) {
-        return SPG_E_INVALID_ARG;
-    }
-    *out_rpm  = SPG_MACHINE_UNKNOWN;
-    *out_duty = SPG_MACHINE_UNKNOWN;
-    return SPG_E_UNSUPPORTED;
-}
-
-enum spg_status spg_backend_fan_write(const uint64_t duty) {
-    (void)duty;
-    return SPG_E_UNSUPPORTED;
 }
