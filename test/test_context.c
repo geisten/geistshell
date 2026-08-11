@@ -448,7 +448,7 @@ static int test_machine_render(void) {
     struct spg_machine_state machine = {
         .timestamp_ns        = 7u,
         .cpu_utilisation_bp  = 9200u,
-        .load                = {.avg_1_cbp = 175u},
+        .load_1_cbp          = 175u,
         .memory              = {.total_bytes = 1024u, .used_bytes = 512u},
         .temperature_mc      = 78400,
         .cpu_freq_khz        = 1500000u,
@@ -540,9 +540,7 @@ static int test_machine_unknown_and_locale(void) {
 
     const struct spg_machine_state machine = {
         .cpu_utilisation_bp = SPG_MACHINE_UNKNOWN,
-        .load               = {.avg_1_cbp  = SPG_MACHINE_UNKNOWN,
-                               .avg_5_cbp  = SPG_MACHINE_UNKNOWN,
-                               .avg_15_cbp = SPG_MACHINE_UNKNOWN},
+        .load_1_cbp         = SPG_MACHINE_UNKNOWN,
         .memory             = {.total_bytes     = SPG_MACHINE_UNKNOWN,
                                .used_bytes      = SPG_MACHINE_UNKNOWN,
                                .swap_used_bytes = SPG_MACHINE_UNKNOWN},

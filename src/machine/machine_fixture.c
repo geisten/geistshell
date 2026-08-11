@@ -211,7 +211,7 @@ spg_machine_state_parse(const size_t input_n, const char input[],
         uint64_t   *slot;
     } const u64_fields[] = {
         {"cpu-load-bp", &out->cpu_utilisation_bp},
-        {"load-1-cbp", &out->load.avg_1_cbp},
+        {"load-1-cbp", &out->load_1_cbp},
         {"memory-total-bytes", &out->memory.total_bytes},
         {"memory-used-bytes", &out->memory.used_bytes},
         {"swap-used-bytes", &out->memory.swap_used_bytes},
@@ -225,10 +225,6 @@ spg_machine_state_parse(const size_t input_n, const char input[],
             return status;
         }
     }
-    /* The 5- and 15-minute averages are not in the rendered block; a fixture
-     * that omits them says unknown, not zero. */
-    out->load.avg_5_cbp  = SPG_MACHINE_UNKNOWN;
-    out->load.avg_15_cbp = SPG_MACHINE_UNKNOWN;
     status = read_i64(input_n, input, nodes, root, "temperature-mc",
                       &out->temperature_mc);
     if (status != SPG_OK) {

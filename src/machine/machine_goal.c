@@ -102,16 +102,6 @@ spg_machine_goal_load(const size_t input_n, const char input[],
         return SPG_E_SCHEMA;
     }
 
-    node = field_value(input_n, input, nodes, root, "prefer-min-energy");
-    if (node != SPG_SEXPR_INVALID_INDEX) {
-        if (spg_sexpr_span_eq_cstr(input_n, input, nodes[node].span, "true")) {
-            out->prefer_min_energy = true;
-        } else if (!spg_sexpr_span_eq_cstr(input_n, input, nodes[node].span,
-                                           "false")) {
-            return SPG_E_SCHEMA;
-        }
-    }
-
     /* Note on (max-actions 0): it is NOT rejected as contradictory. A machine
      * that already meets its constraints satisfies the goal without acting,
      * and "verify without touching anything" is a legitimate run. What it does
@@ -121,7 +111,13 @@ spg_machine_goal_load(const size_t input_n, const char input[],
     return SPG_OK;
 }
 
-uint64_t spg_critical_health_bp(const struct spg_machine_state *state) {
+/* Health of the critical services, in basis points: 10000 when every process
+ * the profile marks critical is running, 0 when any is stopped or gone, and
+ * UNKNOWN when none is named. Availability, not quality of service.
+ *
+ * static: the only caller is the evaluation below, and an export with no
+ * outside consumer is API surface maintained for nobody. */
+static uint64_t critical_health_bp(const struct spg_machine_state *state) {
     if (state == nullptr) {
         return SPG_MACHINE_UNKNOWN;
     }
@@ -159,7 +155,7 @@ spg_machine_goal_evaluate(const struct spg_machine_goal  *goal,
     *out = (struct spg_goal_evaluation){
         .verdict            = SPG_GOAL_SATISFIED,
         .temperature_mc     = final_state->temperature_mc,
-        .critical_health_bp = spg_critical_health_bp(final_state),
+        .critical_health_bp = critical_health_bp(final_state),
         .actions_used       = actions_used,
     };
     if (!goal->present) {
@@ -265,11 +261,6 @@ enum spg_status spg_machine_goal_render(const struct spg_machine_goal *goal,
         put(&w, " (max-actions ");
         put_i64(&w, (int64_t)goal->max_actions);
         put(&w, ")");
-    }
-    /* Rendered only when set: a preference the run does not hold is noise in a
-     * small model's window. */
-    if (goal->prefer_min_energy) {
-        put(&w, " (prefer-min-energy true)");
     }
     put(&w, ")");
 

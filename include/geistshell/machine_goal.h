@@ -19,7 +19,6 @@ extern "C" {
  *   (machine-goal
  *     (max-temperature-mc 70000)
  *     (min-critical-service-health-bp 9500)
- *     (prefer-min-energy true)
  *     (max-actions 3))
  *
  * Four things are kept apart on purpose, because collapsing them is how a
@@ -27,8 +26,10 @@ extern "C" {
  *
  *   1. HARD CONSTRAINTS — the numbers above. Measurable against the final
  *      snapshot, and the only thing that decides whether a run succeeded.
- *   2. OPTIMISATION PREFERENCES — prefer-min-energy. A tie-breaker, never a
- *      pass/fail criterion; nothing here measures energy yet (#75).
+ *   2. OPTIMISATION PREFERENCES — none yet. The slot is named because the
+ *      separation matters, not because something fills it. An earlier
+ *      prefer-min-energy field was parsed, rendered into the context and never
+ *      judged, which made the run promise a trade-off nobody evaluated.
  *   3. SEMANTIC PROCESS RESTRICTIONS — what may be paused or stopped. Those
  *      live in the process profile (#62) and are enforced by the policy gate.
  *   4. POLICY AND SAFETY — capabilities and budgets, in the policy config.
@@ -47,9 +48,6 @@ struct spg_machine_goal {
     int64_t  max_temperature_mc;
     uint64_t min_critical_health_bp;
     uint64_t max_actions;
-
-    /* Optimisation preference; recorded, not judged. */
-    bool prefer_min_energy;
 
     bool present; /* false = no goal was configured */
 };
@@ -84,17 +82,6 @@ spg_machine_goal_load(size_t input_n, const char input[], size_t token_capacity,
                       size_t                   node_capacity,
                       struct spg_sexpr_node    nodes[static node_capacity],
                       struct spg_machine_goal *out);
-
-/* Health of the critical services in a snapshot, in basis points.
- *
- * First definition, and a deliberately blunt one: 10000 when every process the
- * profile marks critical is present and running, 0 when any of them is stopped
- * or has vanished, and UNKNOWN when the snapshot names no critical process at
- * all. It is a availability measure, not a quality-of-service one — a finer
- * definition needs something that measures the service itself, which is
- * machine B's territory (#75). */
-[[nodiscard]] uint64_t
-spg_critical_health_bp(const struct spg_machine_state *state);
 
 /* Judge a finished run against its goal, from the OBSERVED state.
  *

@@ -26,10 +26,9 @@ static bool load_state(const size_t n, const char text[],
            SPG_OK;
 }
 
-static const char goal_text[] =
-    "(machine-goal (max-temperature-mc 70000)\n"
-    " (min-critical-service-health-bp 9500) (prefer-min-energy true)\n"
-    " (max-actions 3))\n";
+static const char goal_text[] = "(machine-goal (max-temperature-mc 70000)\n"
+                                " (min-critical-service-health-bp 9500)"
+                                " (max-actions 3))\n";
 
 static int test_parse(void) {
     struct spg_machine_goal g = {};
@@ -37,7 +36,7 @@ static int test_parse(void) {
         return 1;
     }
     if (g.max_temperature_mc != 70000 || g.min_critical_health_bp != 9500u ||
-        g.max_actions != 3u || !g.prefer_min_energy || !g.present) {
+        g.max_actions != 3u || !g.present) {
         return 1;
     }
     /* An absent constraint is unset, not zero — zero is a real and very strict
@@ -65,10 +64,6 @@ static int test_rejects(void) {
      * typo rather than a strict goal. */
     if (load_goal(LIT("(machine-goal (min-critical-service-health-bp 20000))"),
                   &g) != SPG_E_SCHEMA) {
-        return 1;
-    }
-    if (load_goal(LIT("(machine-goal (prefer-min-energy maybe))"), &g) !=
-        SPG_E_SCHEMA) {
         return 1;
     }
     if (load_goal(LIT("(machine-goal (max-actions -1))"), &g) == SPG_OK) {
@@ -235,8 +230,7 @@ static int test_render(void) {
     }
     const char *expected =
         "(machine-goal (max-temperature-mc 70000)"
-        " (min-critical-service-health-bp 9500) (max-actions 3)"
-        " (prefer-min-energy true))";
+        " (min-critical-service-health-bp 9500) (max-actions 3))";
     if (strcmp(buf, expected) != 0) {
         printf("  rendered: %s\n", buf);
         return 1;

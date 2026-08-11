@@ -58,8 +58,8 @@ extern "C" {
  * total minus what the kernel would hand out on demand. */
 [[nodiscard]] enum spg_status spg_backend_memory(struct spg_memory_sample *out);
 
-/* Load averages, x100. */
-[[nodiscard]] enum spg_status spg_backend_load(struct spg_load_sample *out);
+/* One-minute load average, x100. */
+[[nodiscard]] enum spg_status spg_backend_load(uint64_t *out_1_cbp);
 
 /* Millidegrees Celsius. SPG_E_UNSUPPORTED where no public interface exists —
  * macOS is such a platform, and pretending otherwise would mean shipping a
@@ -92,17 +92,6 @@ spg_backend_processes(size_t cap, struct spg_process_sample out[],
  * answer that would widen the window it exists to close. */
 [[nodiscard]] enum spg_status
 spg_backend_process_identity(uint64_t pid, uint64_t *out_start_identity);
-
-/* --- machine B ---------------------------------------------------------- */
-
-/* Fan speed and duty. SPG_E_UNSUPPORTED on hosts with no controllable fan,
- * which is most of them. */
-[[nodiscard]] enum spg_status spg_backend_fan_read(uint64_t *out_rpm,
-                                                   uint64_t *out_duty);
-
-/* Write the fan duty. The clamp is applied by the caller — it is a safety
- * decision and belongs above the port boundary, not inside it. */
-[[nodiscard]] enum spg_status spg_backend_fan_write(uint64_t duty);
 
 #ifdef __cplusplus
 }

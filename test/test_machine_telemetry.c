@@ -126,41 +126,38 @@ static int test_meminfo_clamp(void) {
 }
 
 static int test_loadavg(void) {
-    struct spg_load_sample l = {};
-    if (spg_telemetry_parse_loadavg(LIT("1.75 0.31 0.08 1/234 5678\n"), &l) !=
-        SPG_OK) {
-        return 1;
-    }
-    if (l.avg_1_cbp != 175u || l.avg_5_cbp != 31u || l.avg_15_cbp != 8u) {
+    uint64_t load = 0u;
+    if (spg_telemetry_parse_loadavg(LIT("1.75 0.31 0.08 1/234 5678\n"),
+                                    &load) != SPG_OK ||
+        load != 175u) {
         return 1;
     }
     /* More than two fractional digits truncate, never round — byte-identical
      * output must not depend on rounding mode. */
-    if (spg_telemetry_parse_loadavg(LIT("0.999 0.0 0.0\n"), &l) != SPG_OK) {
-        return 1;
-    }
-    if (l.avg_1_cbp != 99u) {
+    if (spg_telemetry_parse_loadavg(LIT("0.999 0.0 0.0\n"), &load) != SPG_OK ||
+        load != 99u) {
         return 1;
     }
     /* Integer form without a decimal point is valid. */
-    if (spg_telemetry_parse_loadavg(LIT("2 3 4\n"), &l) != SPG_OK) {
+    if (spg_telemetry_parse_loadavg(LIT("2 3 4\n"), &load) != SPG_OK ||
+        load != 200u) {
         return 1;
     }
-    if (l.avg_1_cbp != 200u) {
+    /* Only the first figure is read now, so only the first is required. The
+     * old parser demanded all three and then discarded two — validating data
+     * nobody consumes is a rule that can only ever reject valid input. */
+    if (spg_telemetry_parse_loadavg(LIT("1.0\n"), &load) != SPG_OK ||
+        load != 100u) {
         return 1;
     }
-    /* Two of three values is malformed. */
-    if (spg_telemetry_parse_loadavg(LIT("1.0 2.0\n"), &l) != SPG_E_FORMAT) {
-        return 1;
-    }
-    /* A failed parse must leave the fields unknown, never 0 — 0 would read as
-     * a perfectly idle machine. */
-    if (l.avg_1_cbp != SPG_MACHINE_UNKNOWN ||
-        l.avg_15_cbp != SPG_MACHINE_UNKNOWN) {
+    /* A failed parse leaves it unknown, never 0 — 0 reads as a perfectly idle
+     * machine, which is the opposite of "we could not tell". */
+    if (spg_telemetry_parse_loadavg(LIT("garbage"), &load) != SPG_E_FORMAT ||
+        load != SPG_MACHINE_UNKNOWN) {
         return 1;
     }
     /* An empty file is a legitimate input, not a crash. */
-    if (spg_telemetry_parse_loadavg(LIT(""), &l) != SPG_E_FORMAT) {
+    if (spg_telemetry_parse_loadavg(LIT(""), &load) != SPG_E_FORMAT) {
         return 1;
     }
     return 0;
@@ -240,7 +237,7 @@ static struct spg_machine_state sample_state(void) {
     return (struct spg_machine_state){
         .timestamp_ns       = 42u,
         .cpu_utilisation_bp = 9200u,
-        .load               = {.avg_1_cbp = 175u},
+        .load_1_cbp         = 175u,
         .memory             = {.total_bytes     = 1024u,
                                .used_bytes      = 512u,
                                .swap_used_bytes = 0u},
@@ -276,9 +273,7 @@ static int test_render(void) {
 static int test_render_unknown(void) {
     struct spg_machine_state s = {
         .cpu_utilisation_bp = SPG_MACHINE_UNKNOWN,
-        .load               = {.avg_1_cbp  = SPG_MACHINE_UNKNOWN,
-                               .avg_5_cbp  = SPG_MACHINE_UNKNOWN,
-                               .avg_15_cbp = SPG_MACHINE_UNKNOWN},
+        .load_1_cbp         = SPG_MACHINE_UNKNOWN,
         .memory             = {.total_bytes     = SPG_MACHINE_UNKNOWN,
                                .used_bytes      = SPG_MACHINE_UNKNOWN,
                                .swap_used_bytes = SPG_MACHINE_UNKNOWN},

@@ -58,19 +58,17 @@ enum spg_status spg_backend_memory(struct spg_memory_sample *out) {
     return spg_telemetry_parse_meminfo(n, buf, out);
 }
 
-enum spg_status spg_backend_load(struct spg_load_sample *out) {
-    if (out == nullptr) {
+enum spg_status spg_backend_load(uint64_t *out_1_cbp) {
+    if (out_1_cbp == nullptr) {
         return SPG_E_INVALID_ARG;
     }
     char         buf[256];
     const size_t n = read_file("/proc/loadavg", sizeof buf, buf);
     if (n == 0u) {
-        *out = (struct spg_load_sample){.avg_1_cbp  = SPG_MACHINE_UNKNOWN,
-                                        .avg_5_cbp  = SPG_MACHINE_UNKNOWN,
-                                        .avg_15_cbp = SPG_MACHINE_UNKNOWN};
+        *out_1_cbp = SPG_MACHINE_UNKNOWN;
         return SPG_E_UNSUPPORTED;
     }
-    return spg_telemetry_parse_loadavg(n, buf, out);
+    return spg_telemetry_parse_loadavg(n, buf, out_1_cbp);
 }
 
 enum spg_status spg_backend_temperature(int64_t *out_mc) {
@@ -218,24 +216,6 @@ enum spg_status spg_backend_process_identity(const uint64_t pid,
     return SPG_OK;
 }
 
-/* The pwmfan hwmon device, found by name rather than a fixed hwmonN path: the
- * numbering depends on probe order and changes across boots. */
-static bool fan_dir(char out[static 64]) {
-    for (unsigned i = 0u; i < 16u; i += 1u) {
-        char path[96];
-        if (snprintf(path, sizeof path, "/sys/class/hwmon/hwmon%u/name", i) <
-            0) {
-            continue;
-        }
-        char         name[32] = {};
-        const size_t n        = read_file(path, sizeof name - 1u, name);
-        if (n >= 6u && memcmp(name, "pwmfan", 6u) == 0) {
-            return snprintf(out, 64u, "/sys/class/hwmon/hwmon%u", i) > 0;
-        }
-    }
-    return false;
-}
-
 static bool read_u64_file(const char *path, uint64_t *out) {
     char         buf[32] = {};
     const size_t n       = read_file(path, sizeof buf - 1u, buf);
@@ -252,42 +232,4 @@ static bool read_u64_file(const char *path, uint64_t *out) {
         *out = value;
     }
     return any;
-}
-
-enum spg_status spg_backend_fan_read(uint64_t *out_rpm, uint64_t *out_duty) {
-    if (out_rpm == nullptr || out_duty == nullptr) {
-        return SPG_E_INVALID_ARG;
-    }
-    *out_rpm  = SPG_MACHINE_UNKNOWN;
-    *out_duty = SPG_MACHINE_UNKNOWN;
-    char dir[64];
-    if (!fan_dir(dir)) {
-        return SPG_E_UNSUPPORTED;
-    }
-    char path[128];
-    if (snprintf(path, sizeof path, "%s/fan1_input", dir) > 0) {
-        (void)read_u64_file(path, out_rpm);
-    }
-    if (snprintf(path, sizeof path, "%s/pwm1", dir) > 0) {
-        (void)read_u64_file(path, out_duty);
-    }
-    return SPG_OK;
-}
-
-enum spg_status spg_backend_fan_write(const uint64_t duty) {
-    char dir[64];
-    if (!fan_dir(dir)) {
-        return SPG_E_UNSUPPORTED;
-    }
-    char path[128];
-    if (snprintf(path, sizeof path, "%s/pwm1", dir) < 0) {
-        return SPG_E_IO;
-    }
-    FILE *f = fopen(path, "wbe");
-    if (f == nullptr) {
-        return SPG_E_IO; /* writing pwm1 usually needs root */
-    }
-    const int written = fprintf(f, "%llu\n", (unsigned long long)duty);
-    (void)fclose(f);
-    return written > 0 ? SPG_OK : SPG_E_IO;
 }

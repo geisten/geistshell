@@ -134,10 +134,6 @@ static bool parse_action_kind(const size_t input_n, const char input[],
         *out = SPG_ACTION_MACHINE_RESUME;
         return true;
     }
-    if (spg_sexpr_span_eq_cstr(input_n, input, span, "machine_set_fan")) {
-        *out = SPG_ACTION_MACHINE_FAN;
-        return true;
-    }
     if (spg_sexpr_span_eq_cstr(input_n, input, span, "finish")) {
         *out = SPG_ACTION_FINISH;
         return true;
@@ -179,7 +175,6 @@ static bool kind_fields_match(const struct spg_recommendation *out) {
                !out->has_body;
     case SPG_ACTION_MACHINE_PAUSE:
     case SPG_ACTION_MACHINE_RESUME:
-    case SPG_ACTION_MACHINE_FAN:
         /* A machine action names a target and nothing else. No command field:
          * the whole point of a typed action is that the model cannot hand the
          * executor a string to run. */

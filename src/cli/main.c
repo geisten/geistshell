@@ -150,8 +150,6 @@ policy_capability_kind_name(const enum spg_policy_capability_kind kind) {
         return "memory";
     case SPG_POLICY_CAP_MACHINE_PROCESS:
         return "machine_process";
-    case SPG_POLICY_CAP_MACHINE_THERMAL:
-        return "machine_thermal";
     }
     return "unknown";
 }

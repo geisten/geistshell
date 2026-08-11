@@ -30,7 +30,7 @@ static int test_parse(void) {
     if (load(LIT(fixture), &s) != SPG_OK) {
         return 1;
     }
-    if (s.cpu_utilisation_bp != 9200u || s.load.avg_1_cbp != 175u ||
+    if (s.cpu_utilisation_bp != 9200u || s.load_1_cbp != 175u ||
         s.memory.total_bytes != 4245815296u || s.temperature_mc != 78400 ||
         s.cpu_freq_khz != 1500000u || s.throttle != SPG_THROTTLE_NONE ||
         s.process_count != 167u) {
@@ -105,7 +105,7 @@ static int test_unknown_is_not_zero(void) {
     if (s.memory.total_bytes != SPG_MACHINE_UNKNOWN ||
         s.temperature_mc != SPG_MACHINE_UNKNOWN_S ||
         s.cpu_freq_khz != SPG_MACHINE_UNKNOWN ||
-        s.load.avg_1_cbp != SPG_MACHINE_UNKNOWN) {
+        s.load_1_cbp != SPG_MACHINE_UNKNOWN) {
         return 1;
     }
     /* An explicit `unknown` reads the same as an absent field. */
