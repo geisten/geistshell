@@ -217,8 +217,13 @@ update-engine:
 		git -C "$(GEIST_DIR)" checkout --quiet $(GEIST_REF); \
 	fi
 
+# CC is forwarded, and that is not cosmetic. geistshell picked its compiler
+# (HOST_CC) for a reason — C23 needs gcc >= 14 or clang >= 19 — but the engine
+# sub-make used to fall back to plain `cc`, so on Ubuntu the shell built with
+# gcc-14 and the engine died on `-std=c23` with the system gcc. Two compilers
+# for one binary is also an ASan/ABI mismatch waiting to be debugged at 3am.
 $(GEIST_LIB): sync-engine
-	$(MAKE) -C $(GEIST_DIR) TARGET=$(GEIST_TARGET) MODE=$(GEIST_MODE) lib
+	$(MAKE) -C $(GEIST_DIR) CC=$(CC) TARGET=$(GEIST_TARGET) MODE=$(GEIST_MODE) lib
 
 lib: $(SPG_LIB)
 
