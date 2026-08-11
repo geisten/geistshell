@@ -218,7 +218,15 @@ $(CHAT_BIN): $(CHAT_OBJECTS) $(SPG_LIB) $(GEIST_LIB)
 	@mkdir -p $(@D)
 	$(CC) $(SPG_LD_FLAGS) -o $@ $(CHAT_OBJECTS) $(SPG_LIB) $(GEIST_LIB) $(LDLIBS)
 
-$(OBJ_DIR)/%.o: %.c
+# Order-only: nothing compiles before the engine's headers exist. Only the
+# BINARIES depended on $(GEIST_LIB), so on a tree without deps/geist make was
+# free to compile first and die on `#include <geist.h>` — which every
+# development machine hides, because deps/geist is already there. The first CI
+# run on a clean checkout found it immediately (#105).
+$(GEIST_DIR)/include/geist.h:
+	$(MAKE) sync-engine
+
+$(OBJ_DIR)/%.o: %.c | $(GEIST_DIR)/include/geist.h
 	@mkdir -p $(@D)
 	$(CC) $(CFLAGS) -MMD -MP -c $< -o $@
 

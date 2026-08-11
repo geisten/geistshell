@@ -57,13 +57,16 @@ jobs:
         run: |
           sudo apt-get update
           sudo apt-get install -y --no-install-recommends \
-            clang libopenblas-dev libomp-dev libfftw3-dev
+            gcc-14 libopenblas-dev libomp-dev libfftw3-dev
 
       # A clean tree, always. #99 found the suite passing on a geistshell-chat
       # binary left over from an earlier build that no rule promised; an
       # incremental CI would have reproduced that bug rather than caught it.
+      # HOST_CC: the repo defaults to clang, and Ubuntu's clang-18 has no C23
+      # `constexpr` — it landed in clang 19, and include/geistshell/device.h
+      # uses it. geistlib pins gcc-14 on Linux for exactly this reason.
       - name: Build (host-debug = ASan + UBSan)
-        run: make
+        run: make ${{ runner.os == 'Linux' && 'HOST_CC=gcc-14' || '' }}
 
       # pipefail, or `tee` reports success and every failing test is swallowed —
       # the same defect this file exists to prevent, one layer up. GitHub's
@@ -72,7 +75,7 @@ jobs:
         shell: bash
         run: |
           set -o pipefail
-          make test | tee test.log
+          make ${{ runner.os == 'Linux' && 'HOST_CC=gcc-14' || '' }} test | tee test.log
 
       # A run whose Linux-only tests all stepped aside must not look like a run
       # where they passed. On macOS a skip is expected and fine; on Linux it
@@ -106,5 +109,5 @@ jobs:
         run: |
           sudo apt-get update
           sudo apt-get install -y --no-install-recommends \
-            clang libopenblas-dev libomp-dev libfftw3-dev
-      - run: make host-release
+            gcc-14 libopenblas-dev libomp-dev libfftw3-dev
+      - run: make HOST_CC=gcc-14 host-release
