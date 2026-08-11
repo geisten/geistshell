@@ -14,6 +14,10 @@ The governing rule: **every claim in here is a hypothesis until the baseline
 suite measures it.** Steps 0–3 below build the instrument. Nothing about model
 behaviour is asserted before step 4 produces a number.
 
+That rule has now been applied to this document's own central claim, and the
+claim lost. Read the postscript at the end before treating anything here as
+settled.
+
 ## Findings that motivated this
 
 Seven things found in the tree, in the order they bite:
@@ -113,6 +117,13 @@ The ladder is what makes the central hypothesis falsifiable: *the scaffold
 lifts parse-rate to ~100% independent of the model.* If that holds, the
 question collapses from "can BitNet produce structure" to "does BitNet pick the
 right action" — and only the ladder shows that transition.
+
+> **Measured, and false.** Phase 12 ran it on a Pi 5 with `--constrained`:
+> Gemma 4 E2B parsed **9/9**, BitNet b1.58-3B **1/9**, BitNet b1.58-large
+> **2/9** — 15 of 18 BitNet runs died at the parser before naming any cause.
+> The scaffold is *not* model-independent. See
+> [machine-intelligence/Small-Model-Gap.md](machine-intelligence/Small-Model-Gap.md)
+> and the postscript at the end of this document.
 
 **Two models, always.** Gemma 4 E2B is the control group; a one-model baseline
 cannot separate "BitNet is weak" from "geistshell's prompt is bad."
@@ -297,11 +308,11 @@ Each step is separately measurable or trivial.
 | 1 | libgeist: `geist_model_arch` → STABLE *(PR open)*. geistshell: copy the template table from geistagent, add `system_open` — lands with step 5 | Blocks everything model-specific. |
 | 2 | `eval` and `agent` onto the **same** decoder (finding D); `--temperature` for `eval`/`improve` (finding E) *(done)* | Otherwise the baseline measures a configuration nobody runs. |
 | 3 | Per-sample fixture isolation + `make bench` *(done)* | Otherwise every number from cases 2/3/7 is a lie. |
-| 4 | **Baseline: 7+7 cases, ladder metric, BitNet + Gemma, presets** *(suite written; not yet measured)* | The zero point. Everything after is measured against it. |
-| 5 | Model profile as s-expression, incl. the `finish_on_no_progress` axis | First hypothesis tested against the zero point. |
+| 4 | **Baseline: 7+7 cases, ladder metric, BitNet + Gemma, presets** *(suite written; still unrun — Phase 12 measured its own scenarios instead)* | The zero point. Everything after is measured against it. |
+| 5 | Model profile as s-expression, incl. the `finish_on_no_progress` axis *(done — `--model-profile`)* | Now the diagnosed fix, not a hypothesis: see the postscript. |
 | 6 | Verifier ladder replaces the `have_expect` oracle | Makes `--best-of` honest. |
 | 7 | Command menu → prompt + `command` mask (with the three consequences above) | Second hypothesis. |
-| 8 | PMI calibration in `decode_choice_slot` | Third hypothesis. |
+| 8 | PMI calibration in `decode_choice_slot` | Third hypothesis — **deprioritised**: it presumes a parseable action, which BitNet does not produce (postscript). |
 | 9 | `pin_prefix` for the constant prefix | Pure speed, changes no numbers — hence last. |
 
 Steps 0–3 are instrument-building with no insight of their own. That is the
@@ -355,3 +366,56 @@ Planner, embeddings, streaming, MCP, Ed25519 journal signatures. Not because
 they are wrong — because none of them can be justified before step 4 says where
 it actually breaks. Adding any of them now is optimising against a feeling,
 which is the exact condition the learning gate has been in since it was built.
+
+
+## Postscript: what the measurement said
+
+Written after Phase 12 (#72) measured on real models what this document had
+only asserted. Recorded here rather than edited away, because a plan that
+quietly deletes its refuted claims teaches nobody anything.
+
+### The central hypothesis is false
+
+> *the scaffold lifts parse-rate to ~100% independent of the model*
+
+Same `--constrained` decoder, same suite, same seed, Pi 5:
+
+| Model | Size | Parse | Dominant failure |
+|---|---|---|---|
+| Gemma 4 E2B `Q4_K_M` | 2.89 GB | **9/9** | `wrong_diagnosis` |
+| BitNet b1.58-3B `I2_S` | 0.94 GB | **1/9** | `parse_failure` |
+| BitNet b1.58-large `TQ2_0` | 0.20 GB | **2/9** | `parse_failure` |
+
+The cliff between 2.89 GB and 0.94 GB is not diagnosis quality. It is the
+ability to emit a well-formed answer at all. The scaffold removes the
+*structural* decisions; it does not make a model that was never shown a chat
+format produce coherent text inside the slots it leaves open. BitNet-large
+returned a lone backslash as one `reason`, and a bare newline in another.
+
+So the question this document expected to reach — "does BitNet pick the right
+action" — is not yet reachable for BitNet. It was reachable for Gemma, and
+there the answer is `wrong_diagnosis`: form fine, cause missed.
+
+### What that changes about the rest of the plan
+
+- **Decision 3 (framing) was the right next step, for a better reason than it
+  gave.** It was filed as a measurement question with `none` as the honest
+  default. The measurement has now answered it: the raw s-expression prompt is
+  *why* BitNet fails, not merely a thing that might matter. Framing moved from
+  "worth testing" to "the diagnosed cause".
+- **Step 8 (PMI calibration) is premature.** Calibrating which action a model
+  picks presumes it produces a parseable action. For BitNet it does not, 15
+  times out of 18. PMI is a fix for Gemma's failure mode, not BitNet's.
+- **The ladder earned its keep.** A single pass rate would have shown
+  "BitNet 0/9, Gemma 2/6" and invited the conclusion that BitNet is a weaker
+  reasoner. The rungs show that it never got to reason at all. That distinction
+  is the entire difference between "train a better model" and "speak to it
+  properly", and it is the one thing this document got right.
+
+### Still unmeasured
+
+The 7+7 suite in decision 4 has never been run: Phase 12 measured its own
+machine scenarios instead. The numbers above therefore settle the *hypothesis*
+without validating *this suite*. The hold-out split, and with it the
+generalisation claim behind the learning gate, remains untested on a real
+model — which was its state before this document was written.
