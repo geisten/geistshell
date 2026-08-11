@@ -127,6 +127,52 @@ Journalisiert wird **jeder** Ausgang, auch die Ablehnungen — bei einer nicht
 umkehrbaren Aktion zählt der Beleg über das, was *nicht* getan wurde, genauso
 viel.
 
+## Drei Maschinen, ein Codepfad
+
+| Maschine | Was sie beisteuert | Wer sie geschrieben hat |
+|---|---|---|
+| `heater.py` | Physik mit rastender Verriegelung | ich — deshalb als Prüfstand wertlos |
+| OpenPLC | echte IEC-61131-3-Runtime, fremder Modbus-Stack und Adressraum | fremd, aber **ohne Physik**: ein Regler, keine Anlage |
+| `gym_bridge.py` | fremde Physik, fremde Schwierigkeit, veröffentlichte Baselines | fremd |
+
+**geistshell hat für keine davon eine Zeile C gebraucht.** Das war der ganze
+Grund, Modbus statt GPIO zu nehmen, und er hat sich dreimal ausgezahlt.
+
+### Die Gymnasium-Brücke
+
+```
+python3 -m venv build/gymenv
+build/gymenv/bin/pip install "gymnasium[classic-control]"
+build/gymenv/bin/python examples/machine/plant/gym_bridge.py --env Pendulum-v1 --port 5502
+```
+
+Ein venv, kein `pip install --break-system-packages`: PEP 668 sperrt die
+System-Python aus gutem Grund, und ein Beispiel darf die Installation des
+Nutzers nicht gefährden. Fehlt das venv, **überspringt** der Test sich, statt
+rot zu werden — ein frischer Checkout darf kein `pip install` verlangen.
+
+Drei Entwurfsentscheidungen, die nicht offensichtlich sind:
+
+- **Ein eigenes Commit-Register.** Eine RL-Umgebung schreitet nur voran, wenn
+  man handelt, und eine mehrdimensionale Aktion kommt Register für Register an.
+  „Schreite fort, wenn das letzte Aktionsregister geschrieben wurde" macht die
+  Bedeutung eines Schreibvorgangs davon abhängig, welches es war — für
+  Pendulums eine Dimension egal, für einen Quadrocopter falsch. Ein zusätzlicher
+  Roundtrip kauft eine Schnittstelle ohne Mehrdeutigkeit.
+- **Sättigen, nicht überlaufen.** Beobachtungen sind Fließkomma, Register sind
+  16 Bit. Ein Wert, der in eine plausible kleine Zahl überläuft, ist schlimmer
+  als einer, der an der Grenze klebt — der erste ist still falsch. Register 105
+  zählt die Sättigungen, damit eine schlecht skalierte Kanaltabelle sichtbar
+  wird statt rätselhaft.
+- **Bei jedem Reset geseedet**, nicht einmal beim Start: zwei Läufe desselben
+  Skripts müssen dieselbe Episode sehen, sonst beweist ein Journal-Replay
+  nichts über die Entscheidungen darin.
+
+Und ein glücklicher Zufall: Gymnasium-Umgebungen schreiten **auf Befehl** fort,
+nicht nach Wanduhr. Der Agenten-Loop rechnet in `step + 1`, der Watchdog misst
+deshalb in Schritten. Das passt exakt — die Wanduhr-Physik des Heizers war die
+Fehlanpassung, nicht die Regel.
+
 ## Was bewusst noch fehlt
 
 Skalierung pro Kanal, 32-Bit- und Float-Register, Coils, und mehrere Maschinen

@@ -22,11 +22,10 @@ installed is a test that will one day be skipped.
 """
 
 import argparse
-import socket
-import socketserver
-import struct
 import threading
 import time
+
+import modbus_server
 
 TEMPERATURE, HEATER_POWER, AMBIENT, TRIPPED, RESET = range(5)
 
@@ -113,67 +112,6 @@ class Plant:
         return None
 
 
-class Handler(socketserver.BaseRequestHandler):
-    def handle(self):
-        self.request.setsockopt(socket.IPPROTO_TCP, socket.TCP_NODELAY, 1)
-        while True:
-            header = self._recv_exact(6)
-            if header is None:
-                return
-            txn, protocol, length = struct.unpack(">HHH", header)
-            if protocol != 0 or not 2 <= length <= 253:
-                return
-            body = self._recv_exact(length)
-            if body is None:
-                return
-            reply = self._dispatch(txn, body)
-            if reply is None:
-                return
-            self.request.sendall(reply)
-
-    def _recv_exact(self, n):
-        buf = b""
-        while len(buf) < n:
-            chunk = self.request.recv(n - len(buf))
-            if not chunk:
-                return None
-            buf += chunk
-        return buf
-
-    def _dispatch(self, txn, body):
-        unit, function = body[0], body[1]
-        plant = self.server.plant
-        if function == 0x03 and len(body) >= 6:
-            register, count = struct.unpack(">HH", body[2:6])
-            value = plant.read(register) if count == 1 else None
-            if value is None:
-                return self._exception(txn, unit, function, 0x02)
-            return self._frame(
-                txn, unit, struct.pack(">BBh", function, 2, value)
-            )
-        if function == 0x06 and len(body) >= 6:
-            register, raw = struct.unpack(">Hh", body[2:6])
-            written = plant.write(register, raw)
-            if written is None:
-                return self._exception(txn, unit, function, 0x03)
-            return self._frame(
-                txn, unit, struct.pack(">Hh", register, written), function
-            )
-        return self._exception(txn, unit, function, 0x01)
-
-    def _frame(self, txn, unit, pdu, function=None):
-        payload = pdu if function is None else struct.pack(">B", function) + pdu
-        return struct.pack(">HHHB", txn, 0, len(payload) + 1, unit) + payload
-
-    def _exception(self, txn, unit, function, code):
-        return self._frame(txn, unit, struct.pack(">BB", function | 0x80, code))
-
-
-class Server(socketserver.ThreadingTCPServer):
-    allow_reuse_address = True
-    daemon_threads = True
-
-
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--port", type=int, default=5502)
@@ -188,17 +126,15 @@ def main():
     )
     args = parser.parse_args()
 
-    server = Server((args.host, args.port), Handler)
-    server.plant = Plant()
+    plant = Plant()
 
     def run():
         while True:
             time.sleep(TICK_SECONDS)
-            server.plant.step(args.speed)
+            plant.step(args.speed)
 
     threading.Thread(target=run, daemon=True).start()
-    print(f"heater plant on {args.host}:{server.server_address[1]}", flush=True)
-    server.serve_forever()
+    modbus_server.serve(args.host, args.port, plant, "heater plant")
 
 
 if __name__ == "__main__":
