@@ -40,7 +40,16 @@ cleanup() {
 }
 trap cleanup EXIT
 
-if [ "$(uname -s)" = "Linux" ]; then
+# Any host with a live backend runs the full path. The gate used to name Linux
+# directly, which stopped being true the moment a second platform was ported —
+# a test that hard-codes the platform list has to be edited every time one is
+# added, and gets forgotten instead.
+case "$(uname -s)" in
+Linux | Darwin) LIVE_BACKEND=1 ;;
+*) LIVE_BACKEND=0 ;;
+esac
+
+if [ "$LIVE_BACKEND" = "1" ]; then
     sleep 120 &
     CHILD=$!
     sleep 0.2
@@ -71,7 +80,9 @@ if [ "$(uname -s)" = "Linux" ]; then
         exit 1
         ;;
     esac
-    STATE=$(awk '{print $3}' "/proc/$CHILD/stat" 2>/dev/null || echo "?")
+    # ps rather than /proc: the same question, asked in a way both kernels
+    # answer. A stopped process is "T" on either.
+    STATE=$(ps -o stat= -p "$CHILD" 2>/dev/null | cut -c1 || echo "?")
     if [ "$STATE" = "T" ]; then
         echo "test_cli_machine_run: FAIL — child left stopped after the run" >&2
         exit 1

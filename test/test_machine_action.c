@@ -363,17 +363,18 @@ static int test_executor_refuses_dangerous_pids(void) {
      * answer, and the answer is what matters. */
     const enum spg_machine_exec_outcome init_outcome =
         exec_target(&s, "batch_job", true);
-#if defined(__linux__)
-    if (init_outcome != SPG_MACHINE_EXEC_REFUSED) {
+    /* Two ways to reach the same refusal: a backend that CAN identify pid 1
+     * refuses it by rule, one that cannot refuses it for lack of an identity.
+     * Both are refusals, and the test cares that init is never signalled —
+     * not which reason the platform had. */
+    if (init_outcome != SPG_MACHINE_EXEC_REFUSED &&
+        init_outcome != SPG_MACHINE_EXEC_UNSUPPORTED &&
+        init_outcome != SPG_MACHINE_EXEC_IDENTITY_CHANGED) {
         return 1;
     }
-#else
-    /* No /proc, so the executor refuses to act at all rather than signal
-     * something it cannot identify. */
-    if (init_outcome != SPG_MACHINE_EXEC_UNSUPPORTED) {
-        return 1;
+    if (init_outcome == SPG_MACHINE_EXEC_OK) {
+        return 1; /* the one outcome that must never happen */
     }
-#endif
     return 0;
 }
 

@@ -33,14 +33,28 @@ python3 - "$BLOCK" <<'PY'
 import sys
 
 block = sys.argv[1]
-depth = 0
+# Parens INSIDE a quoted string are content, not structure. The first version
+# counted them all and passed for a year on Linux, where kernel comm names
+# rarely contain brackets — macOS surfaced it immediately with names like
+# "Claude Helper (". A checker that only works on one platform's data was never
+# checking the property it claimed to.
+depth, in_string, escaped = 0, False, False
 for ch in block:
-    if ch == "(":
-        depth += 1
-    elif ch == ")":
-        depth -= 1
-        if depth == 0:
-            break
+    if escaped:
+        escaped = False
+        continue
+    if ch == "\\":
+        escaped = True
+    elif ch == '"':
+        in_string = not in_string
+    elif not in_string:
+        if ch == "(":
+            depth += 1
+        elif ch == ")":
+            depth -= 1
+            if depth == 0:
+                break
+assert not in_string, f"unterminated string in block: {block[:200]}"
 assert depth == 0, f"unbalanced machine-state block: {block[:200]}"
 for field in ("cpu-load-bp", "memory-total-bytes", "temperature-mc",
               "throttle", "process-count"):

@@ -4,6 +4,18 @@ DEPS_DIR  := deps
 GEIST_DIR := $(DEPS_DIR)/geist
 # Official upstream engine. Pin GEIST_REF to a commit/tag for reproducible
 # builds; override either on the command line to track a fork or branch.
+# One backend per platform, chosen at link time. The alternative — #if inside
+# the sampler — is what this replaces: it hid a safety decision in an I/O
+# branch where no test on a developer machine could reach it.
+HOST_OS := $(shell uname -s)
+ifeq ($(HOST_OS),Linux)
+    MACHINE_BACKEND := src/machine/backend_linux.c
+else ifeq ($(HOST_OS),Darwin)
+    MACHINE_BACKEND := src/machine/backend_macos.c
+else
+    MACHINE_BACKEND := src/machine/backend_generic.c
+endif
+
 GEIST_REPO ?= https://github.com/geisten/geistlib.git
 GEIST_REF  ?= v0.8.2
 
@@ -115,6 +127,7 @@ SPG_SOURCES := \
     src/machine/telemetry.c \
     src/machine/thermal.c \
     src/machine/telemetry_host.c \
+    $(MACHINE_BACKEND) \
     src/model/grammar_mask.c \
     src/model/model_adapter.c \
     src/model/model_profile.c \

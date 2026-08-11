@@ -3,6 +3,7 @@
  * Static fixtures only — no /proc, no dependency on what happens to run on the
  * CI machine. */
 
+#include "geistshell/machine_backend.h"
 #include "geistshell/machine_state.h"
 #include "geistshell/process_profile.h"
 
@@ -544,37 +545,40 @@ static int test_sample_with_processes(void) {
     if (second.timestamp_ns != 2u) {
         return 1;
     }
-#if defined(__linux__)
-    if (s1 != SPG_OK || s2 != SPG_OK) {
-        return 1;
-    }
-    /* Something is always running, starting with this test. */
-    if (first.n_processes == 0u || second.n_processes == 0u) {
-        return 1;
-    }
-    if (second.n_processes > SPG_MACHINE_MAX_PROCESSES) {
-        return 1;
-    }
-    /* Every sampled process must carry an identity — phase 6 depends on it. */
-    for (size_t i = 0u; i < second.n_processes; i += 1u) {
-        if (second.processes[i].pid == 0u ||
-            second.processes[i].name[0] == '\0') {
+    /* The backend decides, not the preprocessor: this reads the same on every
+     * platform, and adding one does not mean editing the test. */
+    if (spg_backend_is_live()) {
+        if (s1 != SPG_OK || s2 != SPG_OK) {
+            return 1;
+        }
+        /* Something is always running, starting with this test. */
+        if (first.n_processes == 0u || second.n_processes == 0u) {
+            return 1;
+        }
+        if (second.n_processes > SPG_MACHINE_MAX_PROCESSES) {
+            return 1;
+        }
+        /* Every sampled process must carry an identity — phase 6 depends on
+         * it, and a backend that cannot supply one is not finished. */
+        for (size_t i = 0u; i < second.n_processes; i += 1u) {
+            if (second.processes[i].pid == 0u ||
+                second.processes[i].name[0] == '\0') {
+                return 1;
+            }
+        }
+        /* A host with more processes than the snapshot holds must say so. */
+        if (second.process_count > SPG_MACHINE_MAX_PROCESSES &&
+            !second.processes_truncated) {
+            return 1;
+        }
+    } else {
+        if (s1 != SPG_E_UNSUPPORTED || s2 != SPG_E_UNSUPPORTED) {
+            return 1;
+        }
+        if (first.n_processes != 0u || second.n_processes != 0u) {
             return 1;
         }
     }
-    /* A host with more processes than the snapshot holds must say so. */
-    if (second.process_count > SPG_MACHINE_MAX_PROCESSES &&
-        !second.processes_truncated) {
-        return 1;
-    }
-#else
-    if (s1 != SPG_E_UNSUPPORTED || s2 != SPG_E_UNSUPPORTED) {
-        return 1;
-    }
-    if (first.n_processes != 0u || second.n_processes != 0u) {
-        return 1;
-    }
-#endif
     /* A non-empty prev list with a null pointer is a caller bug, not a crash.
      */
     struct spg_machine_state ignored = {};
