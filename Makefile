@@ -99,6 +99,7 @@ SPG_SOURCES := \
     src/core/run_config.c \
     src/core/status.c \
     src/context/context.c \
+    src/device/device.c \
     src/dsl/schema.c \
     src/dsl/sexpr.c \
     src/eval/eval.c \

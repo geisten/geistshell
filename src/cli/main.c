@@ -4,6 +4,7 @@
 #    define _DARWIN_C_SOURCE 1
 #endif
 
+#include "geistshell/device.h"
 #include "geistshell/geistshell.h"
 
 #include "geistshell/agent_loop.h"
@@ -83,7 +84,8 @@ static void print_usage(const char *argv0) {
         "  verify-journal   verify a journal (+ --key <f> checks the seal)\n"
         "  seal-journal     write a keyed HMAC seal over a journal\n"
         "  policy-check     validate and summarize a policy file\n"
-        "  sim-validate     validate and summarize a scenario file\n",
+        "  sim-validate     validate and summarize a scenario file\n"
+        "  device           read/write a machine over Modbus TCP\n",
         argv0);
 }
 
@@ -1084,6 +1086,152 @@ done:
         status = SPG_E_IO;
     }
     return status;
+}
+
+/* Read and write a real machine over Modbus TCP.
+ *
+ * A CLI command rather than an agent action, and in that order on purpose: the
+ * fan of phase 15 existed as an action in the policy, the grammar mask and this
+ * very switch, and nothing ever executed it. An actuator gets a working
+ * executor first and a model-reachable action only once it demonstrably moves
+ * something.
+ *
+ *   geistshell device --host H --port P \
+ *       --channel temp:0:-400:9000:r --channel heater:1:0:100:w \
+ *       read temp | write heater 60 | list
+ */
+static void print_device_usage(const char *argv0) {
+    fprintf(stderr,
+            "usage: %s device [--host H] [--port P] "
+            "--channel name:reg:min:max:{r|w} ... <read NAME|write NAME "
+            "VALUE|list>\n\n"
+            "Channels are declared per invocation. The range is a refusal "
+            "bound, not a\nclamp: an out-of-range write is rejected and "
+            "nothing is sent.\n",
+            argv0);
+}
+
+static int device_command(const int argc, char **argv) {
+    struct spg_device dev = {};
+    spg_device_init(&dev);
+
+    const char *host = "127.0.0.1";
+    long        port = 502;
+    int         i    = 2;
+    for (; i < argc; i += 1) {
+        if (strcmp(argv[i], "--host") == 0 && i + 1 < argc) {
+            host = argv[i + 1];
+            i += 1;
+        } else if (strcmp(argv[i], "--port") == 0 && i + 1 < argc) {
+            char *end = nullptr;
+            port      = strtol(argv[i + 1], &end, 10);
+            if (end == argv[i + 1] || *end != '\0' || port < 1 ||
+                port > 65535) {
+                fprintf(stderr, "device: bad port: %s\n", argv[i + 1]);
+                return 2;
+            }
+            i += 1;
+        } else if (strcmp(argv[i], "--channel") == 0 && i + 1 < argc) {
+            struct spg_device_channel channel = {};
+            enum spg_status           status  = spg_device_parse_channel(
+                strlen(argv[i + 1]), argv[i + 1], &channel);
+            if (status == SPG_OK) {
+                status = spg_device_add_channel(&dev, &channel);
+            }
+            if (status != SPG_OK) {
+                fprintf(stderr, "device: bad channel '%s': %s\n", argv[i + 1],
+                        spg_status_to_string(status));
+                return 2;
+            }
+            i += 1;
+        } else {
+            break;
+        }
+    }
+
+    if (i >= argc) {
+        print_device_usage(argv[0]);
+        return 2;
+    }
+
+    if (strcmp(argv[i], "list") == 0) {
+        for (size_t c = 0u; c < dev.n_channels; c += 1u) {
+            const struct spg_device_channel *ch = &dev.channels[c];
+            printf("(channel (name \"%s\") (reg %u) (min %lld) (max %lld) "
+                   "(mode %s))\n",
+                   ch->name, (unsigned)ch->reg, (long long)ch->min,
+                   (long long)ch->max, ch->writable ? "w" : "r");
+        }
+        return 0;
+    }
+
+    const bool is_read  = strcmp(argv[i], "read") == 0;
+    const bool is_write = strcmp(argv[i], "write") == 0;
+    if ((!is_read && !is_write) || i + 1 >= argc ||
+        (is_write && i + 2 >= argc)) {
+        print_device_usage(argv[0]);
+        return 2;
+    }
+    const char *name  = argv[i + 1];
+    int64_t     value = 0;
+    if (is_write) {
+        char *end = nullptr;
+        value     = (int64_t)strtoll(argv[i + 2], &end, 10);
+        if (end == argv[i + 2] || *end != '\0') {
+            fprintf(stderr, "device: bad value: %s\n", argv[i + 2]);
+            return 2;
+        }
+    }
+
+    /* A write is refused before the socket is opened, so a rejected command
+     * costs no connection and reaches no machine. */
+    if (is_write) {
+        const struct spg_device_channel *ch = spg_device_find(&dev, name);
+        if (ch == nullptr) {
+            fprintf(stderr, "device: no channel '%s'\n", name);
+            return 1;
+        }
+        if (!ch->writable || value < ch->min || value > ch->max) {
+            fprintf(
+                stderr, "device: refused %s=%lld (channel is %s, %lld..%lld)\n",
+                name, (long long)value, ch->writable ? "writable" : "read-only",
+                (long long)ch->min, (long long)ch->max);
+            return 1;
+        }
+    }
+
+    enum spg_status status = spg_device_connect(&dev, host, (uint16_t)port);
+    if (status != SPG_OK) {
+        fprintf(stderr, "device: connect %s:%ld failed: %s\n", host, port,
+                spg_status_to_string(status));
+        return 1;
+    }
+
+    int exit_code = 0;
+    if (is_read) {
+        int64_t reading = 0;
+        status          = spg_device_read(&dev, name, &reading);
+        if (status == SPG_OK) {
+            printf("(reading (channel \"%s\") (value %lld))\n", name,
+                   (long long)reading);
+        } else {
+            fprintf(stderr, "device: read %s failed: %s\n", name,
+                    spg_status_to_string(status));
+            exit_code = 1;
+        }
+    } else {
+        status = spg_device_write(&dev, name, value);
+        if (status == SPG_OK) {
+            printf("(wrote (channel \"%s\") (value %lld))\n", name,
+                   (long long)value);
+        } else {
+            fprintf(stderr, "device: write %s=%lld failed: %s\n", name,
+                    (long long)value, spg_status_to_string(status));
+            exit_code = 1;
+        }
+    }
+    spg_device_close(&dev);
+    return exit_code;
 }
 
 static int sim_validate_command(const char *path) {
@@ -2185,21 +2333,21 @@ static int agent_command(int argc, char **argv) {
     /* #54: scratch for the chat-framed prompt. Room for the context plus the
      * turn markers; a template that would not fit falls back to the bare
      * prompt rather than sending half a format. */
-    static char framed[CLI_CONTEXT_BYTES + 256u];
-    static char                           model_output[CLI_MODEL_OUTPUT_BYTES];
-    static struct spg_sexpr_token         rec_tokens[CLI_TOKEN_CAPACITY];
-    static struct spg_sexpr_node          rec_nodes[CLI_NODE_CAPACITY];
-    static char                           policy_payload[CLI_PAYLOAD_BYTES];
-    static char                           sim_payload[CLI_PAYLOAD_BYTES];
-    static char                           observation[AGENT_OBS_BYTES];
-    static char                           shell_stdout[AGENT_SHELL_STDOUT];
-    static char                           shell_stderr[AGENT_SHELL_STDERR];
-    static char                           mem_index[AGENT_OBS_BYTES];
+    static char                   framed[CLI_CONTEXT_BYTES + 256u];
+    static char                   model_output[CLI_MODEL_OUTPUT_BYTES];
+    static struct spg_sexpr_token rec_tokens[CLI_TOKEN_CAPACITY];
+    static struct spg_sexpr_node  rec_nodes[CLI_NODE_CAPACITY];
+    static char                   policy_payload[CLI_PAYLOAD_BYTES];
+    static char                   sim_payload[CLI_PAYLOAD_BYTES];
+    static char                   observation[AGENT_OBS_BYTES];
+    static char                   shell_stdout[AGENT_SHELL_STDOUT];
+    static char                   shell_stderr[AGENT_SHELL_STDERR];
+    static char                   mem_index[AGENT_OBS_BYTES];
     static struct spg_journal_record_header trajectory[256];
 
     const struct spg_agent_run_workspace ws = {
-        .context_capacity        = sizeof context,
-        .context                 = context,
+        .context_capacity = sizeof context,
+        .context          = context,
         /* #54: scratch for the chat-framed prompt. Sized like the context plus
          * the markers; a template that would not fit falls back to the bare
          * prompt rather than sending half a format. */
@@ -2773,7 +2921,7 @@ static void eval_tally_ladder(struct eval_run_report            *report,
 /* Per-invocation knobs. A null pointer (or zeroed struct) reproduces the
  * historical behaviour: one sample per case, no remote endpoint. */
 struct eval_run_opts {
-    uint32_t    ablate;     /* phase 11: parts of the snapshot to withhold */
+    uint32_t    ablate; /* phase 11: parts of the snapshot to withhold */
     const char *profile_model_path; /* #54: how to frame the prompt */
     const char *remote_url; /* nullable: enables (model "remote") cases      */
     const char *remote_model; /* nullable: model name for remote cases */
@@ -2918,20 +3066,20 @@ static enum spg_status eval_run_suite(const char                 *suite_path,
     /* #54: scratch for the chat-framed prompt. Room for the context plus the
      * turn markers; a template that would not fit falls back to the bare
      * prompt rather than sending half a format. */
-    static char framed[CLI_CONTEXT_BYTES + 256u];
-    static char                           model_output[CLI_MODEL_OUTPUT_BYTES];
-    static struct spg_sexpr_token         rtok[CLI_TOKEN_CAPACITY];
-    static struct spg_sexpr_node          rnod[CLI_NODE_CAPACITY];
-    static char                           ppay[CLI_PAYLOAD_BYTES];
-    static char                           spay[CLI_PAYLOAD_BYTES];
-    static char                           observation[AGENT_OBS_BYTES];
-    static char                           sh_out[AGENT_SHELL_STDOUT];
-    static char                           sh_err[AGENT_SHELL_STDERR];
-    static char                           mem_index[AGENT_OBS_BYTES];
+    static char                   framed[CLI_CONTEXT_BYTES + 256u];
+    static char                   model_output[CLI_MODEL_OUTPUT_BYTES];
+    static struct spg_sexpr_token rtok[CLI_TOKEN_CAPACITY];
+    static struct spg_sexpr_node  rnod[CLI_NODE_CAPACITY];
+    static char                   ppay[CLI_PAYLOAD_BYTES];
+    static char                   spay[CLI_PAYLOAD_BYTES];
+    static char                   observation[AGENT_OBS_BYTES];
+    static char                   sh_out[AGENT_SHELL_STDOUT];
+    static char                   sh_err[AGENT_SHELL_STDERR];
+    static char                   mem_index[AGENT_OBS_BYTES];
     static struct spg_journal_record_header traj[256];
     const struct spg_agent_run_workspace    ws = {
-        .context_capacity        = sizeof context,
-        .context                 = context,
+        .context_capacity = sizeof context,
+        .context          = context,
         /* #54: scratch for the chat-framed prompt. Sized like the context plus
          * the markers; a template that would not fit falls back to the bare
          * prompt rather than sending half a format. */
@@ -2998,8 +3146,8 @@ static enum spg_status eval_run_suite(const char                 *suite_path,
             goto done;
         }
         const enum spg_status ms = spg_model_profile_load(
-            ptext.n, ptext.data, ws.token_capacity, ws.tokens,
-            ws.node_capacity, ws.nodes, &model_profile);
+            ptext.n, ptext.data, ws.token_capacity, ws.tokens, ws.node_capacity,
+            ws.nodes, &model_profile);
         free_file_buffer(&ptext);
         if (ms != SPG_OK) {
             fprintf(stderr, "eval: invalid model profile %s: %s\n",
@@ -3592,7 +3740,8 @@ static void eval_print_report(const char                   *suite_path,
         /* #64: only for diagnosis cases, so every other suite's output stays
          * byte-identical to what its consumers already parse. */
         if (report->case_expected[i][0] != '\0') {
-            printf(",\"expected\":\"%s\",\"emitted\":", report->case_expected[i]);
+            printf(",\"expected\":\"%s\",\"emitted\":",
+                   report->case_expected[i]);
             print_json_string(report->case_emitted[i]);
             printf(",\"correct\":%zu,\"hallucinated\":%zu"
                    ",\"action_proposed\":%zu,\"context_bytes\":%zu"
@@ -4394,6 +4543,10 @@ int main(int argc, char **argv) {
             return 2;
         }
         return sim_validate_command(argv[2]);
+    }
+
+    if (strcmp(argv[1], "device") == 0) {
+        return device_command(argc, argv);
     }
 
     fprintf(stderr, "%s: unknown command\n", argv[1]);
