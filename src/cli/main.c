@@ -152,6 +152,8 @@ policy_capability_kind_name(const enum spg_policy_capability_kind kind) {
         return "memory";
     case SPG_POLICY_CAP_MACHINE_PROCESS:
         return "machine_process";
+    case SPG_POLICY_CAP_DEVICE:
+        return "device";
     }
     return "unknown";
 }
@@ -2066,6 +2068,17 @@ static int agent_command(int argc, char **argv) {
      * counters to reflect its own action. */
     uint64_t    settle_ms    = 0u;
     const char *profile_path = nullptr; /* (process-profile ...) file */
+    /* Attached machine (device_write). Declared per run: a channel table is
+     * the operator saying what this agent may move, which is not something a
+     * model or a runtime-discovered config should be able to widen. */
+    struct spg_device device      = {};
+    const char       *device_host = nullptr;
+    long              device_port = 502;
+    /* In STEPS, not milliseconds: this loop's injected clock is `step + 1`.
+     * Two means the machine may miss one decision's worth of contact before
+     * it is driven to its safe state. */
+    uint64_t device_watchdog_steps = 2u;
+    spg_device_init(&device);
     for (int i = 2; i < argc; i += 1) {
         if ((strcmp(argv[i], "--config") == 0 ||
              strcmp(argv[i], "--run") == 0) &&
@@ -2144,6 +2157,49 @@ static int agent_command(int argc, char **argv) {
         }
         if (strcmp(argv[i], "--machine-settle-ms") == 0 && i + 1 < argc) {
             settle_ms = (uint64_t)strtoull(argv[i + 1], nullptr, 10);
+            i += 1;
+            continue;
+        }
+        if (strcmp(argv[i], "--device-host") == 0 && i + 1 < argc) {
+            device_host = argv[i + 1];
+            i += 1;
+            continue;
+        }
+        if (strcmp(argv[i], "--device-port") == 0 && i + 1 < argc) {
+            char *end   = nullptr;
+            device_port = strtol(argv[i + 1], &end, 10);
+            if (end == argv[i + 1] || *end != '\0' || device_port < 1 ||
+                device_port > 65535) {
+                fprintf(stderr, "agent: bad --device-port: %s\n", argv[i + 1]);
+                return 2;
+            }
+            i += 1;
+            continue;
+        }
+        if (strcmp(argv[i], "--device-watchdog-steps") == 0 && i + 1 < argc) {
+            char      *end = nullptr;
+            const long ms  = strtol(argv[i + 1], &end, 10);
+            if (end == argv[i + 1] || *end != '\0' || ms < 0) {
+                fprintf(stderr, "agent: bad --device-watchdog-steps: %s\n",
+                        argv[i + 1]);
+                return 2;
+            }
+            device_watchdog_steps = (uint64_t)ms;
+            i += 1;
+            continue;
+        }
+        if (strcmp(argv[i], "--device-channel") == 0 && i + 1 < argc) {
+            struct spg_device_channel channel = {};
+            enum spg_status           st      = spg_device_parse_channel(
+                strlen(argv[i + 1]), argv[i + 1], &channel);
+            if (st == SPG_OK) {
+                st = spg_device_add_channel(&device, &channel);
+            }
+            if (st != SPG_OK) {
+                fprintf(stderr, "agent: bad --device-channel '%s': %s\n",
+                        argv[i + 1], spg_status_to_string(st));
+                return 2;
+            }
             i += 1;
             continue;
         }
@@ -2473,7 +2529,27 @@ static int agent_command(int argc, char **argv) {
          * never declared what it may touch may not touch anything. */
         .profile      = profile_path != nullptr ? &profile : nullptr,
         .pause_ledger = with_machine ? &pause_ledger : nullptr,
+        .device       = device_host != nullptr ? &device : nullptr,
     };
+    if (device_host != nullptr) {
+        if (device.n_channels == 0u) {
+            fprintf(stderr, "agent: --device-host without any --device-channel;"
+                            " a machine with no declared channels can only be"
+                            " refused\n");
+            return 2;
+        }
+        const enum spg_status dst =
+            spg_device_connect(&device, device_host, (uint16_t)device_port);
+        if (dst != SPG_OK) {
+            fprintf(stderr, "agent: device %s:%ld unreachable: %s\n",
+                    device_host, device_port, spg_status_to_string(dst));
+            return 1;
+        }
+        /* Armed against the same injected clock the ticks use — a step
+         * counter starting at 1 — so a replay reaches the same watchdog
+         * verdict the live run did. */
+        spg_device_arm_watchdog(&device, device_watchdog_steps, 0u);
+    }
     const struct spg_agent_run_config rcfg = {
         .max_steps   = max_steps,
         .max_repairs = max_repairs,

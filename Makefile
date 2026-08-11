@@ -111,6 +111,7 @@ SPG_SOURCES := \
     src/exec/host_probe.c \
     src/exec/shell_executor.c \
     src/improve/improve.c \
+    src/executor/device_executor.c \
     src/executor/executor_boundary.c \
     src/executor/machine_executor.c \
     src/graph/graph.c \

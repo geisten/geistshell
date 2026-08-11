@@ -98,6 +98,7 @@ enum spg_status spg_agent_run(const struct spg_agent_run_inputs *inputs,
         .machine_ablate = inputs->machine_ablate,
         .profile       = inputs->profile,
         .pause_ledger  = inputs->pause_ledger,
+        .device        = inputs->device,
     };
 
     const size_t refs = config->context_refs > 0u ? config->context_refs : 8u;

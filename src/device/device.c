@@ -33,6 +33,12 @@ spg_device_add_channel(struct spg_device               *dev,
     if (channel->name[0] == '\0' || channel->min > channel->max) {
         return SPG_E_INVALID_ARG;
     }
+    if (channel->writable &&
+        (channel->safe < channel->min || channel->safe > channel->max)) {
+        /* A safe value the channel cannot accept is not a fallback — the
+         * watchdog would fire and then be refused by the range check. */
+        return SPG_E_INVALID_ARG;
+    }
     if (spg_device_find(dev, channel->name) != nullptr) {
         /* Two channels under one name means a write could reach either
          * register depending on table order. Refuse the table instead. */
@@ -131,11 +137,27 @@ enum spg_status spg_device_parse_channel(const size_t text_n, const char text[],
     } else if (text[at] != 'r') {
         return SPG_E_FORMAT;
     }
-    if (at + 1u != text_n) {
+    at += 1u;
+
+    if (out->writable) {
+        /* Required, not optional. A writable channel with no declared safe
+         * value leaves the loss-of-contact decision to whatever the machine
+         * was last told, which is the state least likely to be safe. */
+        int64_t safe = 0;
+        at           = skip_colon(text_n, text, at);
+        if (at == 0u || (at = scan_int(text_n, text, at, &safe)) == 0u) {
+            return SPG_E_FORMAT;
+        }
+        out->safe = safe;
+    }
+    if (at != text_n) {
         return SPG_E_FORMAT; /* trailing text means the operator meant something
                                 this parser did not understand */
     }
     if (reg < 0 || reg > UINT16_MAX || min > max) {
+        return SPG_E_FORMAT;
+    }
+    if (out->writable && (out->safe < min || out->safe > max)) {
         return SPG_E_FORMAT;
     }
     out->reg = (uint16_t)reg;
@@ -218,6 +240,60 @@ enum spg_status spg_modbus_decode(const size_t n, const uint8_t frame[],
         return SPG_OK;
     }
     return SPG_E_UNSUPPORTED;
+}
+
+/* --- The watchdog ----------------------------------------------------- */
+
+void spg_device_arm_watchdog(struct spg_device *dev, const uint64_t timeout,
+                             const uint64_t now) {
+    if (dev == nullptr) {
+        return;
+    }
+    dev->watchdog_timeout = timeout;
+    dev->last_contact     = now;
+    dev->contact_pending  = false;
+}
+
+enum spg_device_watchdog spg_device_watchdog_check(struct spg_device *dev,
+                                                   const uint64_t     now) {
+    if (dev == nullptr) {
+        return SPG_WATCHDOG_DISABLED;
+    }
+    if (dev->contact_pending) {
+        dev->contact_pending = false;
+        dev->last_contact    = now;
+    }
+    if (dev->watchdog_timeout == 0u) {
+        return SPG_WATCHDOG_DISABLED;
+    }
+    if (now < dev->last_contact) {
+        /* Time moved backwards. Treated as contact rather than as expiry: an
+         * injected timestamp going backwards is a caller bug, and tripping a
+         * machine into its safe state on a bookkeeping error would be the more
+         * expensive of the two wrong answers. */
+        return SPG_WATCHDOG_OK;
+    }
+    return (now - dev->last_contact) > dev->watchdog_timeout
+               ? SPG_WATCHDOG_EXPIRED
+               : SPG_WATCHDOG_OK;
+}
+
+enum spg_status spg_device_safe_state(struct spg_device *dev) {
+    if (dev == nullptr) {
+        return SPG_E_INVALID_ARG;
+    }
+    enum spg_status first_failure = SPG_OK;
+    for (size_t i = 0u; i < dev->n_channels; i += 1u) {
+        if (!dev->channels[i].writable) {
+            continue;
+        }
+        const enum spg_status status =
+            spg_device_write(dev, dev->channels[i].name, dev->channels[i].safe);
+        if (status != SPG_OK && first_failure == SPG_OK) {
+            first_failure = status; /* keep going: see device.h */
+        }
+    }
+    return first_failure;
 }
 
 /* --- The machine ------------------------------------------------------ */
@@ -324,7 +400,13 @@ static enum spg_status transact(struct spg_device *dev, const size_t n,
     if (status != SPG_OK) {
         return status;
     }
-    return spg_modbus_decode((size_t)remaining + 6u, reply, txn, out_value);
+    status = spg_modbus_decode((size_t)remaining + 6u, reply, txn, out_value);
+    if (status == SPG_OK) {
+        /* Set here rather than in read/write so no future caller can add a
+         * transaction that talks to the machine without counting as contact. */
+        dev->contact_pending = true;
+    }
+    return status;
 }
 
 enum spg_status spg_device_read(struct spg_device *dev, const char *name,

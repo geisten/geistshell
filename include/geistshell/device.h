@@ -45,11 +45,28 @@ struct spg_device_channel {
     int64_t  min;  /* inclusive, in register units */
     int64_t  max;  /* inclusive */
     bool writable; /* a read-only channel is refused, not silently ignored */
+    /* Where this channel goes when contact is lost. Mandatory for a writable
+     * channel and validated against the range: a writable channel with no
+     * declared safe value is a channel nobody has decided about, and the
+     * decision would then be made by whatever the machine was last told. */
+    int64_t safe;
 };
 
 struct spg_device {
     int      fd;  /* -1 when not connected */
     uint16_t txn; /* Modbus transaction id, incremented per request */
+    /* Watchdog. Never read from a clock in here — every timestamp in this
+     * codebase is injected so a replay is byte-identical, and a watchdog is
+     * the last place that should keep a private clock.
+     *
+     * The UNIT is whatever the caller's injected clock uses, because there is
+     * no single answer: the CLI passes nanoseconds, and the agent loop's clock
+     * is a step counter (`step + 1`), which is what makes its replay
+     * deterministic. Judging a millisecond deadline against a step counter
+     * would be a number that looks like time and is not. */
+    uint64_t watchdog_timeout; /* 0 disables it */
+    uint64_t last_contact;
+    bool     contact_pending; /* a transaction succeeded since the last check */
     size_t   n_channels;
     struct spg_device_channel channels[SPG_DEVICE_MAX_CHANNELS];
 };
@@ -62,7 +79,14 @@ void spg_device_init(struct spg_device *dev);
 spg_device_add_channel(struct spg_device               *dev,
                        const struct spg_device_channel *channel);
 
-/* Parse one "name:reg:min:max:rw" descriptor. Deliberately not a config file
+/* Parse one channel descriptor:
+ *
+ *     name:reg:min:max:r            a reading
+ *     name:reg:min:max:w:safe       a setting, plus where it goes on loss of
+ *                                   contact
+ *
+ * The safe value is required for a writable channel and refused for a
+ * read-only one. Deliberately not a config file
  * format of its own: there is exactly one machine to describe so far, and a
  * parser is a thing that has to be maintained whether or not anyone uses it.
  * ponytail: promote to the sexpr config when a second machine shows up. */
@@ -95,6 +119,37 @@ size_t spg_modbus_encode_write(uint16_t txn, uint16_t unit, uint16_t reg,
 [[nodiscard]] enum spg_status spg_modbus_decode(size_t n, const uint8_t frame[],
                                                 uint16_t  txn,
                                                 uint16_t *out_value);
+
+/* --- The watchdog ----------------------------------------------------- */
+
+enum spg_device_watchdog {
+    SPG_WATCHDOG_DISABLED = 0,
+    SPG_WATCHDOG_OK,
+    SPG_WATCHDOG_EXPIRED,
+};
+
+/* Arm the watchdog. A `timeout` of 0 disables it; `now` starts the clock, so
+ * an armed watchdog does not fire on a machine that has simply not been spoken
+ * to yet. Both are in the caller's clock unit — see the struct field. */
+void spg_device_arm_watchdog(struct spg_device *dev, uint64_t timeout,
+                             uint64_t now);
+
+/* Fold in any successful transaction since the last call and report whether
+ * the deadline has passed. Checking is what consumes the contact flag, so a
+ * caller cannot succeed at keeping the machine alive while forgetting to
+ * check — the two are the same call.
+ *
+ * EXPIRED is sticky until the next successful transaction: a machine that
+ * answers once and goes quiet again must not look healthy in between. */
+[[nodiscard]] enum spg_device_watchdog
+spg_device_watchdog_check(struct spg_device *dev, uint64_t now);
+
+/* Drive every writable channel to its declared safe value.
+ *
+ * Every channel is attempted even after one fails, and the FIRST failure is
+ * returned. A machine stopped half-way to safe is worse than either end, so
+ * one unreachable channel must never abort the ones that would still obey. */
+[[nodiscard]] enum spg_status spg_device_safe_state(struct spg_device *dev);
 
 /* --- The machine ------------------------------------------------------ */
 

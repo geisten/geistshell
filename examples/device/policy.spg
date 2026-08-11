@@ -1,0 +1,22 @@
+(policy
+ (network_default deny)
+ (budgets
+  (inference_steps 8)
+  (tokens 256)
+  (shell_actions 1)
+  (sim_actions 8)
+  (memory_actions 8)
+  (machine_actions 4)
+  (wall_ms 10000)
+  (journal_bytes 1048576)
+  (risk_bp 10000))
+ (capability
+  ((name sim.act) (kind simulator) (enabled true) (budget 8))
+  ((name build.run) (kind local_shell) (enabled true) (budget 1))
+  ((name auth_probe.ssh_publickey_single) (kind ssh_auth_probe) (enabled false) (budget 1))
+  ;; Granting `device` grants the right to move a physical thing. It is a
+  ;; separate capability from machine_process on purpose: an operator who
+  ;; wanted an agent that may pause a runaway process must not silently also
+  ;; get one that may drive a heater. The channel table on the command line is
+  ;; the second half of the answer — this says "may write", that says "what".
+  ((name device) (kind device) (enabled true) (budget 4))))

@@ -13,7 +13,8 @@
 static int test_parse_channel(void) {
     struct spg_device_channel channel = {};
 
-    if (spg_device_parse_channel(LIT("heater:1:0:100:w"), &channel) != SPG_OK) {
+    if (spg_device_parse_channel(LIT("heater:1:0:100:w:0"), &channel) !=
+        SPG_OK) {
         return 1;
     }
     if (strcmp(channel.name, "heater") != 0 || channel.reg != 1u ||
@@ -52,9 +53,13 @@ static int test_table(void) {
         return 1;
     }
 
-    struct spg_device_channel heater = {
-        .name = "heater", .reg = 1u, .min = 0, .max = 100, .writable = true};
-    struct spg_device_channel temp = {
+    struct spg_device_channel heater = {.name     = "heater",
+                                        .reg      = 1u,
+                                        .min      = 0,
+                                        .max      = 100,
+                                        .writable = true,
+                                        .safe     = 0};
+    struct spg_device_channel temp   = {
         .name = "temp", .reg = 0u, .min = -400, .max = 9000};
 
     if (spg_device_add_channel(&dev, &heater) != SPG_OK ||
@@ -96,9 +101,13 @@ static int test_write_refusals(void) {
     struct spg_device dev = {};
     spg_device_init(&dev);
 
-    struct spg_device_channel heater = {
-        .name = "heater", .reg = 1u, .min = 0, .max = 100, .writable = true};
-    struct spg_device_channel temp = {
+    struct spg_device_channel heater = {.name     = "heater",
+                                        .reg      = 1u,
+                                        .min      = 0,
+                                        .max      = 100,
+                                        .writable = true,
+                                        .safe     = 0};
+    struct spg_device_channel temp   = {
         .name = "temp", .reg = 0u, .min = -400, .max = 9000};
     if (spg_device_add_channel(&dev, &heater) != SPG_OK ||
         spg_device_add_channel(&dev, &temp) != SPG_OK) {
@@ -179,6 +188,97 @@ static int test_codec(void) {
     return 0;
 }
 
+/* Time is injected, so the whole watchdog is exercised without waiting for
+ * anything and without a clock that could make the test flaky. */
+static int test_watchdog(void) {
+    struct spg_device dev = {};
+    spg_device_init(&dev);
+
+    /* Unarmed: never fires, whatever the clock says. */
+    if (spg_device_watchdog_check(&dev, 1000000000u) != SPG_WATCHDOG_DISABLED) {
+        return 1;
+    }
+
+    spg_device_arm_watchdog(&dev, 1000u, 100u);
+    if (spg_device_watchdog_check(&dev, 1100u) != SPG_WATCHDOG_OK) {
+        return 1; /* exactly at the deadline is not past it */
+    }
+    if (spg_device_watchdog_check(&dev, 1101u) != SPG_WATCHDOG_EXPIRED) {
+        return 1;
+    }
+
+    /* Sticky: still expired on the next check, because nothing has answered. */
+    if (spg_device_watchdog_check(&dev, 1102u) != SPG_WATCHDOG_EXPIRED) {
+        return 1;
+    }
+
+    /* A successful transaction clears it — simulated here by the flag the
+     * transport sets, which is what a real reply would have done. */
+    dev.contact_pending = true;
+    if (spg_device_watchdog_check(&dev, 2000u) != SPG_WATCHDOG_OK) {
+        return 1;
+    }
+    if (spg_device_watchdog_check(&dev, 2500u) != SPG_WATCHDOG_OK) {
+        return 1; /* the contact reset the deadline, it did not merely skip one
+                     check */
+    }
+    if (spg_device_watchdog_check(&dev, 3001u) != SPG_WATCHDOG_EXPIRED) {
+        return 1;
+    }
+
+    /* Time going backwards is a caller bug, not a reason to trip a machine. */
+    dev.contact_pending = true;
+    if (spg_device_watchdog_check(&dev, 5000u) != SPG_WATCHDOG_OK ||
+        spg_device_watchdog_check(&dev, 4000u) != SPG_WATCHDOG_OK) {
+        return 1;
+    }
+    return 0;
+}
+
+static int test_safe_state(void) {
+    struct spg_device dev = {};
+    spg_device_init(&dev);
+
+    struct spg_device_channel heater = {.name     = "heater",
+                                        .reg      = 1u,
+                                        .min      = 0,
+                                        .max      = 100,
+                                        .writable = true,
+                                        .safe     = 0};
+    struct spg_device_channel valve  = {.name     = "valve",
+                                        .reg      = 2u,
+                                        .min      = 0,
+                                        .max      = 1,
+                                        .writable = true,
+                                        .safe     = 1};
+    struct spg_device_channel temp   = {
+        .name = "temp", .reg = 0u, .min = -400, .max = 9000};
+    if (spg_device_add_channel(&dev, &heater) != SPG_OK ||
+        spg_device_add_channel(&dev, &valve) != SPG_OK ||
+        spg_device_add_channel(&dev, &temp) != SPG_OK) {
+        return 1;
+    }
+
+    /* With no socket every write fails, which is exactly the case that must
+     * not stop after the first one. The first failure is reported. */
+    if (spg_device_safe_state(&dev) != SPG_E_INVALID_STATE) {
+        return 1;
+    }
+
+    /* A safe value the channel would refuse is rejected when the table is
+     * built, not discovered when the watchdog fires. */
+    struct spg_device_channel impossible = {.name     = "bad",
+                                            .reg      = 9u,
+                                            .min      = 0,
+                                            .max      = 10,
+                                            .writable = true,
+                                            .safe     = 99};
+    if (spg_device_add_channel(&dev, &impossible) != SPG_E_INVALID_ARG) {
+        return 1;
+    }
+    return 0;
+}
+
 int main(void) {
     struct {
         const char *name;
@@ -188,6 +288,8 @@ int main(void) {
         {"table", test_table},
         {"write_refusals", test_write_refusals},
         {"codec", test_codec},
+        {"watchdog", test_watchdog},
+        {"safe_state", test_safe_state},
     };
     for (size_t i = 0u; i < sizeof cases / sizeof cases[0]; i += 1u) {
         if (cases[i].fn() != 0) {

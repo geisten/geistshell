@@ -192,6 +192,55 @@ static enum spg_status decode_string_slot(struct spg_model_adapter *adapter,
     return SPG_OK; /* length cap */
 }
 
+/* Decode one bare integer. Stops at the first byte that cannot belong to one,
+ * so the scaffold's own ")" terminates the slot; a minus is accepted only as
+ * the very first byte. Capped at 12 bytes, which is wider than any 16-bit
+ * register value and narrow enough that a model looping on digits cannot run
+ * the slot away. */
+static enum spg_status
+decode_number_slot(struct spg_model_adapter         *adapter,
+                   struct spg_model_generate_result *result) {
+    size_t emitted = 0u;
+    for (size_t j = 0u; j < 12u; j += 1u) {
+        geist_token_t     token  = 0;
+        enum geist_status status = geist_session_decode_step(adapter->session, &token);
+        if (status != GEIST_OK) {
+            return map_geist_status(status);
+        }
+        result->tokens_decoded += 1u;
+        const char *piece = geist_session_token_to_str(adapter->session, token);
+        if (piece == nullptr || piece[0] == '\0') {
+            return SPG_OK;
+        }
+        size_t take = 0u;
+        while (piece[take] != '\0') {
+            const char c = piece[take];
+            const bool digit = c >= '0' && c <= '9';
+            const bool sign  = c == '-' && emitted == 0u && take == 0u;
+            if (!digit && !sign) {
+                break;
+            }
+            take += 1u;
+        }
+        if (take > 0u) {
+            const enum spg_status as = append_bytes(result, take, piece);
+            if (as != SPG_OK) {
+                return as;
+            }
+            emitted += take;
+        }
+        if (piece[take] != '\0') {
+            /* A non-numeric byte ends the slot. If nothing was emitted the
+             * value is empty and the recommendation parser rejects it — which
+             * is the right outcome: a repair pass can retry, but a slot that
+             * invented a 0 would put a number on the wire that no model chose.
+             */
+            return SPG_OK;
+        }
+    }
+    return SPG_OK;
+}
+
 /* Decode one slot constrained to a fixed vocabulary (#34): greedily keep only
  * tokens that leave the emitted text a live prefix of some candidate name,
  * until one is complete. Leading detok whitespace is stripped from the appended
@@ -415,6 +464,9 @@ static enum spg_status generate_geist(
                     break;
                 case SPG_SCAFFOLD_CAPABILITY:
                     ss = decode_capability_slot(adapter, result, kind);
+                    break;
+                case SPG_SCAFFOLD_NUMBER:
+                    ss = decode_number_slot(adapter, result);
                     break;
                 case SPG_SCAFFOLD_STRING:
                 default:

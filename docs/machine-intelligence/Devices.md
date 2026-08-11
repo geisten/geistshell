@@ -80,14 +80,55 @@ Zwei Modellfehler, beide beim ersten Lauf gefunden:
    20 Hz. Eine Testanlage, die die gemessene Maschine beeinflusst, ist keine
    Fixture.
 
+## Der Watchdog
+
+Jeder schreibbare Kanal **muss** einen sicheren Wert deklarieren
+(`heater:1:0:100:w:0`). Ohne ihn träfe die Entscheidung bei Kontaktverlust der
+Wert, den die Maschine zuletzt gehört hat — der Zustand mit der geringsten
+Wahrscheinlichkeit, sicher zu sein.
+
+Der Watchdog wird **vor** dem Schreiben geprüft, nicht danach. Eine Maschine,
+die nicht mehr antwortet, ist eine Maschine mit unbekanntem Zustand; der
+einzige Befehl, der dann noch versucht gehört, ist der sichere Zustand — nicht
+der nächste Sollwert, den ein Modell gewählt hat.
+
+`spg_device_safe_state` versucht **alle** Kanäle und meldet den ersten Fehler.
+Eine Anlage, die auf halbem Weg in den sicheren Zustand stehenbleibt, ist
+schlimmer als beide Endzustände.
+
+**Die Einheit ist die des Aufrufers.** Es gibt keine richtige feste Einheit:
+das CLI-Kommando übergibt Nanosekunden, der Agenten-Loop rechnet in Schritten
+(`step + 1`), und genau das macht seinen Replay deterministisch. Eine
+Millisekunden-Frist gegen einen Schrittzähler zu prüfen wäre eine Zahl, die wie
+Zeit aussieht und keine ist. Deshalb heißt das Flag `--device-watchdog-steps`.
+
+## Die Aktion
+
+`SPG_ACTION_DEVICE_WRITE` — die erste **nicht umkehrbare** Aktion im
+geschlossenen Aktionsraum. Der Kommentar am Enum verlangte dafür „eine stärkere
+Geschichte als 'die Policy hat ja gesagt'". Sie besteht aus drei Teilen:
+
+1. Die Kanaltabelle begrenzt sie. Ein Wert außerhalb wird abgelehnt, bevor
+   überhaupt ein Socket geöffnet wird — das Modell kann keine Zahl verlangen,
+   die der Betreiber nicht freigegeben hat.
+2. Jeder schreibbare Kanal deklariert seinen sicheren Wert, und der Watchdog
+   fährt ihn an.
+3. `device` ist eine **eigene** Capability, getrennt von `machine_process`. Wer
+   einen Agenten wollte, der einen Amoklauf-Prozess pausieren darf, bekommt
+   nicht stillschweigend einen, der eine Heizung aufdreht.
+
+Der beschränkte Decoder brauchte dafür `SPG_SCAFFOLD_NUMBER`: bis hierher waren
+**alle** Zahlen im Scaffold Literale (`cost`, `confidence_bp` sind fest), der
+Decoder füllte nur Strings. Ein Sollwert ist die erste Zahl, die das Modell
+tatsächlich wählt. Ohne diese Maske wäre die Aktion erneut eine gewesen, die
+niemand erzeugen kann.
+
+Journalisiert wird **jeder** Ausgang, auch die Ablehnungen — bei einer nicht
+umkehrbaren Aktion zählt der Beleg über das, was *nicht* getan wurde, genauso
+viel.
+
 ## Was bewusst noch fehlt
 
-Es gibt **keine Agenten-Aktion** für Geräte. Das ist die Reihenfolge aus der
-Lüfter-Lehre: Executor zuerst, Aktion zuletzt. `machine_set_fan` existierte in
-Policy, Grammatik-Maske und CLI-Switch, und nichts hat sie je ausgeführt. Eine
-Aktion kommt, wenn der Executor nachweislich etwas bewegt — das tut er seit
-diesem Commit, also ist der nächste Schritt fällig, aber er ist ein eigener.
-
-Ebenso offen: Skalierung pro Kanal, 32-Bit- und Float-Register, Coils, und ein
-Watchdog, der bei ausbleibendem Kontakt in einen sicheren Zustand fährt. Der
-Watchdog ist der einzige davon, der vor einer echten Maschine stehen muss.
+Skalierung pro Kanal, 32-Bit- und Float-Register, Coils, und mehrere Maschinen
+pro Lauf. Alles davon wartet auf eine zweite echte Maschine — bis dahin wäre es
+Struktur ohne Aufrufer, und wie die kostet, steht oben in diesem Dokument.

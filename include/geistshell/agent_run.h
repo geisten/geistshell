@@ -53,6 +53,9 @@ struct spg_agent_run_inputs {
      * machine pauses are refused: stopping a process nobody promised to
      * restart is the failure mode this exists to prevent. */
     struct spg_machine_pause_ledger *pause_ledger;
+    /* Optional attached machine for device_write. Null = no machine reachable
+     * from this run; the executor says so and the run continues. */
+    struct spg_device *device;
     /* Phase 7: the snapshot to install once an action has executed, for
      * scripted cases where the world must change deterministically. Null on a
      * live run, which re-samples the host instead. */

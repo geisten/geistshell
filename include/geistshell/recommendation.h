@@ -49,6 +49,14 @@ struct spg_recommendation {
     struct spg_text_span mem_body;
 
     uint64_t confidence_bp;
+
+    /* device_write: which channel and what value. The channel name reuses
+     * `target` — it is the same idea as a process target and already carried,
+     * parsed and journalled, so a second span would be a second place to get
+     * it wrong. Signed, because a setpoint below zero is ordinary. */
+    int64_t device_value;
+    bool    has_device_value;
+
     bool     has_command;
     bool     has_target;
     bool     has_slug;
