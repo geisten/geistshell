@@ -17,6 +17,7 @@
 #include "geistshell/guard_ring.h"
 #include "geistshell/improve.h"
 #include "geistshell/machine_fixture.h"
+#include "geistshell/cmd_menu.h"
 #include "geistshell/mem_command.h"
 #include "geistshell/mem_store.h"
 #include "geistshell/model_profile.h"
@@ -129,7 +130,7 @@ static void print_verify_journal_usage(const char *argv0) {
 }
 
 static void print_replay_usage(const char *argv0) {
-    fprintf(stderr, "usage: %s replay <journal.sgj>\n", argv0);
+    fprintf(stderr, "usage: %s replay <journal.sgj> [--payloads]\n", argv0);
 }
 
 static void print_policy_check_usage(const char *argv0) {
@@ -490,7 +491,11 @@ static void print_replay_sim_json(const size_t  payload_n,
     }
 }
 
-static int replay_command(const char *path) {
+/* #56: the journal is the audit surface, but replay printed headers only — the
+ * recorded model input, and with it the rendered context, was unreadable.
+ * --payloads dumps each record's bytes after its header line, fenced so the
+ * JSONL stays parseable by anyone who ignores the fence. */
+static int replay_command(const char *path, const bool with_payloads) {
     if (path == nullptr) {
         return 2;
     }
@@ -551,6 +556,13 @@ static int replay_command(const char *path) {
             break;
         }
         printf("}\n");
+        if (with_payloads && available_payload > 0u) {
+            printf("--- payload %llu ---\n",
+                   (unsigned long long)record.header.sequence);
+            (void)fwrite(payload, 1u, available_payload, stdout);
+            printf("\n--- end %llu ---\n",
+                   (unsigned long long)record.header.sequence);
+        }
     }
 
     const enum spg_status close_status = spg_journal_reader_close(&reader);
@@ -1529,6 +1541,16 @@ static int run_tick_fake(const char *run_path, const char *fake_output) {
     };
 
     struct spg_policy_usage       usage = {};
+    /* #56: the same command menu the agent path renders. Deliberately NOT
+     * conditional on the subcommand — a context that differs between `run` and
+     * `agent` is a silent inconsistency, and this repo has no CI to catch the
+     * day it starts to matter. It does move the baseline journal hash; see
+     * test/test_cli_baseline.sh. */
+    static char            run_tools[4096];
+    struct spg_host_info   run_host = {};
+    (void)spg_host_probe(&run_host);
+    (void)spg_cmd_menu_render(run_host.os, sizeof run_tools, run_tools);
+
     struct spg_orchestrator_state state = {
         .graph         = &graph,
         .memory        = &memory,
@@ -1544,6 +1566,7 @@ static int run_tick_fake(const char *run_path, const char *fake_output) {
         .graph_text    = context,
         .memory_text_n = CLI_MODEL_OUTPUT_BYTES,
         .memory_text   = model_output,
+        .tools         = run_tools,
     };
     const struct spg_orchestrator_config config = {
         .actor_id            = 1u,
@@ -1806,6 +1829,13 @@ static int run_loop(const char *run_path, const char *fake_output,
 
     struct spg_policy_usage       usage               = {};
     char                          mem_index_buf[4096] = {0};
+    /* #56: same menu as run_tick_fake and the agent path — one context, not
+     * one per subcommand. */
+    static char          loop_tools[4096];
+    struct spg_host_info loop_host = {};
+    (void)spg_host_probe(&loop_host);
+    (void)spg_cmd_menu_render(loop_host.os, sizeof loop_tools, loop_tools);
+
     struct spg_orchestrator_state state               = {
         .graph         = &graph,
         .memory        = &memory,
@@ -1824,6 +1854,7 @@ static int run_loop(const char *run_path, const char *fake_output,
         .memory_text   = nullptr,
         .memory_index  = have_store ? mem_index_buf : nullptr,
         .observation   = have_store ? mem_recall_buf : nullptr,
+        .tools         = loop_tools,
     };
 
     uint64_t parent_sequence = 0u;
@@ -2082,6 +2113,10 @@ static int agent_command(int argc, char **argv) {
      * an eval fixture. */
     struct spg_device_state device_state = {};
     spg_device_init(&device);
+    /* #56: the commands the model is TOLD about. Untrusted model input — it
+     * never widens or narrows what the executor permits (cmd_menu.h). */
+    const char *menu_path    = nullptr;
+    bool        command_mask = false;
     for (int i = 2; i < argc; i += 1) {
         if ((strcmp(argv[i], "--config") == 0 ||
              strcmp(argv[i], "--run") == 0) &&
@@ -2206,6 +2241,15 @@ static int agent_command(int argc, char **argv) {
             i += 1;
             continue;
         }
+        if (strcmp(argv[i], "--command-menu") == 0 && i + 1 < argc) {
+            menu_path = argv[i + 1];
+            i += 1;
+            continue;
+        }
+        if (strcmp(argv[i], "--command-mask") == 0) {
+            command_mask = true;
+            continue;
+        }
         if (strcmp(argv[i], "--process-profile") == 0 && i + 1 < argc) {
             profile_path = argv[i + 1];
             i += 1;
@@ -2226,6 +2270,7 @@ static int agent_command(int argc, char **argv) {
         fprintf(stderr,
                 "usage: %s agent --config <run> [--fake-script <file>] "
                 "[--process-profile <file>] "
+                "[--command-menu <menu.spg>] [--command-mask] "
                 "[--max-steps N] [--max-repairs N] [--allow-exec] "
                 "[--memory-dir <d>]\n"
                 "  without --fake-script the real model at the config's "
@@ -2348,6 +2393,37 @@ static int agent_command(int argc, char **argv) {
     /* --fake-script -> the scripted fake; otherwise the real model at the
      * config's (model ...) path, run and JOURNALED — the production path P6
      * (directive injection) and P7 (recurrence audit) read. */
+    /* #56: the menu the model is told about. A file replaces the built-in
+     * table for this run; both are proposal spaces, never permissions. */
+    static struct spg_cmd_menu   agent_menu;
+    static char                  agent_tools[4096];
+    static const char           *agent_menu_names[SPG_CMD_MENU_MAX];
+    size_t                       agent_menu_n = 0u;
+    struct spg_host_info         agent_host   = {};
+    (void)spg_host_probe(&agent_host);
+    if (menu_path != nullptr) {
+        struct file_buffer mt = {};
+        if (read_file(menu_path, &mt) != SPG_OK) {
+            fprintf(stderr, "agent: cannot read command menu %s\n", menu_path);
+            goto done;
+        }
+        const enum spg_status ms = spg_cmd_menu_load(mt.n, mt.data, &agent_menu);
+        free_file_buffer(&mt);
+        if (ms != SPG_OK) {
+            fprintf(stderr, "agent: invalid command menu %s: %s\n", menu_path,
+                    spg_status_to_string(ms));
+            goto done;
+        }
+        (void)spg_cmd_menu_render_of(&agent_menu, sizeof agent_tools, agent_tools);
+        agent_menu_n =
+            spg_cmd_menu_names(&agent_menu, SPG_CMD_MENU_MAX, agent_menu_names);
+    } else {
+        (void)spg_cmd_menu_render(agent_host.os, sizeof agent_tools, agent_tools);
+        agent_menu_n = spg_cmd_menu_builtin_names(agent_host.os,
+                                                  SPG_CMD_MENU_MAX,
+                                                  agent_menu_names);
+    }
+
     const struct spg_model_adapter_config model_config =
         script_path != nullptr
             ? (struct spg_model_adapter_config){
@@ -2362,6 +2438,8 @@ static int agent_command(int argc, char **argv) {
                   .force_prefix     = constrained ? "(recommend (kind " : nullptr,
                   .capabilities     = agent_caps,
                   .capability_count = agent_caps_n,
+                  .command_names = command_mask ? agent_menu_names : nullptr,
+                  .command_name_count = command_mask ? agent_menu_n : 0u,
                   .sampling         = {.max_seq_len = 4096u,
                                        .temperature = sample_temp,
                                        .top_p       = 1.0f,
@@ -2544,6 +2622,7 @@ static int agent_command(int argc, char **argv) {
         .journal       = &journal,
         .exemplars     = exemplars_text.data, /* null when --exemplars absent */
         .goal          = goal_cstr,           /* null when (goal ...) absent */
+        .tools         = agent_tools,
         /* Perception is automatic: every live run sees the host it runs on,
          * unknown fields included. Only scripted worlds (eval fixtures)
          * describe their state instead of measuring it — that path never
@@ -3179,6 +3258,16 @@ static enum spg_status eval_run_suite(const char                 *suite_path,
     /* #51: the constrained decoder's capability mask, built through the same
      * helper the agent uses. Both buffers must outlive every adapter built
      * below, hence static. */
+    /* #56: one menu for the whole suite — the same one the agent path
+     * renders, so a case does not see a different world than a live run. */
+    static char          eval_tools[4096];
+    static const char   *eval_menu_names[SPG_CMD_MENU_MAX];
+    struct spg_host_info eval_host = {};
+    (void)spg_host_probe(&eval_host);
+    (void)spg_cmd_menu_render(eval_host.os, sizeof eval_tools, eval_tools);
+    const size_t eval_menu_n =
+        spg_cmd_menu_builtin_names(eval_host.os, SPG_CMD_MENU_MAX, eval_menu_names);
+
     static struct spg_model_capability eval_caps[SPG_MODEL_CAPABILITY_MAX];
     static char                        eval_cap_names[CLI_CAP_NAMES_BYTES];
     const size_t eval_caps_n = spg_model_capabilities_from_policy(
@@ -3245,6 +3334,7 @@ static enum spg_status eval_run_suite(const char                 *suite_path,
         .run           = &run,
         .sim           = &sim,
         .store         = store,
+        .tools         = eval_tools,
     };
 
     /* Invocation-wide knobs (resolved once, not per case). */
@@ -3575,6 +3665,13 @@ static enum spg_status eval_run_suite(const char                 *suite_path,
                     mc.force_prefix     = "(recommend (kind ";
                     mc.capabilities     = eval_caps;
                     mc.capability_count = eval_caps_n;
+                    /* #56: the profile decides whether the command slot is
+                     * masked to the menu. Off keeps it free — the arm a
+                     * baseline compares against. */
+                    if (model_profile.command_mask) {
+                        mc.command_names      = eval_menu_names;
+                        mc.command_name_count = eval_menu_n;
+                    }
                 }
             } else {
                 mc.kind         = SPG_MODEL_ADAPTER_REMOTE;
@@ -4648,11 +4745,12 @@ int main(int argc, char **argv) {
     }
 
     if (strcmp(argv[1], "replay") == 0) {
-        if (argc != 3) {
+        if (argc < 3 || argc > 4 ||
+            (argc == 4 && strcmp(argv[3], "--payloads") != 0)) {
             print_replay_usage(argv[0]);
             return 2;
         }
-        return replay_command(argv[2]);
+        return replay_command(argv[2], argc == 4);
     }
 
     if (strcmp(argv[1], "policy-check") == 0) {

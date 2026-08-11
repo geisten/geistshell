@@ -117,6 +117,7 @@ bool spg_kind_from_text(const char *emitted, enum spg_action_kind *out) {
 #define STR {.kind = SPG_SCAFFOLD_STRING}
 #define CAP {.kind = SPG_SCAFFOLD_CAPABILITY}
 #define NUM {.kind = SPG_SCAFFOLD_NUMBER}
+#define CMD {.kind = SPG_SCAFFOLD_COMMAND}
 #define BUREAU_OK ") (cost 1) (uses_network false) (confidence_bp 5000) "
 #define BUREAU_NET ") (cost 1) (uses_network true) (confidence_bp 5000) "
 
@@ -153,7 +154,7 @@ static const struct spg_scaffold_seg SEG_LOCAL_SHELL[] = {
     LIT(") (capability \""),
     CAP,
     LIT("\"" BUREAU_OK "(command \""),
-    STR,
+    CMD,
     LIT("\") (reason \""),
     STR,
     LIT("\"))")};

@@ -405,6 +405,30 @@ static enum spg_status decode_capability_slot(
                               sizeof chosen);
 }
 
+/* The local_shell `command` slot (#56): mask the FIRST WORD to the command
+ * menu, then free-decode the arguments. Only the program name is enumerable —
+ * arguments are where a command carries its meaning — so this is a two-phase
+ * slot rather than one choice.
+ *
+ * With no menu it degrades to a plain free-decoded string, which is exactly
+ * what `command_mask false` wants and needs no second scaffold. */
+static enum spg_status decode_command_slot(
+    struct spg_model_adapter *adapter, struct spg_model_generate_result *result) {
+    if (adapter->command_names == nullptr || adapter->command_name_count == 0u) {
+        return decode_string_slot(adapter, result);
+    }
+    char chosen[64];
+    const enum spg_status cs =
+        decode_choice_slot(adapter, result, adapter->command_names,
+                           adapter->command_name_count, chosen, sizeof chosen);
+    if (cs != SPG_OK) {
+        return cs;
+    }
+    /* The arguments. The slot stops at the closing quote as usual, so a model
+     * that wants a bare command simply emits nothing here. */
+    return decode_string_slot(adapter, result);
+}
+
 static enum spg_status generate_geist(
     struct spg_model_adapter *adapter,
     const struct spg_model_generate_request *request,
@@ -467,6 +491,8 @@ static enum spg_status generate_geist(
                     break;
                 case SPG_SCAFFOLD_NUMBER:
                     ss = decode_number_slot(adapter, result);
+                case SPG_SCAFFOLD_COMMAND:
+                    ss = decode_command_slot(adapter, result);
                     break;
                 case SPG_SCAFFOLD_STRING:
                 default:
@@ -518,6 +544,8 @@ spg_model_adapter_init(struct spg_model_adapter *adapter,
         .force_prefix     = config->force_prefix, /* #34: GEIST-only, borrowed */
         .capabilities     = config->capabilities,
         .capability_count = config->capability_count,
+        .command_names      = config->command_names,
+        .command_name_count = config->command_name_count,
     };
 
     if (config->kind == SPG_MODEL_ADAPTER_FAKE) {

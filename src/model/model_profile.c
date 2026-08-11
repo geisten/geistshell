@@ -116,6 +116,15 @@ spg_model_profile_load(const size_t input_n, const char input[],
             return ts;
         }
     }
+    node = field_value(input_n, input, nodes, root, "command_mask");
+    if (node != SPG_SEXPR_INVALID_INDEX) {
+        if (spg_sexpr_span_eq_cstr(input_n, input, nodes[node].span, "true")) {
+            out->command_mask = true;
+        } else if (!spg_sexpr_span_eq_cstr(input_n, input, nodes[node].span,
+                                           "false")) {
+            return SPG_E_SCHEMA;
+        }
+    }
     out->present = true;
     return SPG_OK;
 }

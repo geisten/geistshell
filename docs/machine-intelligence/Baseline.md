@@ -26,7 +26,7 @@ Eigenschaft, die alle 17 Phasen überleben muss: **byte-identisches Journal aus
 einem scripted Lauf.**
 
 ```
-sha256(build/tick-demo.sgj) = 52bd794e11885e1b8ae257ef037a1b87b2ed3fa8311ca85b557253c99e537365
+sha256(build/tick-demo.sgj) = 8b831838c4c21eb6f11903d7ece6013546e67ef89bccd7f1a4350cc077761c65
 ```
 
 Erzeugt von `geistshell run --config examples/run.spg --fake '(recommend (kind
@@ -187,3 +187,20 @@ spg_machine_sample(uint64_t timestamp_ns, const struct spg_cpu_sample *prev,
 
 Kein Aufruf im Agent-Pfad in Phase 1 — die Verdrahtung in den Context passiert
 erst in Phase 3 (#63).
+
+
+## Konstanten-Historie
+
+Der Anker wird nur mit Begründung aktualisiert; jede Änderung steht hier.
+
+| Datum | Hash | Warum |
+|---|---|---|
+| Phase 0 | `52bd794e…37365` | Ausgangswert |
+| #56 | `8b831838…761c65` | Das Kommando-Menü wird als `(tools ...)` in den Kontext gerendert. Der `model_input`-Payload wächst um einen konstanten Block, also verschiebt sich die Hash-Kette. Der Lauf bleibt deterministisch — zwei Läufe hintereinander liefern denselben Hash; er enthält nur mehr. |
+
+Eine Eigenschaft, die dabei neu zu wahren ist: das gerenderte Menü darf **nicht
+vom Host-OS abhängen**, sonst wird dieser Hash plattformabhängig und der
+Determinismus-Kanarienvogel hört auf, auf der Maschine einer zu sein, die ihn
+nicht ausführt. Alle eingebauten Einträge sind `SPG_CMD_OS_ALL`;
+`test_cmd_menu.c::test_render_is_host_independent` prüft das, damit die erste
+plattformspezifische Zeile laut auffällt statt still.

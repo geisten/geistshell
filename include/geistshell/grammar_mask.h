@@ -72,6 +72,15 @@ enum spg_scaffold_seg_kind {
      * are fixed, so the decoder never had to produce one. A device setpoint is
      * the first number the model actually chooses. */
     SPG_SCAFFOLD_NUMBER,
+    /* A shell command (#56): the FIRST WORD is masked to the command menu, the
+     * rest free-decodes. Masking only the program name is the point —
+     * arguments are where a shell command carries its meaning and cannot be
+     * enumerated.
+     *
+     * With no menu supplied this behaves exactly like SPG_SCAFFOLD_STRING, so
+     * the mask switches off without a second scaffold. NB it narrows what the
+     * model PROPOSES, not what the executor permits — see cmd_menu.h. */
+    SPG_SCAFFOLD_COMMAND,
 };
 
 struct spg_scaffold_seg {

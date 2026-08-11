@@ -42,6 +42,8 @@ struct spg_actor_state {
     const char *exemplars;
     const char *goal;
     const char *directive;
+    /* Pre-rendered command menu (#56). Null = none. */
+    const char *tools;
     /* Optional machine snapshot for the context (roadmap phase 3). */
     const struct spg_machine_state *machine;
     const struct spg_machine_goal  *machine_goal;

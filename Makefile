@@ -128,7 +128,7 @@ SPG_SOURCES := \
     src/eval/fixture.c \
     src/eval/guard_ring.c \
     src/exec/cmd_executor.c \
-    src/exec/cmd_registry.c \
+    src/exec/cmd_menu.c \
     src/exec/exec_command.c \
     src/exec/host_probe.c \
     src/exec/shell_executor.c \

@@ -93,6 +93,15 @@ struct spg_model_adapter_config {
      * capability slot free-decodes (valid form, but may be policy-denied). */
     const struct spg_model_capability *capabilities;
     size_t                             capability_count;
+
+    /* Command-menu names for the local_shell `command` slot (#56). The FIRST
+     * WORD of a decoded command is masked to these; the arguments decode
+     * freely. Borrowed; must outlive the adapter. Empty/null -> the slot
+     * free-decodes exactly as before, which is how `command_mask false`
+     * switches this off. Narrows what the model PROPOSES, never what the
+     * executor permits. */
+    const char *const *command_names;
+    size_t             command_name_count;
 };
 
 struct spg_model_adapter {
@@ -113,6 +122,8 @@ struct spg_model_adapter {
     const char                     *force_prefix; /* constrained decode (#34) */
     const struct spg_model_capability *capabilities; /* #34 capability mask */
     size_t                             capability_count;
+    const char *const                 *command_names; /* #56 command mask */
+    size_t                             command_name_count;
 
     /* REMOTE transport state: opaque CURL handle, borrowed config strings, and
      * the sampling values forwarded to the chat/completions request. */

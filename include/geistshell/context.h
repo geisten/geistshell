@@ -74,6 +74,13 @@ struct spg_context_sources {
      * index for steering a small model's behaviour (geistshell#40 follow-up).
      * Null = none. */
     const char *directive;
+    /* Pre-rendered command menu (#56), one line per command, placed in the
+     * CONSTANT part of the context so it is pinnable with the contract (#58).
+     * Null = the model is told about no commands, which was this table's state
+     * for its whole life: it existed in the tree and was never rendered.
+     *
+     * A proposal space, not an allowlist — see cmd_menu.h. */
+    const char *tools;
 };
 
 struct spg_context_budget_item {

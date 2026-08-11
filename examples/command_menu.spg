@@ -1,0 +1,18 @@
+;; A command MENU (geistshell#56) — the commands the agent is told about.
+;;
+;; THIS IS NOT AN ALLOWLIST. It shapes what the model PROPOSES: the entries are
+;; rendered into its context, and with `(command_mask true)` the first word of a
+;; decoded command is masked to these names. It has no effect whatsoever on what
+;; the executor PERMITS — that is the policy capability, the workdir prefix, the
+;; rlimits and the cleared environment in executor_boundary/cmd_executor.
+;;
+;; Consequence: this file is UNTRUSTED INPUT, in the same class as the scenario
+;; and corpus text. Editing a row changes what the agent is likely to try. It
+;; must never change what the agent is allowed to do.
+(command_menu
+ ((name "ls")   (summary "list directory contents")      (flags "-l -a -h"))
+ ((name "cat")  (summary "print a file")                 (flags "-n"))
+ ((name "wc")   (summary "count lines, words, bytes")     (flags "-l -w -c"))
+ ((name "grep") (summary "search files for a pattern")   (flags "-n -i -r"))
+ ((name "head") (summary "print the first lines of a file") (flags "-n"))
+ ((name "echo") (summary "write arguments to standard output")))

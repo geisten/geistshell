@@ -40,6 +40,9 @@ struct spg_agent_run_inputs {
     const char *exemplars;
     /* Optional free-text task, rendered as (goal "..."). Null = none. */
     const char *goal;
+    /* Pre-rendered command menu (#56), rendered into the constant prefix of
+     * the context. Null = the model is told about no commands. */
+    const char *tools;
     /* Optional machine telemetry snapshot for the context (roadmap phase 3).
      * Null = none, the default: the context is then byte-identical to before
      * machine state existed, which the phase-0 journal freeze relies on. */
