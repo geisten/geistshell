@@ -29,7 +29,7 @@ hat. Eine neue Maschine ist eine neue Tabelle, kein neuer Code.
 ```
 geistshell device --port 5502 \
     --channel temp:0:-400:9000:r \
-    --channel heater:1:0:100:w \
+    --channel heater:1:0:100:w:0 \
     read temp
 ```
 
