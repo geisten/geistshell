@@ -75,6 +75,12 @@ else ifeq ($(GEIST_TARGET),mac)
     GEIST_LINK_FLAGS := -framework Accelerate
 else ifeq ($(GEIST_TARGET),pi5)
     GEIST_LINK_FLAGS := -fopenmp -lopenblas -lfftw3f
+else ifeq ($(GEIST_TARGET),linux)
+    # Generic Linux (x86_64, and ARM64 that is not a Pi 5). detect-target.sh
+    # returns `linux` there, and this case did not exist — the link fell through
+    # to the empty `else` and failed on OpenBLAS/OpenMP symbols. Nothing caught
+    # it because nothing ever built this repo on x86_64 (#105).
+    GEIST_LINK_FLAGS := -fopenmp -lopenblas
 else
     GEIST_LINK_FLAGS :=
 endif
@@ -237,16 +243,30 @@ check-backends:
 # the failure only showed after `make clean`: an incremental tree still had the
 # binary from an earlier `make all`, so the suite was green on a file no rule
 # had promised. A test target must build everything its tests execute.
+# The summary line exists because a SKIP and a PASS are indistinguishable in the
+# exit code, and 8 of the test files only execute on Linux (/proc, SIGSTOP,
+# __linux__). On a macOS laptop the machine backend's suite steps aside and this
+# target still exits 0 — which reads as "covered". CI asserts skipped=0 on the
+# Linux legs so that stops being invisible (#105).
+#
+# Output goes through a file rather than a pipe: POSIX sh has no PIPESTATUS, and
+# `cmd | tee` would report tee's status, silently swallowing every failure.
 test: $(TEST_BINS) $(PROBE_BINS) $(SPG_BIN) $(CHAT_BIN) $(WORKLOAD_BIN) check-backends
-	@status=0; \
+	@log=$$(mktemp); one=$$(mktemp); status=0; \
 	for t in $(TEST_BINS); do \
 		echo "$$t"; \
-		"$$t" || status=$$?; \
+		"$$t" >"$$one" 2>&1 || status=$$?; \
+		cat "$$one"; cat "$$one" >>"$$log"; \
 	done; \
 	for t in $(CLI_TESTS); do \
 		echo "$$t"; \
-		SPG_BIN="$(SPG_BIN)" sh "$$t" || status=$$?; \
+		SPG_BIN="$(SPG_BIN)" sh "$$t" >"$$one" 2>&1 || status=$$?; \
+		cat "$$one"; cat "$$one" >>"$$log"; \
 	done; \
+	passed=$$(grep -c ': PASS' "$$log" || true); \
+	skipped=$$(grep -c ': SKIP' "$$log" || true); \
+	rm -f "$$log" "$$one"; \
+	echo "test summary: passed=$$passed skipped=$$skipped"; \
 	exit $$status
 
 # Real-model benchmark. Deliberately NOT part of `test`: it needs a GGUF and
