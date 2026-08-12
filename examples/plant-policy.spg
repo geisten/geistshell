@@ -1,0 +1,28 @@
+; Policy for a plant run: one capability, and it is the machine.
+;
+; No local_shell, no simulator, no memory. The agent's entire reach is the
+; channel table passed on the command line — this file says "may write", the
+; table says "what, and between which numbers". A model denied a setpoint has
+; nothing else to reach for, which is the same property examples/machine-policy.spg
+; buys for pause/resume.
+;
+; Granting `device` grants the right to move a physical thing, and it is
+; deliberately separate from machine_process: an operator who wanted an agent
+; that may pause a runaway process must not silently also get one that may
+; drive a heater.
+(policy
+ (network_default deny)
+ (budgets
+  (inference_steps 8)
+  (tokens 256)
+  (shell_actions 0)
+  (sim_actions 0)
+  (memory_actions 0)
+  (wall_ms 10000)
+  (journal_bytes 1048576)
+  (risk_bp 10000)
+  ; device_write consumes machine_actions — it shares the budget with
+  ; pause/resume while keeping its own capability.
+  (machine_actions 4))
+ (capability
+  ((name device) (kind device) (enabled true) (budget 4))))
