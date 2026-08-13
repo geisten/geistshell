@@ -524,6 +524,78 @@ static int test_machine_render(void) {
     return 0;
 }
 
+/* The plant block: perception, not an action. It renders after the machine
+ * block, it disappears entirely when absent, and an unreadable channel says
+ * `unknown` rather than 0. */
+static int test_device_state_block(void) {
+    const struct spg_run_config    run   = {.budgets = {.tokens = 100u}};
+    const struct spg_policy_usage  usage = {};
+    const struct spg_context_limits limits = {};
+    struct spg_context_view         view   = {};
+
+    struct spg_machine_state machine = {.cpu_utilisation_bp = 9200u,
+                                        .temperature_mc     = 78400};
+    struct spg_device_state  plant   = {
+          .n        = 2u,
+          .readings = {{.name = "temp", .value = 2350, .known = true},
+                       {.name = "heater", .value = 0, .known = false}}};
+
+    struct spg_context_sources sources = {.run          = &run,
+                                          .usage        = &usage,
+                                          .machine      = &machine,
+                                          .device_state = &plant};
+    if (spg_context_build(&sources, &limits, &view) != SPG_OK) {
+        return 1;
+    }
+    char   buf[8192];
+    size_t req = 0u;
+    if (spg_context_render(&sources, &view, sizeof buf, buf, &req) != SPG_OK) {
+        return 1;
+    }
+    const char *device = strstr(buf, "(device-state ");
+    if (device == nullptr || strstr(buf, "(temp 2350)") == nullptr ||
+        strstr(buf, "(heater unknown)") == nullptr) {
+        return 1;
+    }
+    /* A channel that could not be read must not arrive as a measurement. */
+    if (strstr(buf, "(heater 0)") != nullptr) {
+        return 1;
+    }
+    /* The host first, then what the host is driving. A model that reads the
+     * plant before the machine has to re-read the plant. */
+    const char *host = strstr(buf, "(machine-state ");
+    if (host == nullptr || host > device) {
+        return 1;
+    }
+
+    /* Byte-identical for the same readings — the block goes into the journal
+     * as part of the model input, so a replay depends on it. */
+    char   again[8192];
+    size_t req2 = 0u;
+    if (spg_context_render(&sources, &view, sizeof again, again, &req2) !=
+            SPG_OK ||
+        req != req2 || memcmp(buf, again, req) != 0) {
+        return 1;
+    }
+
+    /* Absent by default, and an empty table counts as absent: a run without a
+     * plant renders exactly what it rendered before this existed. */
+    sources.device_state = nullptr;
+    if (spg_context_render(&sources, &view, sizeof again, again, &req2) !=
+            SPG_OK ||
+        strstr(again, "device-state") != nullptr) {
+        return 1;
+    }
+    const struct spg_device_state empty = {};
+    sources.device_state               = &empty;
+    if (spg_context_render(&sources, &view, sizeof again, again, &req2) !=
+            SPG_OK ||
+        strstr(again, "device-state") != nullptr) {
+        return 1;
+    }
+    return 0;
+}
+
 /* Missing telemetry must render as the symbol `unknown`, never as 0 — a model
  * cannot tell a dead sensor from an idle machine otherwise. */
 static int test_machine_unknown_and_locale(void) {
@@ -595,6 +667,10 @@ int main(void) {
     }
     if (test_machine_unknown_and_locale() != 0) {
         fprintf(stderr, "test_machine_unknown_and_locale failed\n");
+        return 1;
+    }
+    if (test_device_state_block() != 0) {
+        fprintf(stderr, "test_device_state_block failed\n");
         return 1;
     }
     if (test_budget_view() != 0) {

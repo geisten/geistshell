@@ -279,6 +279,88 @@ static int test_safe_state(void) {
     return 0;
 }
 
+/* --- what the agent sees ---------------------------------------------- */
+
+static int test_state_render(void) {
+    struct spg_device_state state = {
+        .n        = 3u,
+        .readings = {{.name = "temp", .value = 2350, .known = true},
+                     {.name = "heater", .value = 0, .known = true},
+                     {.name = "druck", .value = 0, .known = false}}};
+    char   buf[SPG_DEVICE_RENDER_CAP];
+    size_t required = 0u;
+    if (spg_device_state_render(&state, sizeof buf, buf, &required) != SPG_OK) {
+        return 1;
+    }
+    if (strcmp(buf, "(device-state (temp 2350) (heater 0) (druck unknown))") !=
+        0) {
+        (void)fprintf(stderr, "  rendered: %s\n", buf);
+        return 1;
+    }
+    if (required != strlen(buf) + 1u) {
+        return 1;
+    }
+    /* An unknown reading must never come out as 0 — the whole point of the
+     * flag. A controller cannot tell a dead sensor from a zero measurement. */
+    if (strstr(buf, "(druck 0)") != nullptr) {
+        return 1;
+    }
+    /* A negative value keeps its sign; a below-zero temperature is the common
+     * case that a naive unsigned path gets wrong. */
+    struct spg_device_state cold = {
+        .n = 1u, .readings = {{.name = "temp", .value = -400, .known = true}}};
+    if (spg_device_state_render(&cold, sizeof buf, buf, &required) != SPG_OK ||
+        strcmp(buf, "(device-state (temp -400))") != 0) {
+        return 1;
+    }
+    /* Too small a buffer reports the need and writes no partial record. */
+    char small[8] = {};
+    if (spg_device_state_render(&state, sizeof small, small, &required) !=
+        SPG_E_LIMIT) {
+        return 1;
+    }
+    return 0;
+}
+
+static int test_sample_without_machine(void) {
+    /* Every refusal above the socket is testable with fd == -1, and so is
+     * this: a sample with nothing connected yields one unknown reading per
+     * channel rather than an empty block. An agent must be able to tell "the
+     * plant is unreachable" from "the plant has no channels". */
+    struct spg_device dev = {};
+    spg_device_init(&dev);
+    const struct spg_device_channel temp = {
+        .name = "temp", .reg = 0u, .min = -400, .max = 9000};
+    const struct spg_device_channel heater = {.name     = "heater",
+                                              .reg      = 1u,
+                                              .min      = 0,
+                                              .max      = 100,
+                                              .writable = true,
+                                              .safe     = 0};
+    if (spg_device_add_channel(&dev, &temp) != SPG_OK ||
+        spg_device_add_channel(&dev, &heater) != SPG_OK) {
+        return 1;
+    }
+    struct spg_device_state state = {};
+    if (spg_device_sample(&dev, &state) != SPG_E_INVALID_STATE) {
+        return 1;
+    }
+    if (state.n != 2u || state.readings[0].known || state.readings[1].known) {
+        return 1;
+    }
+    if (strcmp(state.readings[0].name, "temp") != 0 ||
+        strcmp(state.readings[1].name, "heater") != 0) {
+        return 1;
+    }
+    char   buf[SPG_DEVICE_RENDER_CAP];
+    size_t required = 0u;
+    if (spg_device_state_render(&state, sizeof buf, buf, &required) != SPG_OK ||
+        strcmp(buf, "(device-state (temp unknown) (heater unknown))") != 0) {
+        return 1;
+    }
+    return 0;
+}
+
 int main(void) {
     struct {
         const char *name;
@@ -290,6 +372,8 @@ int main(void) {
         {"codec", test_codec},
         {"watchdog", test_watchdog},
         {"safe_state", test_safe_state},
+        {"state_render", test_state_render},
+        {"sample_without_machine", test_sample_without_machine},
     };
     for (size_t i = 0u; i < sizeof cases / sizeof cases[0]; i += 1u) {
         if (cases[i].fn() != 0) {

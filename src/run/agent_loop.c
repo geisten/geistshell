@@ -231,17 +231,31 @@ spg_agent_loop_run(struct spg_orchestrator_state           *state,
          * Deliberately here and not at the top of the tick: refreshing before
          * anything happened would only cost a syscall and would make the first
          * decision race the sampler. */
-        if (config->refresh_machine && state->machine != nullptr) {
-            if (config->machine_settle_ms > 0u &&
-                state->machine_after == nullptr) {
-                /* Only on the live path: a scripted case describes the world
-                 * after the action directly and has nothing to wait for. */
-                const struct timespec settle = {
-                    .tv_sec  = (time_t)(config->machine_settle_ms / 1000u),
-                    .tv_nsec = (long)((config->machine_settle_ms % 1000u) *
-                                      1000000u)};
-                (void)nanosleep(&settle, nullptr);
-            }
+        /* Two things can be re-observed: the host geistshell runs on, and the
+         * plant it is driving. The plant does NOT ride on refresh_machine —
+         * that flag means "re-read the host", and a plant run without host
+         * telemetry would then observe the machine exactly once and steer
+         * blind for the rest of the run. The presence of the readings buffer
+         * is the intent. */
+        const bool refresh_host =
+            config->refresh_machine && state->machine != nullptr;
+        const bool refresh_plant =
+            state->device_state != nullptr && state->device != nullptr;
+        /* Settle once for both, and only where something is actually being
+         * measured: a scripted case describes the world after the action
+         * directly and has nothing to wait for. The plant needs this more than
+         * the host does — a heater read the instant after it was told to warm
+         * up reports the temperature from before the command. */
+        if (config->machine_settle_ms > 0u &&
+            ((refresh_host && state->machine_after == nullptr) ||
+             refresh_plant)) {
+            const struct timespec settle = {
+                .tv_sec  = (time_t)(config->machine_settle_ms / 1000u),
+                .tv_nsec =
+                    (long)((config->machine_settle_ms % 1000u) * 1000000u)};
+            (void)nanosleep(&settle, nullptr);
+        }
+        if (refresh_host) {
             if (state->machine_after != nullptr) {
                 /* Scripted: the world changes in the way the case describes. */
                 *state->machine = *state->machine_after;
@@ -256,6 +270,13 @@ spg_agent_loop_run(struct spg_orchestrator_state           *state,
                     *state->machine = next;
                 }
             }
+        }
+
+        /* A failed sample is not an error here: the channels that answered are
+         * installed and the rest render `unknown`. One dead sensor must not
+         * cost the agent its view of the whole plant. */
+        if (refresh_plant) {
+            (void)spg_device_sample(state->device, state->device_state);
         }
 
         /* Convergence stop (#40): the step executed an allowed action but the

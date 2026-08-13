@@ -41,12 +41,14 @@ gekürzte Liste, die vollständig aussieht, lädt das Modell zu falschen Schlüs
 ein („nur diese drei Prozesse laufen"). Ist die Gesamtzahl unbekannt, steht dort
 `unknown` statt einer erfundenen Zahl.
 
-## Standardmäßig abwesend
+## Standardmäßig anwesend
 
-Ohne `--machine` (bzw. ohne gesetztes `sources.machine`) ist der Context
-**byte-identisch** zu vorher. Das ist keine Bequemlichkeit, sondern die
-Voraussetzung dafür, dass der Journal-Freeze aus [Baseline.md](Baseline.md)
-weiter etwas aussagt: er prüft den Default-Pfad.
+Wahrnehmung ist kein Opt-in mehr: jeder Live-Lauf des Agenten sampelt den Host
+und trägt den Block, ein nicht lesbarer Host rendert `unknown`. Explizit
+bleibt nur Autorität — Profil, Policy, Kanaltabelle. In der Bibliothek gilt
+weiterhin: ohne gesetztes `sources.machine` ist der Context byte-identisch zu
+vorher; die beschriebene Welt einer Eval-Fixture wird nie durch eine gemessene
+ersetzt.
 
 Ein CLI-Test fährt denselben Lauf zweimal — mit und ohne Flag — und verlangt,
 dass der Block im einen Fall wohlgeformt auftaucht und im anderen gar nicht.
@@ -121,12 +123,11 @@ nach einer Rolle, die zu diesem Zeitpunkt noch niemand gesetzt hätte. Auch das
 zeigte erst der Pi: ohne diesen Schritt trug jeder Prozess im Context
 `role unknown`.
 
-`--process-profile <datei>` lädt das Profil aus Phase 2 und impliziert
-`--machine`.
+`--process-profile <datei>` lädt das Profil aus Phase 2.
 
 ## Ein Sample pro Lauf, nicht pro Tick
 
-`--machine` sampelt einmal beim Start. Das genügt für diese Phase: sie
+Gesampelt wird einmal beim Start. Das genügte für diese Phase: sie
 beweist, dass der State im Context ankommt. Ein neuer Snapshot pro Tick wird
 erst sinnvoll, wenn es eine Action gibt, deren Wirkung beobachtet werden muss —
 das ist Phase 7 (#67), und sie ändert dafür genau eine Stelle.
@@ -142,8 +143,8 @@ pro Tick neu beobachtet, ist der Wert da.
 ## Abweichung vom Ticket
 
 Das Ticket verlangte einen erweiterten Eval Case als Nachweis. Stattdessen gibt
-es `test/test_cli_machine.sh`: derselbe Lauf zweimal, einmal mit und einmal ohne
-`--machine`, mit Prüfung des tatsächlich journalten Model-Inputs auf
+es `test/test_cli_machine.sh`: ein Default-Lauf ohne jedes Flag, mit Prüfung
+des tatsächlich journalten Model-Inputs auf
 Wohlgeformtheit und Pflichtfelder. Das prüft dieselbe Eigenschaft näher an der
 Realität — der Nachweis führt über das Journal, nicht über eine Testfixture.
 

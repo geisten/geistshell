@@ -139,4 +139,18 @@ AGENT_CH="--device-channel heater:1:0:100:w:0 --device-channel temp:0:-400:9000:
 strings build/device-demo.sgj | grep -q '(outcome written)' ||
     fail "the write is missing from the journal"
 
+# The readings the decision was made ON, not just the action it produced. The
+# context is journaled whole as MODEL_INPUT, so a (device-state ...) block in
+# the prompt IS the audit record — a replay that shows what the agent did but
+# not what it saw is half a record.
+strings build/device-demo.sgj | grep -q '(device-state (heater 0) (temp 200))' ||
+    fail "the plant readings never reached the journaled context"
+
+# And the loop actually closes: the context AFTER the write shows the plant the
+# write left behind, not the one the decision was made on. Without the
+# post-action re-sample both blocks would read (heater 0) and the agent would
+# steer for the rest of the run on a snapshot it had already invalidated.
+strings build/device-demo.sgj | grep -q '(device-state (heater 40) (temp 200))' ||
+    fail "the context was not re-sampled after the write"
+
 echo "test_cli_device: PASS (agent action)"

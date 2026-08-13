@@ -479,3 +479,64 @@ enum spg_status spg_device_write(struct spg_device *dev, const char *name,
     }
     return SPG_OK;
 }
+
+/* --- What the agent sees ----------------------------------------------- */
+
+enum spg_status spg_device_sample(struct spg_device       *dev,
+                                  struct spg_device_state *out) {
+    if (dev == nullptr || out == nullptr) {
+        return SPG_E_INVALID_ARG;
+    }
+    *out = (struct spg_device_state){};
+    enum spg_status first = SPG_OK;
+    for (size_t i = 0u; i < dev->n_channels; i += 1u) {
+        struct spg_device_reading *reading = &out->readings[out->n];
+        memcpy(reading->name, dev->channels[i].name, sizeof reading->name);
+        int64_t               value  = 0;
+        const enum spg_status status = spg_device_read(dev, reading->name,
+                                                       &value);
+        if (status == SPG_OK) {
+            reading->value = value;
+            reading->known = true;
+        } else if (first == SPG_OK) {
+            /* Every channel is attempted even after one fails — one dead
+             * sensor must not blind the agent to the rest of the plant. The
+             * first failure is what the caller hears about. */
+            first = status;
+        }
+        out->n += 1u;
+    }
+    return first;
+}
+
+enum spg_status spg_device_state_render(const struct spg_device_state *state,
+                                        const size_t dst_capacity,
+                                        char dst[static dst_capacity],
+                                        size_t *out_required) {
+    if (state == nullptr || dst == nullptr || out_required == nullptr ||
+        dst_capacity == 0u || state->n > SPG_DEVICE_MAX_CHANNELS) {
+        return SPG_E_INVALID_ARG;
+    }
+    /* SPG_DEVICE_RENDER_CAP bounds the worst case by construction, so the
+     * whole block is rendered here first and copied only if it fits — no
+     * partial record ever reaches dst. */
+    char   block[SPG_DEVICE_RENDER_CAP];
+    size_t used = (size_t)snprintf(block, sizeof block, "(device-state");
+    for (size_t i = 0u; i < state->n; i += 1u) {
+        const struct spg_device_reading *r = &state->readings[i];
+        used += r->known
+                    ? (size_t)snprintf(block + used, sizeof block - used,
+                                       " (%s %lld)", r->name,
+                                       (long long)r->value)
+                    /* Never 0 for a reading that was not taken — device.h. */
+                    : (size_t)snprintf(block + used, sizeof block - used,
+                                       " (%s unknown)", r->name);
+    }
+    used += (size_t)snprintf(block + used, sizeof block - used, ")");
+    *out_required = used + 1u;
+    if (used + 1u > dst_capacity) {
+        return SPG_E_LIMIT; /* no partial record: dst is left untrusted */
+    }
+    memcpy(dst, block, used + 1u);
+    return SPG_OK;
+}

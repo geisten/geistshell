@@ -97,6 +97,70 @@ spg_device_parse_channel(size_t text_n, const char text[],
 [[nodiscard]] const struct spg_device_channel *
 spg_device_find(const struct spg_device *dev, const char *name);
 
+/* --- What the agent sees ----------------------------------------------- */
+
+/* One tick's readings, one entry per channel. Fixed size, no pointers: it is
+ * rendered into the context, so it must not own anything — same discipline as
+ * struct spg_machine_state.
+ *
+ * The value is in register units, the same number the operator wrote the range
+ * in. A reading that could not be taken is `known == false` and renders as
+ * `unknown`, NEVER as 0. A dead sensor that looks like a zero measurement is
+ * the most dangerous failure a controller can have: it is indistinguishable
+ * from a real reading, and the next decision is built on it. */
+struct spg_device_reading {
+    char    name[SPG_DEVICE_NAME_CAP];
+    int64_t value;
+    bool    known;
+};
+
+struct spg_device_state {
+    size_t                    n;
+    struct spg_device_reading readings[SPG_DEVICE_MAX_CHANNELS];
+};
+
+/* Read every channel into `out`, in table order.
+ *
+ * A channel that fails is recorded unknown and does NOT abort the others — one
+ * unreachable sensor must not blind the agent to the rest of the plant. Same
+ * reasoning as spg_device_safe_state, which also attempts every channel.
+ * Returns the FIRST failure, or SPG_OK when every channel answered; `out` is
+ * complete either way.
+ *
+ * A successful read counts as contact, so a run that only observes keeps the
+ * watchdog alive. Contact is contact — before this existed only a write fed
+ * it, which made a purely observing run look like a machine that had gone
+ * silent. */
+[[nodiscard]] enum spg_status spg_device_sample(struct spg_device       *dev,
+                                                struct spg_device_state *out);
+
+/* Upper bound on a rendered block: 32 channels of a 32-byte name plus a signed
+ * value and its parentheses. A caller can size a stack buffer from this and
+ * never truncate. */
+constexpr size_t SPG_DEVICE_RENDER_CAP = 2048u;
+
+/* Deterministic s-expression, table order, unknown values as the symbol
+ * `unknown`:
+ *
+ *     (device-state (temp 2350) (heater 40) (druck unknown))
+ *
+ * Identical input always yields identical bytes — the block travels into the
+ * journal as part of the model input, so a replay depends on it. Writes at
+ * most dst_capacity bytes including the NUL; on SPG_E_LIMIT *out_required
+ * holds the size needed and dst holds no partial record.
+ *
+ * No units, no ranges, no scale. The channel name carries the meaning and the
+ * table carries the bounds; a second copy in the prompt would be a second
+ * place for a wrong number to live.
+ * ponytail: the writable channels' ranges are deliberately NOT shown. The
+ * setpoint is the one number the model free-decodes, so it can propose an
+ * out-of-range value and burn a step. Add a range line when the plant eval
+ * measures that rejection rate — not before. */
+[[nodiscard]] enum spg_status
+spg_device_state_render(const struct spg_device_state *state,
+                        size_t dst_capacity, char dst[static dst_capacity],
+                        size_t *out_required);
+
 /* --- The wire --------------------------------------------------------- */
 
 /* Frame codecs, kept free of any socket so the wire format can be tested

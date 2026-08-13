@@ -2059,7 +2059,6 @@ static int agent_command(int argc, char **argv) {
     bool     has_seed      = false;
     uint64_t seed_override = 0u; /* per-attempt seed for best-of-N sampling */
     size_t   best_of       = 1u; /* #2: verifier-guided best-of-N attempts */
-    bool     with_machine  = false; /* roadmap phase 3: (machine-state ...) */
     /* Declared up here because every early `goto done` must find it defined —
      * the cleanup path releases it. */
     int machine_lock = -1;
@@ -2078,6 +2077,10 @@ static int agent_command(int argc, char **argv) {
      * Two means the machine may miss one decision's worth of contact before
      * it is driven to its safe state. */
     uint64_t device_watchdog_steps = 2u;
+    /* One tick's readings. Lives here rather than inside spg_device so the
+     * port stays free of loop state and the block can be parsed back out of
+     * an eval fixture. */
+    struct spg_device_state device_state = {};
     spg_device_init(&device);
     for (int i = 2; i < argc; i += 1) {
         if ((strcmp(argv[i], "--config") == 0 ||
@@ -2151,10 +2154,6 @@ static int agent_command(int argc, char **argv) {
             i += 1;
             continue;
         }
-        if (strcmp(argv[i], "--machine") == 0) {
-            with_machine = true;
-            continue;
-        }
         if (strcmp(argv[i], "--machine-settle-ms") == 0 && i + 1 < argc) {
             settle_ms = (uint64_t)strtoull(argv[i + 1], nullptr, 10);
             i += 1;
@@ -2205,7 +2204,6 @@ static int agent_command(int argc, char **argv) {
         }
         if (strcmp(argv[i], "--process-profile") == 0 && i + 1 < argc) {
             profile_path = argv[i + 1];
-            with_machine = true; /* a profile without telemetry does nothing */
             i += 1;
             continue;
         }
@@ -2223,7 +2221,7 @@ static int agent_command(int argc, char **argv) {
     if (run_path == nullptr) {
         fprintf(stderr,
                 "usage: %s agent --config <run> [--fake-script <file>] "
-                "[--machine] [--process-profile <file>] "
+                "[--process-profile <file>] "
                 "[--max-steps N] [--max-repairs N] [--allow-exec] "
                 "[--memory-dir <d>]\n"
                 "  without --fake-script the real model at the config's "
@@ -2446,7 +2444,7 @@ static int agent_command(int argc, char **argv) {
      * same injected counter the journal uses — no clock is read here either. */
     struct spg_machine_state   machine = {};
     struct spg_process_profile profile = {};
-    if (with_machine && profile_path != nullptr) {
+    if (profile_path != nullptr) {
         struct file_buffer profile_text = {};
         if (read_file(profile_path, &profile_text) != SPG_OK) {
             fprintf(stderr, "agent: cannot read process profile: %s\n",
@@ -2469,7 +2467,12 @@ static int agent_command(int argc, char **argv) {
     char                                        machine_payload[1024];
     const struct spg_machine_executor_workspace release_ws = {
         .payload_capacity = sizeof machine_payload, .payload = machine_payload};
-    if (with_machine) {
+    /* Perception is not opt-in: the host is observed on every run. What stays
+     * opt-in is authority — managing processes needs a profile, and the gate
+     * needs the capability. The lock, the recovery pass and the release in
+     * `done` ride along unconditionally for the same reason: they protect the
+     * journal and the host, not a feature flag. */
+    {
         machine_lock = lock_machine_journal(journal_path);
         if (machine_lock < 0) {
             fprintf(stderr,
@@ -2498,39 +2501,15 @@ static int agent_command(int argc, char **argv) {
                    recovered);
         }
     }
-    if (with_machine) {
-        (void)spg_machine_sample_with_processes(
+    /* A host that cannot read itself is something the agent is told about —
+     * the block renders `unknown` — never a reason to refuse to start. Same
+     * line spg_device_sample draws for the plant. */
+    if (spg_machine_sample_with_processes(
             1u, nullptr, 0u, nullptr,
-            profile_path != nullptr ? &profile : nullptr, &machine);
+            profile_path != nullptr ? &profile : nullptr, &machine) != SPG_OK) {
+        fprintf(stderr, "agent: host telemetry unavailable; the machine block"
+                        " renders unknown\n");
     }
-    const struct spg_agent_run_inputs inputs = {
-        .model         = &model,
-        .policy        = &policy,
-        .policy_text_n = policy_text.n,
-        .policy_text   = policy_text.data,
-        .run           = &run,
-        .sim           = &sim,
-        .store         = store_open ? &store : nullptr,
-        .journal       = &journal,
-        .exemplars     = exemplars_text.data, /* null when --exemplars absent */
-        .goal          = goal_cstr,           /* null when (goal ...) absent */
-        /* Absent by default: without --machine the context is byte-identical
-         * to before this phase, which is what keeps the phase-0 freeze valid.
-         */
-        .machine = with_machine ? &machine : nullptr,
-        /* Phase 7: re-observe between ticks. Without this the agent decides
-         * every tick on the snapshot it started with — the loop was closed in
-         * the eval harness and open in the real agent, which is precisely the
-         * gap only a real experiment could show. */
-        .refresh_machine   = with_machine,
-        .machine_settle_ms = settle_ms,
-        /* No profile means nothing is managed, and the gate denies every
-         * machine action as unmanaged. That is the right default: a run that
-         * never declared what it may touch may not touch anything. */
-        .profile      = profile_path != nullptr ? &profile : nullptr,
-        .pause_ledger = with_machine ? &pause_ledger : nullptr,
-        .device       = device_host != nullptr ? &device : nullptr,
-    };
     if (device_host != nullptr) {
         if (device.n_channels == 0u) {
             fprintf(stderr, "agent: --device-host without any --device-channel;"
@@ -2549,7 +2528,47 @@ static int agent_command(int argc, char **argv) {
          * counter starting at 1 — so a replay reaches the same watchdog
          * verdict the live run did. */
         spg_device_arm_watchdog(&device, device_watchdog_steps, 0u);
+        /* One reading before the first tick, so the first decision is made
+         * about a plant the agent has actually seen. The loop re-samples after
+         * every action; without this the first context would carry no
+         * (device-state ...) block at all and the opening move would be blind.
+         *
+         * A failing sample is not fatal: the channels that answered are
+         * installed and the rest render `unknown`. A plant that cannot be read
+         * is something the agent should be told about, not a reason to refuse
+         * to start. */
+        (void)spg_device_sample(&device, &device_state);
     }
+    const struct spg_agent_run_inputs inputs = {
+        .model         = &model,
+        .policy        = &policy,
+        .policy_text_n = policy_text.n,
+        .policy_text   = policy_text.data,
+        .run           = &run,
+        .sim           = &sim,
+        .store         = store_open ? &store : nullptr,
+        .journal       = &journal,
+        .exemplars     = exemplars_text.data, /* null when --exemplars absent */
+        .goal          = goal_cstr,           /* null when (goal ...) absent */
+        /* Perception is automatic: every live run sees the host it runs on,
+         * unknown fields included. Only scripted worlds (eval fixtures)
+         * describe their state instead of measuring it — that path never
+         * comes through here. */
+        .machine = &machine,
+        /* Phase 7: re-observe between ticks. Without this the agent decides
+         * every tick on the snapshot it started with — the loop was closed in
+         * the eval harness and open in the real agent, which is precisely the
+         * gap only a real experiment could show. */
+        .refresh_machine   = true,
+        .machine_settle_ms = settle_ms,
+        /* No profile means nothing is managed, and the gate denies every
+         * machine action as unmanaged. That is the right default: a run that
+         * never declared what it may touch may not touch anything. */
+        .profile      = profile_path != nullptr ? &profile : nullptr,
+        .pause_ledger = &pause_ledger,
+        .device       = device_host != nullptr ? &device : nullptr,
+        .device_state = device_host != nullptr ? &device_state : nullptr,
+    };
     const struct spg_agent_run_config rcfg = {
         .max_steps   = max_steps,
         .max_repairs = max_repairs,
@@ -2627,8 +2646,8 @@ static int agent_command(int argc, char **argv) {
 done:
     /* Nothing stays paused. Every path lands here — success, failure, max
      * steps, budget, policy denial, interrupt — so the promise does not depend
-     * on how the run ended. */
-    if (with_machine) {
+     * on how the run ended. An untouched ledger releases nothing. */
+    {
         const struct spg_machine_executor_state release_state = {
             .machine = &machine,
             .journal = journal_open ? &journal : nullptr,

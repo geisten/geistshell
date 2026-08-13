@@ -4,11 +4,11 @@ Der erste Aktuator, der tatsächlich etwas bewegt — und die Grenze, an der
 geistshell aufhört, etwas über Maschinen zu wissen.
 
 > **Stand.** Die Kanaltabelle, die Bereichsprüfung, der sichere Wert, der
-> Watchdog und `SPG_ACTION_DEVICE_WRITE` sind gebaut. Der Transport in
-> `src/device/device.c` ist heute noch **fest verdrahtetes Modbus TCP**. Dieses
-> Dokument beschreibt den Entwurf, der ihn ablöst: ein `exec`-Kanal, und Modbus
-> als eigenes Programm daneben. Der Sensorrückweg (`(device-state …)` im
-> Kontext) fehlt in beiden Ständen.
+> Watchdog, `SPG_ACTION_DEVICE_WRITE` und der Sensorrückweg
+> (`(device-state …)` im Kontext) sind gebaut. Der Transport in
+> `src/device/device.c` ist heute noch **fest verdrahtetes Modbus TCP** —
+> dieses Dokument beschreibt den `exec`-Kanal, der ihn ablöst, und dessen
+> Konfigurationsform. Beides ist Entwurf, nicht Code.
 
 ## Die Portgrenze: der Kanal
 
@@ -198,12 +198,14 @@ steht, hat den Transport nicht bemerkt.
 
 ## Der Sensor: der fehlende Rückweg
 
-Der Agent kann heute schreiben, ohne zu lesen. `spg_device_read` existiert,
-aber kein Pfad führt vom Kanal in den Kontext — es gibt keinen
-`(device-state …)`-Block neben `(machine-state …)`.
+**Jeder Kanal wird pro Schritt abgetastet und gerendert** — einmal vor dem
+ersten Tick, damit die erste Entscheidung über eine gesehene Anlage fällt, und
+danach nach jeder Aktion, an derselben Stelle wie die Host-Telemetrie: der
+nächste Tick muss über die Maschine urteilen, die die Aktion hinterlassen hat.
 
-Der Entwurf ist die kleinste Version davon: **jeder lesbare Kanal wird pro
-Schritt abgetastet und gerendert.**
+Der Block braucht keinen eigenen Journaleintrag. Der Actor schreibt den
+kompletten gerenderten Kontext als `SPG_JOURNAL_EVENT_MODEL_INPUT` in die
+Hash-Kette: was der Agent sah, steht damit im selben Beleg wie das, was er tat.
 
 ```
 (device-state (temp 2350) (heater 0))

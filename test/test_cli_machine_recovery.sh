@@ -49,7 +49,7 @@ sleep 0.2
 # be stopped when the agent exits.
 printf '(recommend (kind machine_pause_process) (capability "machine.process.pause") (target "batch_job") (cost 1) (uses_network false) (confidence_bp 9000) (reason "reduce load"))\n(recommend (kind finish) (reason "done"))\n' >"$SCRIPT"
 rm -f "$JOURNAL"
-OUT=$("$SPG_BIN" agent --config "$RUNCFG" --fake-script "$SCRIPT" --machine \
+OUT=$("$SPG_BIN" agent --config "$RUNCFG" --fake-script "$SCRIPT" \
     --process-profile "$PROFILE" --allow-exec --max-steps 3)
 
 case "$OUT" in
@@ -83,7 +83,7 @@ if command -v flock >/dev/null 2>&1; then
         echo "test_cli_machine_recovery: FAIL — could not take the lock" >&2
         exit 1
     }
-    if "$SPG_BIN" agent --config "$RUNCFG" --fake-script "$SCRIPT" --machine \
+    if "$SPG_BIN" agent --config "$RUNCFG" --fake-script "$SCRIPT" \
         --process-profile "$PROFILE" --allow-exec --max-steps 3 2>/dev/null; then
         echo "test_cli_machine_recovery: FAIL — a second run started anyway" >&2
         exit 1

@@ -51,6 +51,10 @@ struct spg_orchestrator_state {
      * reachable from this run, which is a normal outcome and not an error:
      * the executor records SPG_DEVICE_OUTCOME_NO_DEVICE and the run goes on. */
     struct spg_device *device;
+    /* Optional plant readings for the context. Mutable for the same reason
+     * as `machine`: the loop re-samples between ticks so the next decision
+     * reads the plant the last action left behind. */
+    struct spg_device_state *device_state;
     /* Optional second snapshot, installed after the first executed action
      * (phase 7). A scripted eval needs the world to change deterministically;
      * a live run refreshes from the host instead. Null = the snapshot stays

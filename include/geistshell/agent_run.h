@@ -56,6 +56,9 @@ struct spg_agent_run_inputs {
     /* Optional attached machine for device_write. Null = no machine reachable
      * from this run; the executor says so and the run continues. */
     struct spg_device *device;
+    /* Optional plant readings for the context, re-sampled between ticks.
+     * Null = no (device-state ...) block, and the context is unchanged. */
+    struct spg_device_state *device_state;
     /* Phase 7: the snapshot to install once an action has executed, for
      * scripted cases where the world must change deterministically. Null on a
      * live run, which re-samples the host instead. */
