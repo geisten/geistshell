@@ -7,6 +7,8 @@
 #include <stdint.h>
 #include <stdio.h>
 #include <string.h>
+#include <sys/wait.h>
+#include <unistd.h>
 
 #define TOOL_TOKENS 256u
 #define TOOL_NODES  256u
@@ -200,12 +202,65 @@ static void run_memory(struct spg_mem_store *store,
                    slug);
 }
 
-enum spg_status spg_chat_tool_dispatch(struct spg_mem_store *store,
-                                       struct spg_journal_writer *journal,
-                                       const bool allow_exec,
-                                       const size_t input_n, const char *input,
-                                       const size_t out_cap, char out[],
-                                       bool *was_tool) {
+/* Launch `<agent_bin> agent --config <path>` — but only past the operator.
+ * The config is authority: the model may propose which one to run, never
+ * decide. The exec takes an argv vector, not a shell line, so nothing the
+ * model wrote can be injected; the run inherits the terminal, so the operator
+ * watches it live, and the run's own journal is the audit record. */
+static void run_agent(const struct spg_chat_agent_launcher *launcher,
+                      size_t input_n, const char *input,
+                      const struct spg_sexpr_node *nodes, char out[],
+                      const size_t out_cap) {
+    if (launcher == nullptr || launcher->agent_bin == nullptr ||
+        launcher->confirm == nullptr) {
+        (void)snprintf(out, out_cap, "error: agent_run is not available here");
+        return;
+    }
+    struct spg_text_span cspan;
+    if (!arg_string(input_n, input, nodes, 0u, "config", &cspan)) {
+        (void)snprintf(out, out_cap,
+                       "error: agent_run needs (config \"<run.spg>\")");
+        return;
+    }
+    char path[1024];
+    span_to_buf(input, cspan, path, sizeof path);
+    if (access(path, R_OK) != 0) {
+        (void)snprintf(out, out_cap, "error: cannot read config %s", path);
+        return;
+    }
+    if (!launcher->confirm(launcher->userdata, path)) {
+        (void)snprintf(out, out_cap,
+                       "declined: the operator did not approve this run");
+        return;
+    }
+    const pid_t pid = fork();
+    if (pid < 0) {
+        (void)snprintf(out, out_cap, "error: cannot fork");
+        return;
+    }
+    if (pid == 0) {
+        execl(launcher->agent_bin, launcher->agent_bin, "agent", "--config",
+              path, (char *)nullptr);
+        _exit(127);
+    }
+    int status = 0;
+    (void)waitpid(pid, &status, 0);
+    if (WIFEXITED(status)) {
+        (void)snprintf(out, out_cap, "agent run finished: exit %d%s",
+                       WEXITSTATUS(status),
+                       WEXITSTATUS(status) == 127
+                           ? " (could not exec the geistshell binary)"
+                           : "");
+    } else {
+        (void)snprintf(out, out_cap, "agent run terminated by a signal");
+    }
+}
+
+enum spg_status spg_chat_tool_dispatch(
+    struct spg_mem_store *store, struct spg_journal_writer *journal,
+    const bool allow_exec, const struct spg_chat_agent_launcher *launcher,
+    const size_t input_n, const char *input, const size_t out_cap, char out[],
+    bool *was_tool) {
     if (store == nullptr || input == nullptr || out == nullptr ||
         out_cap == 0u || was_tool == nullptr) {
         return SPG_E_INVALID_ARG;
@@ -263,6 +318,11 @@ enum spg_status spg_chat_tool_dispatch(struct spg_mem_store *store,
     }
     if (spg_sexpr_span_eq_cstr(input_n, input, nodes[name].span, "exec")) {
         run_exec(input_n, input, nodes, allow_exec, journal, out, out_cap);
+        return SPG_OK;
+    }
+    if (spg_sexpr_span_eq_cstr(input_n, input, nodes[name].span,
+                               "agent_run")) {
+        run_agent(launcher, input_n, input, nodes, out, out_cap);
         return SPG_OK;
     }
 
