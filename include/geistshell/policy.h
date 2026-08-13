@@ -27,6 +27,19 @@ enum spg_action_kind {
      * "the policy said yes". */
     SPG_ACTION_MACHINE_PAUSE,
     SPG_ACTION_MACHINE_RESUME,
+    /* Setting a value on a real machine. Unlike the two above, this is NOT
+     * reversible — a vessel that was heated stays heated. The comment above
+     * says an irreversible action would need a stronger story than "the policy
+     * said yes", so here is the story:
+     *
+     *   - the channel table bounds it; an out-of-range value is refused before
+     *     a socket is even opened, so the model cannot ask for a number the
+     *     operator did not sanction;
+     *   - every writable channel must declare a safe value, and the watchdog
+     *     drives the machine there when contact is lost;
+     *   - the capability is separate from the process one, so granting the
+     *     right to pause a process never grants the right to move a machine. */
+    SPG_ACTION_DEVICE_WRITE,
     /* Control action: the agent declares the task complete. Carries no
      * capability and consumes no budget; the loop terminates on it and it never
      * reaches the policy gate. */

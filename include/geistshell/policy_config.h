@@ -27,6 +27,10 @@ enum spg_policy_capability_kind {
     SPG_POLICY_CAP_MEMORY,
     /* machine.process.pause / machine.process.resume */
     SPG_POLICY_CAP_MACHINE_PROCESS,
+    /* Deliberately not folded into MACHINE_PROCESS: pausing a process is
+     * reversible and local, writing a register moves a physical thing. A
+     * policy that wanted the first should never silently get the second. */
+    SPG_POLICY_CAP_DEVICE,
 };
 
 struct spg_policy_capability {

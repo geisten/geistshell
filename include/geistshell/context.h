@@ -1,6 +1,7 @@
 #ifndef GEISTSHELL_CONTEXT_H
 #define GEISTSHELL_CONTEXT_H
 
+#include "geistshell/device.h"
 #include "geistshell/graph.h"
 #include "geistshell/journal.h"
 #include "geistshell/machine_goal.h"
@@ -58,6 +59,16 @@ struct spg_context_sources {
     /* Which parts of the snapshot to leave out (phase 11, #71). 0 = the full
      * block, which is the default and byte-identical to before. */
     uint32_t machine_ablate;
+    /* Optional plant readings, rendered as (device-state ...) right after the
+     * machine block: the host first, then the thing the host is driving. Null
+     * = none, which is the default and leaves the context byte-identical to
+     * before this existed — the frozen journals depend on that.
+     *
+     * This is perception, not an action: the agent is GIVEN the readings and
+     * never spends a step asking for them. A control loop that burns a tick to
+     * measure runs at half the frequency, and a read has nothing for the
+     * policy gate to decide. */
+    const struct spg_device_state *device_state;
     /* Optional standing directive (a learned lesson) rendered prominently as
      * (directive "...") every step — a stronger channel than the mind-palace
      * index for steering a small model's behaviour (geistshell#40 follow-up).

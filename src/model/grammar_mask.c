@@ -116,6 +116,7 @@ bool spg_kind_from_text(const char *emitted, enum spg_action_kind *out) {
 #define LIT(s) {.kind = SPG_SCAFFOLD_LITERAL, .literal = (s)}
 #define STR {.kind = SPG_SCAFFOLD_STRING}
 #define CAP {.kind = SPG_SCAFFOLD_CAPABILITY}
+#define NUM {.kind = SPG_SCAFFOLD_NUMBER}
 #define BUREAU_OK ") (cost 1) (uses_network false) (confidence_bp 5000) "
 #define BUREAU_NET ") (cost 1) (uses_network true) (confidence_bp 5000) "
 
@@ -130,6 +131,19 @@ static const struct spg_scaffold_seg SEG_MACHINE[] = {
     LIT("\"" BUREAU_OK "(target \""),
     STR,
     LIT("\") (reason \""),
+    STR,
+    LIT("\"))")};
+/* A device write: which channel, and the number the model chose. The value is
+ * the only free number in the whole grammar — everything else the decoder fills
+ * is a string. */
+static const struct spg_scaffold_seg SEG_DEVICE[] = {
+    LIT(") (capability \""),
+    CAP,
+    LIT("\"" BUREAU_OK "(target \""),
+    STR,
+    LIT("\") (value "),
+    NUM,
+    LIT(") (reason \""),
     STR,
     LIT("\"))")};
 static const struct spg_scaffold_seg SEG_SIMULATOR[] = {
@@ -184,6 +198,9 @@ static size_t kinds_for_cap(const enum spg_policy_capability_kind cap,
         out[0] = SPG_ACTION_MACHINE_PAUSE;
         out[1] = SPG_ACTION_MACHINE_RESUME;
         return 2u;
+    case SPG_POLICY_CAP_DEVICE:
+        out[0] = SPG_ACTION_DEVICE_WRITE;
+        return 1u;
     case SPG_POLICY_CAP_LOCAL_SHELL:
         out[0] = SPG_ACTION_LOCAL_SHELL;
         return 1u;
@@ -255,6 +272,8 @@ size_t spg_scaffold_for_kind(enum spg_action_kind            kind,
     case SPG_ACTION_MACHINE_PAUSE:
     case SPG_ACTION_MACHINE_RESUME:
         RET(SEG_MACHINE);
+    case SPG_ACTION_DEVICE_WRITE:
+        RET(SEG_DEVICE);
     case SPG_ACTION_FINISH:
         RET(SEG_FINISH);
     case SPG_ACTION_SIMULATOR:

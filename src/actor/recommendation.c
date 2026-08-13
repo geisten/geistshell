@@ -14,6 +14,7 @@ enum field_id {
     FIELD_SLUG,
     FIELD_DESCRIPTION,
     FIELD_BODY,
+    FIELD_VALUE,
     FIELD_COUNT,
     FIELD_UNKNOWN,
 };
@@ -81,6 +82,9 @@ static enum field_id field_for_name(const size_t input_n, const char input[],
     if (spg_sexpr_span_eq_cstr(input_n, input, name, "body")) {
         return FIELD_BODY;
     }
+    if (spg_sexpr_span_eq_cstr(input_n, input, name, "value")) {
+        return FIELD_VALUE;
+    }
     return FIELD_UNKNOWN;
 }
 
@@ -134,6 +138,10 @@ static bool parse_action_kind(const size_t input_n, const char input[],
         *out = SPG_ACTION_MACHINE_RESUME;
         return true;
     }
+    if (spg_sexpr_span_eq_cstr(input_n, input, span, "device_write")) {
+        *out = SPG_ACTION_DEVICE_WRITE;
+        return true;
+    }
     if (spg_sexpr_span_eq_cstr(input_n, input, span, "finish")) {
         *out = SPG_ACTION_FINISH;
         return true;
@@ -154,6 +162,13 @@ static bool required_fields_seen(const bool seen[static FIELD_COUNT],
 }
 
 static bool kind_fields_match(const struct spg_recommendation *out) {
+    /* `value` belongs to exactly one kind. Checked once here rather than as a
+     * !has_device_value clause repeated in every arm below — the repeated form
+     * is how a new field ends up accepted-and-ignored on eight actions because
+     * one arm was missed. */
+    if (out->has_device_value && out->action_kind != SPG_ACTION_DEVICE_WRITE) {
+        return false;
+    }
     switch (out->action_kind) {
     case SPG_ACTION_SIMULATOR:
         return !out->action.uses_network && !out->has_command;
@@ -181,6 +196,13 @@ static bool kind_fields_match(const struct spg_recommendation *out) {
         return !out->action.uses_network && !out->has_command &&
                out->has_target && !out->has_slug && !out->has_description &&
                !out->has_body;
+    case SPG_ACTION_DEVICE_WRITE:
+        /* A channel name in `target` and a number in `value`. No command,
+         * for the same reason the machine actions have none: a typed action
+         * exists so the model cannot hand the executor a string to run. */
+        return !out->action.uses_network && !out->has_command &&
+               out->has_target && out->has_device_value && !out->has_slug &&
+               !out->has_description && !out->has_body;
     case SPG_ACTION_FINISH:
         /* finish carries no side-effect fields. */
         return !out->has_command && !out->has_target && !out->has_slug &&
@@ -337,6 +359,31 @@ enum spg_status spg_recommendation_parse(
                 return SPG_OK;
             }
             break;
+        case FIELD_VALUE: {
+            /* Signed, and parsed here rather than by widening the shared
+             * uint64 helper: every other numeric field in this grammar is a
+             * count or a budget, where a negative number is meaningless. */
+            struct spg_text_span digits   = value->span;
+            bool                 negative = false;
+            if (digits.length > 0u && input[digits.offset] == '-') {
+                negative = true;
+                digits.offset += 1u;
+                digits.length -= 1u;
+            }
+            uint64_t magnitude = 0u;
+            if (value->kind != SPG_SEXPR_NODE_SYMBOL || digits.length == 0u ||
+                spg_sexpr_parse_uint64_span(input_n, input, digits,
+                                            &magnitude) != SPG_OK ||
+                magnitude > (uint64_t)INT64_MAX) {
+                reject(out, error, SPG_RECOMMENDATION_REJECT_WRONG_VALUE,
+                       SPG_E_SCHEMA, value_node, value->span.offset);
+                return SPG_OK;
+            }
+            rec.device_value = negative ? -(int64_t)magnitude
+                                        : (int64_t)magnitude;
+            rec.has_device_value = true;
+            break;
+        }
         case FIELD_USES_NETWORK:
             if (value->kind != SPG_SEXPR_NODE_SYMBOL ||
                 !parse_bool_symbol(input_n, input, value->span,

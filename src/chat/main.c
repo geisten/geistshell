@@ -343,6 +343,38 @@ static bool handle_memory_command(struct spg_mem_store *mem, bool have_mem,
     return false;
 }
 
+/* The one gate on agent_run: printed proposal, y/N from the terminal. The
+ * model never sees this exchange — only "declined" or the run's exit. */
+static bool agent_confirm(void *userdata, const char *config_path) {
+    (void)userdata;
+    printf("assistant> (agent_run wants to launch: %s)\nconfirm [y/N]> ",
+           config_path);
+    fflush(stdout);
+    char answer[16];
+    if (fgets(answer, sizeof answer, stdin) == nullptr) {
+        return false;
+    }
+    return answer[0] == 'y' || answer[0] == 'Y';
+}
+
+/* $GEISTSHELL_BIN wins; otherwise the geistshell binary next to this one
+ * (both land in the same bin/ directory), falling back to $PATH lookup being
+ * someone else's problem — execl gets a plain name and fails visibly. */
+static void resolve_agent_bin(const char *argv0, char *buf, const size_t cap) {
+    const char *env = getenv("GEISTSHELL_BIN");
+    if (env != nullptr && env[0] != '\0') {
+        (void)snprintf(buf, cap, "%s", env);
+        return;
+    }
+    const char *slash = strrchr(argv0, '/');
+    if (slash != nullptr) {
+        (void)snprintf(buf, cap, "%.*s/geistshell", (int)(slash - argv0),
+                       argv0);
+    } else {
+        (void)snprintf(buf, cap, "geistshell");
+    }
+}
+
 int main(int argc, char **argv) {
     struct chat_args args = {};
     const int        pa   = parse_args(argc, argv, &args);
@@ -394,8 +426,16 @@ int main(int argc, char **argv) {
         journal_ptr  = &journal;
     }
 
+    char agent_bin[PATH_MAX];
+    resolve_agent_bin(argv[0], agent_bin, sizeof agent_bin);
+    const struct spg_chat_agent_launcher launcher = {
+        .agent_bin = agent_bin,
+        .confirm   = agent_confirm,
+    };
+
     puts("geistshell-chat ready. /quit, /reset, /memories, /recall <slug>, "
-         "/remember <slug> <desc>, /forget <slug>.");
+         "/remember <slug> <desc>, /forget <slug>. The model may propose an "
+         "agent run; every launch asks you first.");
     char                    line[CHAT_LINE_BYTES];
     char                    output[CHAT_OUTPUT_BYTES];
     char                    history_buf[CHAT_HISTORY_BYTES];
@@ -481,6 +521,17 @@ int main(int argc, char **argv) {
                         "[tool_result]\nexit 0\nDarwin\n"
                         "model: This system's kernel is Darwin.\n\n");
                 }
+                {
+                    const size_t o = strlen(composed);
+                    (void)snprintf(
+                        composed + o, sizeof composed - o,
+                        "[tools+] You may propose a governed agent run from an "
+                        "existing run config. Reply with EXACTLY (tool "
+                        "agent_run (config \"<run.spg>\")) and nothing else. "
+                        "The operator confirms every launch at the terminal "
+                        "before anything runs; a declined launch returns as "
+                        "[tool_result] and is final for this turn.\n\n");
+                }
                 index_injected = true;
             }
             if (pending[0] != '\0') {
@@ -528,7 +579,7 @@ int main(int argc, char **argv) {
             static char tool_result[CHAT_OUTPUT_BYTES];
             bool        was_tool = false;
             (void)spg_chat_tool_dispatch(&mem, journal_ptr, args.allow_exec,
-                                         strlen(output), output,
+                                         &launcher, strlen(output), output,
                                          sizeof tool_result, tool_result,
                                          &was_tool);
             if (!was_tool) {

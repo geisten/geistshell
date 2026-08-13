@@ -709,18 +709,37 @@ static void render_machine(const struct spg_context_sources *sources,
             append_cstr(state, "\n");
         }
     }
-    if (sources->machine == nullptr) {
+    /* Not an early return: a plant run needs no host telemetry at all, and
+     * skipping the block below with it would leave that agent blind. */
+    if (sources->machine != nullptr) {
+        char   block[SPG_MACHINE_RENDER_CAP];
+        size_t required = 0u;
+        if (spg_machine_state_render_masked(sources->machine,
+                                            sources->machine_ablate,
+                                            sizeof block, block,
+                                            &required) == SPG_OK) {
+            /* A failure cannot happen at this capacity; emitting nothing beats
+             * emitting a truncated form the model would misread. */
+            append_cstr(state, block);
+            append_cstr(state, "\n");
+        }
+    }
+
+    /* The plant after the host: the machine geistshell runs ON, then the
+     * machine it is driving. Rendered by the module that owns the format, for
+     * the same reason as the block above — one definition, not a second copy
+     * here. */
+    if (sources->device_state == nullptr || sources->device_state->n == 0u) {
         return;
     }
-    char   block[SPG_MACHINE_RENDER_CAP];
-    size_t required = 0u;
-    if (spg_machine_state_render_masked(sources->machine,
-                                        sources->machine_ablate, sizeof block,
-                                        block, &required) != SPG_OK) {
-        return; /* cannot happen at this capacity; emitting nothing beats
-                 * emitting a truncated form the model would misread */
+    char   plant[SPG_DEVICE_RENDER_CAP];
+    size_t plant_required = 0u;
+    if (spg_device_state_render(sources->device_state, sizeof plant, plant,
+                                &plant_required) != SPG_OK) {
+        return; /* cannot happen at this capacity; nothing beats a truncated
+                 * form the model would misread as a complete plant */
     }
-    append_cstr(state, block);
+    append_cstr(state, plant);
     append_cstr(state, "\n");
 }
 

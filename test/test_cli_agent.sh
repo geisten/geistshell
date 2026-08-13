@@ -39,12 +39,19 @@ echo "$V" | grep -q "verified=true"
 echo "$V" | grep -q "status_failures=0"
 echo "$V" | grep -q "event.action=1"
 
-# --- two runs produce byte-identical journals (logical timestamps) ---
-cp "$T/j.sgj" "$T/j_first.sgj"
+# --- two runs are deterministic in everything but perception ---
+# The model input carries a live (machine-state ...) block, so its bytes vary
+# run to run — that is measurement, not nondeterminism. Everything else
+# (sequence, parents, logical timestamps, actions, outcomes) must be
+# byte-identical; a wall clock or an unstable ordering would show here.
+"$SPG_BIN" replay "$T/j.sgj" | grep -v '"event":"model_input"' \
+    > "$T/timeline_first.jsonl"
 rm "$T/j.sgj"
 "$SPG_BIN" agent --config "$T/run.spg" --fake-script "$T/script.txt" \
     --allow-exec --max-steps 5 >/dev/null 2>&1
-cmp "$T/j_first.sgj" "$T/j.sgj"
+"$SPG_BIN" replay "$T/j.sgj" | grep -v '"event":"model_input"' \
+    > "$T/timeline_second.jsonl"
+cmp "$T/timeline_first.jsonl" "$T/timeline_second.jsonl"
 
 # --- without --allow-exec the boundary denies, but the loop still finishes ---
 rm "$T/j.sgj"

@@ -1,3 +1,4 @@
+#include "geistshell/device_executor.h"
 #include "geistshell/orchestrator.h"
 
 #include <string.h>
@@ -99,6 +100,8 @@ spg_orchestrator_stage_to_string(const enum spg_orchestrator_stage stage) {
         return "shell_executed";
     case SPG_ORCHESTRATOR_STAGE_MACHINE_EXECUTED:
         return "machine_executed";
+    case SPG_ORCHESTRATOR_STAGE_DEVICE_EXECUTED:
+        return "device_executed";
     }
     return "unknown";
 }
@@ -208,6 +211,7 @@ spg_orchestrator_tick(struct spg_orchestrator_state           *state,
         .goal                 = state->goal,
         .directive            = state->directive,
         .machine              = state->machine,
+        .device_state         = state->device_state,
         .machine_goal         = state->machine_goal,
         .profile              = state->profile_model,
         .machine_ablate       = state->machine_ablate,
@@ -325,6 +329,31 @@ spg_orchestrator_tick(struct spg_orchestrator_state           *state,
             return status;
         }
         result->stage = SPG_ORCHESTRATOR_STAGE_MEMORY_EXECUTED;
+        return SPG_OK;
+    }
+
+    if (result->recommendation.action_kind == SPG_ACTION_DEVICE_WRITE) {
+        const struct spg_device_executor_state device_state = {
+            .device  = state->device,
+            .journal = state->journal,
+        };
+        const struct spg_device_executor_config device_config = {
+            .actor_id        = config->actor_id,
+            .timestamp_ns    = config->timestamp_ns,
+            .parent_sequence = result->policy_gate.policy_sequence != 0u
+                                   ? result->policy_gate.policy_sequence
+                                   : policy_config.parent_sequence,
+            .write_journal   = config->write_journal,
+            .execution_enabled = config->execution_enabled,
+        };
+        status = spg_device_executor_step(
+            &device_state, &device_config, result->actor.model_output_n,
+            workspace->actor.model_output, &result->recommendation,
+            &result->policy_gate.decision, &result->device);
+        if (status != SPG_OK) {
+            return status;
+        }
+        result->stage = SPG_ORCHESTRATOR_STAGE_DEVICE_EXECUTED;
         return SPG_OK;
     }
 

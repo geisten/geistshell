@@ -4,6 +4,7 @@
 #include "geistshell/context.h"
 #include "geistshell/graph.h"
 #include "geistshell/journal.h"
+#include "geistshell/device.h"
 #include "geistshell/machine_state.h"
 #include "geistshell/model_profile.h"
 #include "geistshell/memory.h"
@@ -44,6 +45,9 @@ struct spg_actor_state {
     /* Optional machine snapshot for the context (roadmap phase 3). */
     const struct spg_machine_state *machine;
     const struct spg_machine_goal  *machine_goal;
+    /* Optional plant readings for the context. Null = none, and the
+     * context is byte-identical to before this existed. */
+    const struct spg_device_state *device_state;
     /* How to speak to this model (#54). Null = the bare context, which is what
      * every model got before profiles existed. */
     const struct spg_model_profile *profile;

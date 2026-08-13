@@ -40,8 +40,10 @@ if [ -z "$PORT" ]; then
     exit 1
 fi
 
-CH="--channel temp:0:-400:9000:r --channel heater:1:0:100:w"
-CH="$CH --channel tripped:3:0:1:r --channel reset:4:0:1:w"
+# The heater's safe value is 0: on loss of contact the vessel stops being
+# heated. Declaring it is mandatory, so this string cannot omit the decision.
+CH="--channel temp:0:-400:9000:r --channel heater:1:0:100:w:0"
+CH="$CH --channel tripped:3:0:1:r --channel reset:4:0:1:w:0"
 
 dev() {
     # shellcheck disable=SC2086
@@ -107,3 +109,48 @@ dev write reset 1 >/dev/null || fail "reset rejected"
 [ "$(dev read tripped | value_of)" = "0" ] || fail "reset did not clear the trip"
 
 echo "test_cli_device: PASS"
+
+# --- the agent action, end to end -------------------------------------------
+# The point of this block is that nothing between the model output and the
+# plant is stubbed: a recommendation goes through the policy gate, the device
+# executor and the Modbus client, and the simulated vessel gets warmer.
+FAKE=build/test-cli-device-fake.txt
+printf '(recommend (kind device_write) (capability "device") (cost 1) (uses_network false) (confidence_bp 9000) (target "heater") (value 40) (reason "warm the vessel"))\n(recommend (kind finish) (reason "done"))\n' >"$FAKE"
+
+AGENT_CH="--device-channel heater:1:0:100:w:0 --device-channel temp:0:-400:9000:r"
+
+# Without the capability the write must be denied — default deny is the whole
+# reason an irreversible action is tolerable at all.
+# shellcheck disable=SC2086
+"$SPG_BIN" agent --config examples/run.spg --fake-script "$FAKE" --max-steps 2 \
+    --allow-exec --device-host 127.0.0.1 --device-port "$PORT" $AGENT_CH \
+    >/dev/null 2>&1 || true
+[ "$(dev read heater | value_of)" = "0" ] ||
+    fail "a policy without the device capability still moved the machine"
+
+# With it, the plant actually responds.
+# shellcheck disable=SC2086
+"$SPG_BIN" agent --config examples/device/run.spg --fake-script "$FAKE" \
+    --max-steps 2 --allow-exec --device-host 127.0.0.1 --device-port "$PORT" \
+    $AGENT_CH >/dev/null || fail "agent run failed"
+
+[ "$(dev read heater | value_of)" = "40" ] ||
+    fail "the agent's device_write did not reach the machine"
+strings build/device-demo.sgj | grep -q '(outcome written)' ||
+    fail "the write is missing from the journal"
+
+# The readings the decision was made ON, not just the action it produced. The
+# context is journaled whole as MODEL_INPUT, so a (device-state ...) block in
+# the prompt IS the audit record — a replay that shows what the agent did but
+# not what it saw is half a record.
+strings build/device-demo.sgj | grep -q '(device-state (heater 0) (temp 200))' ||
+    fail "the plant readings never reached the journaled context"
+
+# And the loop actually closes: the context AFTER the write shows the plant the
+# write left behind, not the one the decision was made on. Without the
+# post-action re-sample both blocks would read (heater 0) and the agent would
+# steer for the rest of the run on a snapshot it had already invalidated.
+strings build/device-demo.sgj | grep -q '(device-state (heater 40) (temp 200))' ||
+    fail "the context was not re-sampled after the write"
+
+echo "test_cli_device: PASS (agent action)"

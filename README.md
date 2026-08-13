@@ -22,10 +22,14 @@ merging them would weaken both.
 | Action space | open — any command the policy gate + OS sandbox allow | closed — an off-list tool name never runs |
 | Output model | incremental (`poll()`-drained stdout/stderr, journaled) | one atomic `tool.result` per call |
 | Learning | built-in eval-gated self-improvement loop (`improve`) | offline skill miner over the same gate |
-| Use it for | "write a script, run it, watch the output, react" | "turn on the hallway light", bounded device control |
+| Use it for | "write a script, run it, watch the output, react" | "turn on the hallway light" |
 
 Rule of thumb: **bounded tool-calling → geistagent; open action execution →
 geistshell.**
+
+Device control is the exception that proves the rule: geistshell drives real
+machines through a *closed* channel table (range-checked, safe-valued,
+watchdogged) rather than its open action space — see Devices below.
 
 ```
 make            # build (host-debug: ASan/UBSan, strict warnings)
@@ -71,8 +75,15 @@ flowchart TB
     subgraph EXE["Governed executors"]
         SH["shell — OS sandbox: fork+exec, setrlimit, process-group, boundary"]
         MEM["memory — mind-palace save/read/delete"]
+        DEV["device — channel table: range · safe value · watchdog"]
+        MP["machine — process pause/resume, identity re-checked"]
         SIM["simulator"]
         FIN["finish (terminal)"]
+    end
+
+    subgraph PORT["Machine port — no protocol inside geistshell"]
+        XC["exec transport — execve(prog[, value]), one integer on stdout"]
+        XC --> P2["any program: shell · i2c · mqtt · http · sysfs · modbus tool · MCP bridge"]
     end
 
     subgraph INF["Inference (external, swappable)"]
@@ -94,6 +105,8 @@ flowchart TB
     GATEP -. reads .-> POL
     MEM --> PAL
     ACT -. "index injected into context" .-> PAL
+    DEV --> XC
+    XC -. "sampled per step → (device-state …)" .-> ACT
 ```
 
 ### The three loops
@@ -105,8 +118,8 @@ decodes one model reply. That reply is parsed into a typed *recommendation*
 (an s‑expression: `(recommend (kind …) (capability …) …)`). The *policy gate*
 then decides ALLOW/DENY against capabilities and budgets — this stage is
 mandatory and cannot be bypassed. An allowed action is dispatched to exactly one
-executor (simulator, memory, local‑shell, or the `finish` control action), and
-every step is written to the journal.
+executor (simulator, memory, local‑shell, machine‑process, device, or the
+`finish` control action), and every step is written to the journal.
 
 **2. The agent loop** (`spg_agent_loop`) drives ticks to termination. Each step's
 result becomes an *observation* fed into the next step's context, and the full
@@ -123,6 +136,60 @@ template). It persists the lesson tentatively into the mind‑palace,
 re‑evaluates, and **keeps the lesson only if the pass count did not drop** —
 otherwise it reverts. The eval harness is the acceptance gate for the agent's
 own self‑modifications.
+
+### Devices — the machine port
+
+geistshell drives real machines and contains **no device protocol**. The entire
+vocabulary is a *channel*: a name, a range, and — for a writable one — the value
+it goes to when contact is lost. A new machine is a new table, not new code.
+
+Underneath the channel sits exactly one transport, and it is the Unix one:
+
+```
+read:   execve(prog)             → one integer on stdout, exit 0
+write:  execve(prog, "<value>")  → exit 0 accepts it
+```
+
+That is the whole contract. A sensor is a program that prints a number; an
+actuator is a program that takes one. I²C, MQTT, HTTP, a `cat` on sysfs, an MCP
+bridge, Modbus — all of it is somebody's program, none of it is geistshell's
+code. The value the model chose is passed as its own `argv` entry and never
+through a shell, so there is no command string anyone could forget to quote.
+
+What stays *inside* geistshell is everything that has to be checked:
+
+- **Range means refusal, not clamping.** An out-of-range setpoint is rejected
+  (`SPG_E_LIMIT`) before a process is ever started — clamping executes a
+  near-miss of an already-wrong command.
+- **Every writable channel declares a safe value**, and the watchdog drives the
+  plant there when contact is lost. `safe_state` attempts *all* channels and
+  reports the first failure: a plant stopped halfway to safe is worse than
+  either end.
+- **`device` is its own capability**, separate from `machine_process` — granting
+  the right to pause a runaway process never silently grants the right to open a
+  valve.
+- **Every outcome is journaled, refusals included.** For an irreversible action
+  the record of what was *not* done counts as much as the record of what was.
+
+Readings are **pulled**, once per tick, next to the host telemetry — no daemon,
+no socket, no signal. Push would make the value depend on *when* the sensor
+wrote (killing byte-identical replay), let a foreign process decide when
+geistshell is interrupted, and turn a dead sensor into silence that is
+indistinguishable from an unchanged value. An event too short for one tick is a
+*latching* sensor program's job, not a push channel's.
+
+Why not MCP: the local model produces valid actions because `grammar_mask.c`
+masks the decoder per token against a small, start-time-known vocabulary.
+Arbitrary JSON-Schema tools would require a schema→token-mask compiler to keep
+that property, and the range/safe checks would move out of tested C into the
+server. An MCP server is reachable as a **bridge program** on an exec channel
+instead — geistshell never learns JSON-RPC.
+
+See [docs/machine-intelligence/Devices.md](docs/machine-intelligence/Devices.md)
+for the full contract, the s-expression channel config, and the migration order.
+Current state: the channel table, range/safe/watchdog and
+`SPG_ACTION_DEVICE_WRITE` ship; the transport is still hard-wired Modbus TCP and
+the `(device-state …)` context block is not built yet.
 
 ### Evaluation (`geistshell eval` / `improve`)
 
@@ -282,7 +349,12 @@ geistshell is arguably **ahead** of them.
   test model. On the local Gemma the agent does not actually get smarter; the one
   remaining real‑world lever is a stronger / function‑calling model, which the
   swappable adapter already supports.
-- **Ecosystem.** No MCP bridge, a small tool set, no streaming; v0.1.0.
+- **Ecosystem.** A small tool set, no streaming; v0.1.0. No MCP *client* either
+  — and that one is a decision, not a gap: arbitrary JSON-Schema tools would
+  cost the constrained decoder the small local model depends on, and would move
+  the range/safe checks out of tested C. An MCP server is reachable as a bridge
+  program on an exec channel (see Devices), so the capability is available
+  without the subsystem.
 
 ### Honest positioning
 
@@ -323,6 +395,7 @@ the same governed loop** rather than compete on local‑model capability.
 | `src/actor/`, `src/context/`            | perception: context assembly + recommendation parsing  |
 | `src/policy/`, `src/executor/`          | policy gate + execution boundary                       |
 | `src/exec/`                             | sandboxed command executor, shell executor, host probe |
+| `src/device/`, `src/machine/`           | machine port: channel table + transport; host telemetry |
 | `src/memory/`                           | mind‑palace store + memory executor                    |
 | `src/sim/`                              | security simulator + risk model                        |
 | `src/eval/`, `src/improve/`             | evaluation harness + self‑improvement loop             |

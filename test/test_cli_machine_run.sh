@@ -28,7 +28,7 @@ pause_script() {
 run_agent() {
     rm -f "$JOURNAL"
     "$SPG_BIN" agent --config examples/machine-run.spg --fake-script "$SCRIPT" \
-        --machine --process-profile "$PROFILE" --allow-exec --max-steps 3
+        --process-profile "$PROFILE" --allow-exec --max-steps 3
 }
 
 CHILD=""

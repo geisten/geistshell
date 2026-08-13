@@ -150,11 +150,11 @@ AGENT_OUT="$WORKDIR/agent.out"
 # say so rather than the experiment vanishing.
 if [ "$MODEL" = "fake" ]; then
     "$SPG_BIN" agent --config "$WORKDIR/run.spg" \
-        --fake-script "$WORKDIR/script.txt" --machine \
+        --fake-script "$WORKDIR/script.txt" \
         --process-profile "$WORKDIR/profile.spg" --allow-exec \
         --machine-settle-ms 1500 --max-steps 4 >"$AGENT_OUT" 2>&1 || AGENT_STATUS=$?
 else
-    "$SPG_BIN" agent --config "$WORKDIR/run.spg" --machine \
+    "$SPG_BIN" agent --config "$WORKDIR/run.spg" \
         --process-profile "$WORKDIR/profile.spg" --allow-exec \
         --machine-settle-ms 1500 --constrained --max-steps 4 >"$AGENT_OUT" 2>&1 || AGENT_STATUS=$?
 fi

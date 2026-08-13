@@ -67,6 +67,11 @@ enum spg_scaffold_seg_kind {
     SPG_SCAFFOLD_LITERAL = 0, /* emit `literal` verbatim */
     SPG_SCAFFOLD_STRING,      /* one free-decoded string value */
     SPG_SCAFFOLD_CAPABILITY,  /* one string value masked to the policy caps */
+    /* one bare integer, digits and an optional leading minus. Needed because
+     * every number in the scaffold used to be a literal — cost and confidence
+     * are fixed, so the decoder never had to produce one. A device setpoint is
+     * the first number the model actually chooses. */
+    SPG_SCAFFOLD_NUMBER,
 };
 
 struct spg_scaffold_seg {

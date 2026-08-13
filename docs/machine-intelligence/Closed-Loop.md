@@ -40,7 +40,7 @@ haben — das wäre eine Folge von Entscheidungen, kein Loop.
 
 ## Trajektorie eines echten Laufs
 
-Pi 5, echtes `sleep` als `batch_job`, `--machine --process-profile --allow-exec`:
+Pi 5, echtes `sleep` als `batch_job`, `--process-profile --allow-exec`:
 
 ```
 seq=1   model_input       Context mit dem Zustand VOR der Aktion

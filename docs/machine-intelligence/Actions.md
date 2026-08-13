@@ -123,7 +123,7 @@ können. Der Bypass-Test in Phase 7 (#67) hängt daran.
 
 ```
 geistshell agent --config examples/machine-run.spg \
-  --machine --process-profile <profil.spg> --allow-exec
+  --process-profile <profil.spg> --allow-exec
 ```
 
 Ohne `--process-profile` ist nichts gemanagt und jede Machine Action wird

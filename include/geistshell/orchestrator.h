@@ -2,6 +2,7 @@
 #define GEISTSHELL_ORCHESTRATOR_H
 
 #include "geistshell/actor.h"
+#include "geistshell/device_executor.h"
 #include "geistshell/machine_executor.h"
 #include "geistshell/mem_executor.h"
 #include "geistshell/policy_gate.h"
@@ -31,6 +32,7 @@ enum spg_orchestrator_stage {
     SPG_ORCHESTRATOR_STAGE_MEMORY_EXECUTED,
     SPG_ORCHESTRATOR_STAGE_SHELL_EXECUTED,
     SPG_ORCHESTRATOR_STAGE_MACHINE_EXECUTED,
+    SPG_ORCHESTRATOR_STAGE_DEVICE_EXECUTED,
 };
 
 struct spg_orchestrator_state {
@@ -45,6 +47,14 @@ struct spg_orchestrator_state {
      * decision was made on. Still one snapshot, not a second loop. */
     struct spg_machine_state         *machine;
     const struct spg_process_profile *profile;
+    /* Optional attached machine for device_write. Null means no machine is
+     * reachable from this run, which is a normal outcome and not an error:
+     * the executor records SPG_DEVICE_OUTCOME_NO_DEVICE and the run goes on. */
+    struct spg_device *device;
+    /* Optional plant readings for the context. Mutable for the same reason
+     * as `machine`: the loop re-samples between ticks so the next decision
+     * reads the plant the last action left behind. */
+    struct spg_device_state *device_state;
     /* Optional second snapshot, installed after the first executed action
      * (phase 7). A scripted eval needs the world to change deterministically;
      * a live run refreshes from the host instead. Null = the snapshot stays
@@ -157,6 +167,7 @@ struct spg_orchestrator_result {
     struct spg_mem_executor_result   memory;
     struct spg_shell_executor_result   shell;
     struct spg_machine_executor_result machine_action;
+    struct spg_device_executor_result  device;
 };
 
 [[nodiscard]] enum spg_status
