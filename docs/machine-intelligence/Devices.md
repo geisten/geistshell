@@ -3,12 +3,13 @@
 Der erste Aktuator, der tatsächlich etwas bewegt — und die Grenze, an der
 geistshell aufhört, etwas über Maschinen zu wissen.
 
-> **Stand.** Die Kanaltabelle, die Bereichsprüfung, der sichere Wert, der
-> Watchdog, `SPG_ACTION_DEVICE_WRITE` und der Sensorrückweg
-> (`(device-state …)` im Kontext) sind gebaut. Der Transport in
-> `src/device/device.c` ist heute noch **fest verdrahtetes Modbus TCP** —
-> dieses Dokument beschreibt den `exec`-Kanal, der ihn ablöst, und dessen
-> Konfigurationsform. Beides ist Entwurf, nicht Code.
+> **Stand.** Alles hier ist gebaut: die Kanaltabelle, die Bereichsprüfung,
+> der sichere Wert, der Watchdog, `SPG_ACTION_DEVICE_WRITE`, der
+> Sensorrückweg (`(device-state …)` im Kontext), der `exec`-Transport und
+> die `(device …)`-Konfigurationsform. Modbus TCP ist aus dem Kern entfernt —
+> ersatzlos, wie unten begründet; `heater.py` und `gym_bridge.py` sprechen
+> den `exec`-Kanal, ein echtes Modbus-Gerät erreicht man über einen
+> mbpoll-Wrapper (`examples/machine/openplc/setup.sh`).
 
 ## Die Portgrenze: der Kanal
 
@@ -173,7 +174,8 @@ nachträglich geprüft. Der Preis ist benannt: ein `(safe …)` an einem Sensor
 macht ihn still schreibbar. Der Bereich begrenzt ihn weiterhin, und ein Sensor
 mit einem sicheren Wert ist ein Tippfehler, den ein Review sieht.
 
-`--device-channel` bleibt für Einzeiler und Tests bestehen.
+`--device-channel` bleibt für Einzeiler und Tests bestehen — es nimmt
+dieselbe `(channel …)`-Form als ein Argument, kein zweites Format.
 
 ## Bereich heißt Ablehnung, nicht Klemmung
 

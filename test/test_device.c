@@ -1,47 +1,118 @@
-/* Everything here runs without a socket. That is the design constraint, not a
- * convenience: the refusals below are the safety layer, and a safety layer
- * that needs a machine plugged in to be exercised is one that gets tested on
- * the day it is needed. */
+/* Every refusal here runs without a single fork. That is the design
+ * constraint, not a convenience: the refusals below are the safety layer, and
+ * a safety layer that needs a program to exist before it is exercised is one
+ * that gets tested on the day it is needed.
+ *
+ * The exec contract itself is tested with real scripts in a temp dir — a
+ * sensor is a program that prints a number, and the cheapest honest test of
+ * that sentence is a program that prints a number. */
+
+#define _POSIX_C_SOURCE 200809L
+#if defined(__APPLE__)
+#    define _DARWIN_C_SOURCE 1
+#endif
 
 #include "geistshell/device.h"
 
 #include <stdio.h>
+#include <stdlib.h>
 #include <string.h>
+#include <sys/stat.h>
+#include <unistd.h>
 
 #define LIT(s) (sizeof(s) - 1u), (s)
+
+/* Write an executable script and return 0 on success. */
+static int write_script(const char *dir, const char *name, const char *body,
+                        char out_path[], const size_t cap) {
+    (void)snprintf(out_path, cap, "%s/%s", dir, name);
+    FILE *f = fopen(out_path, "wb");
+    if (f == nullptr) {
+        return 1;
+    }
+    (void)fputs("#!/bin/sh\n", f);
+    (void)fputs(body, f);
+    (void)fclose(f);
+    return chmod(out_path, 0755) == 0 ? 0 : 1;
+}
 
 static int test_parse_channel(void) {
     struct spg_device_channel channel = {};
 
-    if (spg_device_parse_channel(LIT("heater:1:0:100:w:0"), &channel) !=
-        SPG_OK) {
+    if (spg_device_parse_channel(
+            LIT("(channel (name \"heater\") (program \"/opt/p/heater\") "
+                "(range 0 100) (safe 0))"),
+            &channel) != SPG_OK) {
         return 1;
     }
-    if (strcmp(channel.name, "heater") != 0 || channel.reg != 1u ||
-        channel.min != 0 || channel.max != 100 || !channel.writable) {
+    if (strcmp(channel.name, "heater") != 0 ||
+        strcmp(channel.program, "/opt/p/heater") != 0 || channel.min != 0 ||
+        channel.max != 100 || !channel.writable || channel.safe != 0) {
         return 1;
     }
 
-    if (spg_device_parse_channel(LIT("temp:0:-400:9000:r"), &channel) !=
-            SPG_OK ||
+    /* No (safe ...) means read-only — one statement, not two. */
+    if (spg_device_parse_channel(
+            LIT("(channel (name \"temp\") (program \"/opt/p/temp\") "
+                "(range -400 9000))"),
+            &channel) != SPG_OK ||
         channel.min != -400 || channel.writable) {
         return 1;
     }
 
-    /* Rejected: no name to address, a range that is inside out, a mode that is
-     * neither r nor w, a missing field, and trailing text. The last one
-     * matters most — "heater:1:0:100:write" silently parsing as writable would
-     * accept an operator's typo as permission. */
+    /* Rejected: a missing name, program or range, a range with one bound, an
+     * unknown field. The last one matters most — (writeable ...) silently
+     * ignored would accept an operator's typo as a decision. */
     const char *bad[] = {
-        ":1:0:100:w",           "heater:1:100:0:w",       "heater:1:0:100:x",
-        "heater:1:0:w",         "heater:1:0:100:w extra", "heater:1:0:100:",
-        "heater:70000:0:100:w",
+        "(channel (program \"/p\") (range 0 1))",
+        "(channel (name \"x\") (range 0 1))",
+        "(channel (name \"x\") (program \"/p\"))",
+        "(channel (name \"x\") (program \"/p\") (range 0))",
+        "(channel (name \"x\") (program \"/p\") (range 0 1) (writeable 1))",
+        "(kanal (name \"x\") (program \"/p\") (range 0 1))",
+        "not a form at all",
     };
     for (size_t i = 0u; i < sizeof bad / sizeof bad[0]; i += 1u) {
         if (spg_device_parse_channel(strlen(bad[i]), bad[i], &channel) ==
             SPG_OK) {
+            (void)fprintf(stderr, "  accepted: %s\n", bad[i]);
             return 1;
         }
+    }
+    return 0;
+}
+
+static int test_load(void) {
+    struct spg_device dev = {};
+    spg_device_init(&dev);
+    const char *table =
+        "(device\n"
+        "  (channel (name \"temp\")   (program \"/p/temp\")"
+        " (range -400 9000))\n"
+        "  (channel (name \"heater\") (program \"/p/heater\")"
+        " (range 0 100) (safe 0)))\n";
+    size_t bad = 99u;
+    if (spg_device_load(strlen(table), table, &dev, &bad) != SPG_OK ||
+        dev.n_channels != 2u || bad != 99u) {
+        return 1;
+    }
+    if (spg_device_find(&dev, "heater") == nullptr ||
+        !spg_device_find(&dev, "heater")->writable) {
+        return 1;
+    }
+
+    /* The second channel is broken (range inside out): the load reports WHICH
+     * form failed, because "invalid config" on a 30-channel table is a
+     * treasure hunt. */
+    struct spg_device dev2 = {};
+    spg_device_init(&dev2);
+    const char *broken =
+        "(device\n"
+        "  (channel (name \"a\") (program \"/p/a\") (range 0 1))\n"
+        "  (channel (name \"b\") (program \"/p/b\") (range 9 1)))\n";
+    if (spg_device_load(strlen(broken), broken, &dev2, &bad) == SPG_OK ||
+        bad != 1u) {
+        return 1;
     }
     return 0;
 }
@@ -49,26 +120,31 @@ static int test_parse_channel(void) {
 static int test_table(void) {
     struct spg_device dev = {};
     spg_device_init(&dev);
-    if (dev.fd != -1 || dev.n_channels != 0u) {
+    if (dev.n_channels != 0u) {
         return 1;
     }
 
     struct spg_device_channel heater = {.name     = "heater",
-                                        .reg      = 1u,
+                                        .program  = "/p/heater",
                                         .min      = 0,
                                         .max      = 100,
                                         .writable = true,
                                         .safe     = 0};
     struct spg_device_channel temp   = {
-        .name = "temp", .reg = 0u, .min = -400, .max = 9000};
+        .name = "temp", .program = "/p/temp", .min = -400, .max = 9000};
 
     if (spg_device_add_channel(&dev, &heater) != SPG_OK ||
         spg_device_add_channel(&dev, &temp) != SPG_OK) {
         return 1;
     }
-    /* A duplicate name would make a write land on whichever register the table
+    /* A duplicate name would make a write land on whichever program the table
      * happened to list first. */
     if (spg_device_add_channel(&dev, &heater) == SPG_OK) {
+        return 1;
+    }
+    /* A channel without a program is a channel that cannot answer. */
+    struct spg_device_channel silent = {.name = "mute", .max = 1};
+    if (spg_device_add_channel(&dev, &silent) == SPG_OK) {
         return 1;
     }
     if (spg_device_find(&dev, "heater") == nullptr ||
@@ -79,7 +155,7 @@ static int test_table(void) {
     struct spg_device full = {};
     spg_device_init(&full);
     for (size_t i = 0u; i < SPG_DEVICE_MAX_CHANNELS; i += 1u) {
-        struct spg_device_channel ch = {.reg = (uint16_t)i, .max = 1};
+        struct spg_device_channel ch = {.program = "/p/x", .max = 1};
         ch.name[0]                   = 'a';
         ch.name[1]                   = (char)('0' + (int)(i % 10u));
         ch.name[2]                   = (char)('0' + (int)(i / 10u));
@@ -87,28 +163,31 @@ static int test_table(void) {
             return 1;
         }
     }
-    struct spg_device_channel overflow = {.name = "zz", .max = 1};
+    struct spg_device_channel overflow = {.name = "zz", .program = "/p/x",
+                                          .max  = 1};
     if (spg_device_add_channel(&full, &overflow) != SPG_E_LIMIT) {
         return 1;
     }
     return 0;
 }
 
-/* The refusals, all reached with fd == -1. If any of these ever returns
- * SPG_E_INVALID_STATE instead of its own code, the check has drifted back
- * behind the connection test and stopped being testable. */
+/* The refusals, all decided before any fork. If any of these ever returns
+ * SPG_E_IO instead of its own code, the check has drifted behind the exec
+ * and stopped being testable without a program. */
 static int test_write_refusals(void) {
     struct spg_device dev = {};
     spg_device_init(&dev);
 
     struct spg_device_channel heater = {.name     = "heater",
-                                        .reg      = 1u,
+                                        .program  = "/nonexistent/heater",
                                         .min      = 0,
                                         .max      = 100,
                                         .writable = true,
                                         .safe     = 0};
-    struct spg_device_channel temp   = {
-        .name = "temp", .reg = 0u, .min = -400, .max = 9000};
+    struct spg_device_channel temp   = {.name    = "temp",
+                                        .program = "/nonexistent/temp",
+                                        .min     = -400,
+                                        .max     = 9000};
     if (spg_device_add_channel(&dev, &heater) != SPG_OK ||
         spg_device_add_channel(&dev, &temp) != SPG_OK) {
         return 1;
@@ -125,71 +204,126 @@ static int test_write_refusals(void) {
         spg_device_write(&dev, "heater", -1) != SPG_E_LIMIT) {
         return 1;
     }
-    /* In range, so it gets past every refusal and only then finds no socket. */
-    if (spg_device_write(&dev, "heater", 100) != SPG_E_INVALID_STATE) {
+    /* In range, so it gets past every refusal and only then finds that the
+     * program does not exist. */
+    if (spg_device_write(&dev, "heater", 100) != SPG_E_IO) {
         return 1;
     }
     return 0;
 }
 
-static int test_codec(void) {
-    uint8_t frame[SPG_MODBUS_FRAME_CAP] = {};
-
-    if (spg_modbus_encode_read(0x1234u, 7u, 0x0102u, frame) != 12u) {
+/* The exec contract with real programs: a number on stdout is a reading, a
+ * value as argv[1] is a write, and everything else is a failure that never
+ * becomes a 0. */
+static int test_exec_contract(void) {
+    char dir[] = "/tmp/spg_device_XXXXXX";
+    if (mkdtemp(dir) == nullptr) {
         return 1;
     }
-    /* Big-endian on the wire whatever the host is. Spelled out byte by byte
-     * because that is the whole property being checked. */
-    const uint8_t expect_read[12] = {0x12, 0x34, 0x00, 0x00, 0x00, 0x06,
-                                     0x07, 0x03, 0x01, 0x02, 0x00, 0x01};
-    if (memcmp(frame, expect_read, sizeof expect_read) != 0) {
+    char temp_prog[256], fail_prog[256], text_prog[256];
+    char heater_prog[256], liar_prog[256], heater_file[256];
+    (void)snprintf(heater_file, sizeof heater_file, "%s/heater.value", dir);
+    if (write_script(dir, "temp", "echo 2350\n", temp_prog,
+                     sizeof temp_prog) != 0 ||
+        write_script(dir, "fail", "exit 3\n", fail_prog,
+                     sizeof fail_prog) != 0 ||
+        write_script(dir, "text", "echo warm\n", text_prog,
+                     sizeof text_prog) != 0 ||
+        write_script(dir, "liar", "echo 39\n", liar_prog,
+                     sizeof liar_prog) != 0) {
         return 1;
     }
-
-    if (spg_modbus_encode_write(1u, 1u, 1u, 60u, frame) != 12u) {
-        return 1;
-    }
-    const uint8_t expect_write[12] = {0x00, 0x01, 0x00, 0x00, 0x00, 0x06,
-                                      0x01, 0x06, 0x00, 0x01, 0x00, 0x3c};
-    if (memcmp(frame, expect_write, sizeof expect_write) != 0) {
-        return 1;
-    }
-
-    uint16_t value = 0u;
-    /* A read response carrying 235 — 23.5 C in tenths. */
-    const uint8_t response[11] = {0x00, 0x05, 0x00, 0x00, 0x00, 0x05,
-                                  0x01, 0x03, 0x02, 0x00, 0xeb};
-    if (spg_modbus_decode(sizeof response, response, 5u, &value) != SPG_OK ||
-        value != 235u) {
+    char heater_body[512];
+    (void)snprintf(heater_body, sizeof heater_body,
+                   "printf %%s \"$1\" > %s\necho \"$1\"\n", heater_file);
+    if (write_script(dir, "heater", heater_body, heater_prog,
+                     sizeof heater_prog) != 0) {
         return 1;
     }
 
-    /* Somebody else's reply. Accepting it would attribute one machine's
-     * reading to another on a gateway-fronted bus. */
-    if (spg_modbus_decode(sizeof response, response, 6u, &value) !=
-        SPG_E_REPLAY_MISMATCH) {
+    struct spg_device dev = {};
+    spg_device_init(&dev);
+    struct spg_device_channel ch = {.name = "temp", .min = -400, .max = 9000};
+    (void)snprintf(ch.program, sizeof ch.program, "%s", temp_prog);
+    if (spg_device_add_channel(&dev, &ch) != SPG_OK) {
+        return 1;
+    }
+    ch = (struct spg_device_channel){.name = "broken", .min = 0, .max = 1};
+    (void)snprintf(ch.program, sizeof ch.program, "%s", fail_prog);
+    if (spg_device_add_channel(&dev, &ch) != SPG_OK) {
+        return 1;
+    }
+    ch = (struct spg_device_channel){.name = "chatty", .min = 0, .max = 1};
+    (void)snprintf(ch.program, sizeof ch.program, "%s", text_prog);
+    if (spg_device_add_channel(&dev, &ch) != SPG_OK) {
+        return 1;
+    }
+    ch = (struct spg_device_channel){
+        .name = "heater", .min = 0, .max = 100, .writable = true, .safe = 0};
+    (void)snprintf(ch.program, sizeof ch.program, "%s", heater_prog);
+    if (spg_device_add_channel(&dev, &ch) != SPG_OK) {
+        return 1;
+    }
+    ch = (struct spg_device_channel){
+        .name = "lying", .min = 0, .max = 100, .writable = true, .safe = 0};
+    (void)snprintf(ch.program, sizeof ch.program, "%s", liar_prog);
+    if (spg_device_add_channel(&dev, &ch) != SPG_OK) {
         return 1;
     }
 
-    /* Exception response: function | 0x80. The device refused. */
-    const uint8_t refusal[9] = {0x00, 0x05, 0x00, 0x00, 0x00,
-                                0x03, 0x01, 0x83, 0x02};
-    if (spg_modbus_decode(sizeof refusal, refusal, 5u, &value) != SPG_E_IO) {
+    /* A reading is the printed number, and it counts as contact. */
+    int64_t value = 0;
+    if (spg_device_read(&dev, "temp", &value) != SPG_OK || value != 2350 ||
+        !dev.contact_pending) {
+        return 1;
+    }
+    /* Exit != 0 and non-numeric output are failures; value stays untouched. */
+    value = 777;
+    if (spg_device_read(&dev, "broken", &value) != SPG_E_IO || value != 777) {
+        return 1;
+    }
+    if (spg_device_read(&dev, "chatty", &value) != SPG_E_FORMAT ||
+        value != 777) {
         return 1;
     }
 
-    /* Truncated frames must not be read past their end. */
-    for (size_t n = 0u; n < sizeof response; n += 1u) {
-        uint16_t ignored = 0u;
-        if (spg_modbus_decode(n, response, 5u, &ignored) == SPG_OK) {
-            return 1;
+    /* A write hands the value as argv[1] — the machine got exactly 40. */
+    if (spg_device_write(&dev, "heater", 40) != SPG_OK) {
+        return 1;
+    }
+    char  file_content[16] = {};
+    FILE *f                = fopen(heater_file, "rb");
+    if (f == nullptr ||
+        fread(file_content, 1u, sizeof file_content - 1u, f) == 0u) {
+        if (f != nullptr) {
+            (void)fclose(f);
         }
+        return 1;
+    }
+    (void)fclose(f);
+    if (strcmp(file_content, "40") != 0) {
+        (void)fprintf(stderr, "  heater got: %s\n", file_content);
+        return 1;
+    }
+    /* A device that acknowledges a different value than it was told is a
+     * failed write, not a warning. */
+    if (spg_device_write(&dev, "lying", 40) != SPG_E_IO) {
+        return 1;
+    }
+
+    /* A mixed sample: the dead sensors render unknown, the live ones their
+     * value, and the first failure is reported without blinding the rest. */
+    struct spg_device_state state = {};
+    if (spg_device_sample(&dev, &state) == SPG_OK || state.n != 5u) {
+        return 1;
+    }
+    if (!state.readings[0].known || state.readings[0].value != 2350 ||
+        state.readings[1].known || state.readings[2].known) {
+        return 1;
     }
     return 0;
 }
 
-/* Time is injected, so the whole watchdog is exercised without waiting for
- * anything and without a clock that could make the test flaky. */
 static int test_watchdog(void) {
     struct spg_device dev = {};
     spg_device_init(&dev);
@@ -236,39 +370,62 @@ static int test_watchdog(void) {
 }
 
 static int test_safe_state(void) {
+    char dir[] = "/tmp/spg_device_XXXXXX";
+    if (mkdtemp(dir) == nullptr) {
+        return 1;
+    }
+    char heater_prog[256], heater_file[256];
+    (void)snprintf(heater_file, sizeof heater_file, "%s/heater.value", dir);
+    char body[512];
+    (void)snprintf(body, sizeof body, "printf %%s \"$1\" > %s\n", heater_file);
+    if (write_script(dir, "heater", body, heater_prog, sizeof heater_prog) !=
+        0) {
+        return 1;
+    }
+
     struct spg_device dev = {};
     spg_device_init(&dev);
-
-    struct spg_device_channel heater = {.name     = "heater",
-                                        .reg      = 1u,
-                                        .min      = 0,
-                                        .max      = 100,
-                                        .writable = true,
-                                        .safe     = 0};
-    struct spg_device_channel valve  = {.name     = "valve",
-                                        .reg      = 2u,
-                                        .min      = 0,
-                                        .max      = 1,
-                                        .writable = true,
-                                        .safe     = 1};
-    struct spg_device_channel temp   = {
-        .name = "temp", .reg = 0u, .min = -400, .max = 9000};
-    if (spg_device_add_channel(&dev, &heater) != SPG_OK ||
-        spg_device_add_channel(&dev, &valve) != SPG_OK ||
+    /* Deliberate order: the unreachable valve FIRST, so the test fails if one
+     * failure aborts the channels after it. */
+    struct spg_device_channel valve = {.name     = "valve",
+                                       .program  = "/nonexistent/valve",
+                                       .min      = 0,
+                                       .max      = 1,
+                                       .writable = true,
+                                       .safe     = 1};
+    struct spg_device_channel heater = {
+        .name = "heater", .min = 0, .max = 100, .writable = true, .safe = 0};
+    (void)snprintf(heater.program, sizeof heater.program, "%s", heater_prog);
+    struct spg_device_channel temp = {
+        .name = "temp", .program = "/nonexistent/temp", .min = -400,
+        .max  = 9000};
+    if (spg_device_add_channel(&dev, &valve) != SPG_OK ||
+        spg_device_add_channel(&dev, &heater) != SPG_OK ||
         spg_device_add_channel(&dev, &temp) != SPG_OK) {
         return 1;
     }
 
-    /* With no socket every write fails, which is exactly the case that must
-     * not stop after the first one. The first failure is reported. */
-    if (spg_device_safe_state(&dev) != SPG_E_INVALID_STATE) {
+    /* The valve fails, the heater still lands on its safe value, and the
+     * first failure is what the caller hears. */
+    if (spg_device_safe_state(&dev) != SPG_E_IO) {
         return 1;
     }
+    char  file_content[16] = {};
+    FILE *f                = fopen(heater_file, "rb");
+    if (f == nullptr ||
+        fread(file_content, 1u, sizeof file_content - 1u, f) == 0u ||
+        strcmp(file_content, "0") != 0) {
+        if (f != nullptr) {
+            (void)fclose(f);
+        }
+        return 1;
+    }
+    (void)fclose(f);
 
     /* A safe value the channel would refuse is rejected when the table is
      * built, not discovered when the watchdog fires. */
     struct spg_device_channel impossible = {.name     = "bad",
-                                            .reg      = 9u,
+                                            .program  = "/p/bad",
                                             .min      = 0,
                                             .max      = 10,
                                             .writable = true,
@@ -278,8 +435,6 @@ static int test_safe_state(void) {
     }
     return 0;
 }
-
-/* --- what the agent sees ---------------------------------------------- */
 
 static int test_state_render(void) {
     struct spg_device_state state = {
@@ -322,19 +477,20 @@ static int test_state_render(void) {
     return 0;
 }
 
-static int test_sample_without_machine(void) {
-    /* Every refusal above the socket is testable with fd == -1, and so is
-     * this: a sample with nothing connected yields one unknown reading per
-     * channel rather than an empty block. An agent must be able to tell "the
-     * plant is unreachable" from "the plant has no channels". */
+static int test_sample_unreachable(void) {
+    /* A sample of a plant whose programs are gone yields one unknown reading
+     * per channel rather than an empty block. An agent must be able to tell
+     * "the plant is unreachable" from "the plant has no channels". */
     struct spg_device dev = {};
     spg_device_init(&dev);
-    const struct spg_device_channel temp = {
-        .name = "temp", .reg = 0u, .min = -400, .max = 9000};
-    const struct spg_device_channel heater = {.name     = "heater",
-                                              .reg      = 1u,
-                                              .min      = 0,
-                                              .max      = 100,
+    const struct spg_device_channel temp = {.name    = "temp",
+                                            .program = "/nonexistent/temp",
+                                            .min     = -400,
+                                            .max     = 9000};
+    const struct spg_device_channel heater = {.name    = "heater",
+                                              .program = "/nonexistent/heater",
+                                              .min     = 0,
+                                              .max     = 100,
                                               .writable = true,
                                               .safe     = 0};
     if (spg_device_add_channel(&dev, &temp) != SPG_OK ||
@@ -342,7 +498,7 @@ static int test_sample_without_machine(void) {
         return 1;
     }
     struct spg_device_state state = {};
-    if (spg_device_sample(&dev, &state) != SPG_E_INVALID_STATE) {
+    if (spg_device_sample(&dev, &state) != SPG_E_IO) {
         return 1;
     }
     if (state.n != 2u || state.readings[0].known || state.readings[1].known) {
@@ -367,13 +523,14 @@ int main(void) {
         int (*fn)(void);
     } cases[] = {
         {"parse_channel", test_parse_channel},
+        {"load", test_load},
         {"table", test_table},
         {"write_refusals", test_write_refusals},
-        {"codec", test_codec},
+        {"exec_contract", test_exec_contract},
         {"watchdog", test_watchdog},
         {"safe_state", test_safe_state},
         {"state_render", test_state_render},
-        {"sample_without_machine", test_sample_without_machine},
+        {"sample_unreachable", test_sample_unreachable},
     };
     for (size_t i = 0u; i < sizeof cases / sizeof cases[0]; i += 1u) {
         if (cases[i].fn() != 0) {

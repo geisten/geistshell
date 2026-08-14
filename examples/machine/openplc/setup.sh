@@ -38,10 +38,32 @@ done
 curl -s -b "$C" -o /dev/null http://127.0.0.1:"$WEB"/start_plc
 rm -f "$C"
 
+# geistshell spricht kein Modbus mehr — ein Kanal ist ein Programm. Für einen
+# Modbus-Endpunkt heißt das: ein Wrapper um ein vorhandenes Werkzeug (mbpoll),
+# einmal geschrieben, nie in diesem Repo gepflegt.
+mkdir -p build/openplc
+cat >build/openplc/qw0 <<WRAP
+#!/bin/sh
+# %QW0 auf dem OpenPLC-Runtime: ohne Argument lesen, mit Argument schreiben.
+if [ \$# -eq 0 ]; then
+    mbpoll -0 -1 -q -p $MODBUS -a 1 -r 0 -t 4 127.0.0.1 | awk '/\[0\]:/ {print \$2}'
+else
+    mbpoll -0 -1 -q -p $MODBUS -a 1 -r 0 -t 4 127.0.0.1 -- "\$1" >/dev/null
+fi
+WRAP
+chmod 0755 build/openplc/qw0
+cat >build/openplc/plant.spg <<CFG
+(device
+  (channel (name "qw0") (program "$PWD/build/openplc/qw0")
+           (range 0 1000) (safe 0)))
+CFG
+
 cat <<EOF
 OpenPLC läuft.  Web http://127.0.0.1:$WEB (openplc/openplc), Modbus $MODBUS
 
-  geistshell device --port $MODBUS --channel qw0:0:0:1000:w:0 read qw0
+  geistshell device --config build/openplc/plant.spg read qw0
+
+(braucht mbpoll: brew install mbpoll / apt install mbpoll)
 
 Adressabbildung (aus webserver/core/modbus.cpp, nicht aus einem Blogpost):
   %QW0..1023   Holding-Register 0..1023      FC3/FC6  -> erreichbar

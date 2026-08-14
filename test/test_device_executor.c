@@ -1,8 +1,9 @@
 /* The executor's decision table, without a machine and without a journal.
  *
- * Every outcome here is reachable with fd == -1, which is the point: the
- * checks that make an irreversible action tolerable must be exercisable on a
- * developer's laptop, not only against real hardware. */
+ * Every outcome here is reachable with a channel program that does not exist,
+ * which is the point: the checks that make an irreversible action tolerable
+ * must be exercisable on a developer's laptop, not only against real
+ * hardware. */
 
 #include "geistshell/device_executor.h"
 
@@ -17,7 +18,7 @@ static const struct spg_text_span SPAN_NOSUCH = {.offset = 7u, .length = 6u};
 static void build_device(struct spg_device *dev) {
     spg_device_init(dev);
     const struct spg_device_channel heater = {.name     = "heater",
-                                              .reg      = 1u,
+                                              .program  = "/nonexistent/heater",
                                               .min      = 0,
                                               .max      = 100,
                                               .writable = true,
@@ -92,9 +93,9 @@ static int test_refused_out_of_range(void) {
     struct spg_device                 dev = {};
     struct spg_device_executor_result out = {};
     build_device(&dev);
-    /* 150 is outside 0..100, so it is refused by the table before the socket
-     * is ever consulted — which is why this returns REFUSED and not
-     * IO_FAILED even though nothing is connected. */
+    /* 150 is outside 0..100, so it is refused by the table before any fork —
+     * which is why this returns REFUSED and not IO_FAILED even though the
+     * program does not exist. */
     if (run(&dev, 150, SPAN_HEATER, true, 0u, &out) != SPG_OK ||
         out.outcome != SPG_DEVICE_OUTCOME_REFUSED ||
         out.write_status != SPG_E_LIMIT) {
@@ -111,9 +112,9 @@ static int test_watchdog_precedes_the_write(void) {
     build_device(&dev);
     spg_device_arm_watchdog(&dev, 1000u, 0u);
 
-    /* Inside the deadline: the watchdog does not interfere. With no socket the
-     * write fails as I/O, which is exactly what distinguishes this from the
-     * expired case below. */
+    /* Inside the deadline: the watchdog does not interfere. With no program
+     * the write fails as I/O, which is exactly what distinguishes this from
+     * the expired case below. */
     if (run(&dev, 50, SPAN_HEATER, true, 500u, &out) != SPG_OK ||
         out.outcome != SPG_DEVICE_OUTCOME_IO_FAILED || out.safe_state_driven) {
         return 1;
