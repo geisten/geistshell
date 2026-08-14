@@ -33,7 +33,7 @@ jobs:
 
           # The deployment target (Raspberry Pi 5 is ARM64 Linux). This is the
           # only leg where the /proc + signal tests execute at all, so it is the
-          # one that must not skip.
+          # one where a SKIP(host) is a failure.
           - name: Linux arm64
             runner: ubuntu-24.04-arm
             expect_skips: none
@@ -89,18 +89,20 @@ jobs:
           set -o pipefail
           make ${{ runner.os == 'Linux' && 'HOST_CC=gcc-14' || '' }} test | tee test.log
 
-      # A run whose Linux-only tests all stepped aside must not look like a run
-      # where they passed. On macOS a skip is expected and fine; on Linux it
-      # means the thing under test did not run.
-      - name: No silent skips
+      # A run whose HOST-GATED tests stepped aside must not look like a run where
+      # they passed. Only that class is checked: a test that skips because an
+      # optional artefact is missing — a GGUF, python3, a built gym env, a
+      # REMOTE=1 binary — is legitimate on every platform, and counting those
+      # too is what turned main red the first time this ran there.
+      - name: No silent host skips
         run: |
           summary=$(grep '^test summary:' test.log || true)
           echo "$summary"
           [ -n "$summary" ] || { echo "::error::make test printed no summary"; exit 1; }
-          skipped=$(printf '%s' "$summary" | sed 's/.*skipped=//')
-          if [ "${{ matrix.expect_skips }}" = "none" ] && [ "$skipped" != "0" ]; then
-            echo "::error::$skipped test(s) skipped on a platform where they should run"
-            grep ': SKIP' test.log || true
+          host_skipped=$(printf '%s' "$summary" | sed 's/.*host_skipped=//')
+          if [ "${{ matrix.expect_skips }}" = "none" ] && [ "$host_skipped" != "0" ]; then
+            echo "::error::$host_skipped host-gated test(s) skipped on a platform that can run them"
+            grep ': SKIP(host)' test.log || true
             exit 1
           fi
 

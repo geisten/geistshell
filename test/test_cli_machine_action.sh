@@ -12,7 +12,7 @@ set -eu
 BIN=${SPG_MACHINE_PROBE:-${TEST_DIR:-build/host-debug/test}/machine_action_probe}
 
 if [ ! -x "$BIN" ]; then
-    echo "test_cli_machine_action: SKIP (probe not built)"
+    echo "test_cli_machine_action: SKIP(host) (probe not built)"
     exit 0
 fi
 
