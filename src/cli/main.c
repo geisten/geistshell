@@ -58,6 +58,7 @@ struct file_buffer {
 };
 
 static void            free_file_buffer(struct file_buffer *buffer);
+static enum spg_status read_file(const char *path, struct file_buffer *out);
 static enum spg_status load_policy_file(const char               *path,
                                         struct file_buffer       *policy_text,
                                         struct spg_policy_config *policy);
@@ -1090,7 +1091,7 @@ done:
     return status;
 }
 
-/* Read and write a real machine over Modbus TCP.
+/* Read and write a real machine through its channel programs.
  *
  * A CLI command rather than an agent action, and in that order on purpose: the
  * fan of phase 15 existed as an action in the policy, the grammar mask and this
@@ -1098,18 +1099,19 @@ done:
  * executor first and a model-reachable action only once it demonstrably moves
  * something.
  *
- *   geistshell device --host H --port P \
- *       --channel temp:0:-400:9000:r --channel heater:1:0:100:w \
+ *   geistshell device --config plant.spg \
+ *       [--channel '(channel (name "x") (program "p") (range 0 100))'] \
  *       read temp | write heater 60 | list
  */
 static void print_device_usage(const char *argv0) {
     fprintf(stderr,
-            "usage: %s device [--host H] [--port P] "
-            "--channel name:reg:min:max:{r|w} ... <read NAME|write NAME "
+            "usage: %s device [--config <device.spg>] "
+            "[--channel '(channel ...)'] ... <read NAME|write NAME "
             "VALUE|list>\n\n"
-            "Channels are declared per invocation. The range is a refusal "
-            "bound, not a\nclamp: an out-of-range write is rejected and "
-            "nothing is sent.\n",
+            "A channel runs its (program ...): no argument to read one "
+            "integer from\nstdout, the value as the single argument to "
+            "write. The range is a refusal\nbound, not a clamp: an "
+            "out-of-range write is rejected and nothing runs.\n",
             argv0);
 }
 
@@ -1117,19 +1119,22 @@ static int device_command(const int argc, char **argv) {
     struct spg_device dev = {};
     spg_device_init(&dev);
 
-    const char *host = "127.0.0.1";
-    long        port = 502;
-    int         i    = 2;
+    int i = 2;
     for (; i < argc; i += 1) {
-        if (strcmp(argv[i], "--host") == 0 && i + 1 < argc) {
-            host = argv[i + 1];
-            i += 1;
-        } else if (strcmp(argv[i], "--port") == 0 && i + 1 < argc) {
-            char *end = nullptr;
-            port      = strtol(argv[i + 1], &end, 10);
-            if (end == argv[i + 1] || *end != '\0' || port < 1 ||
-                port > 65535) {
-                fprintf(stderr, "device: bad port: %s\n", argv[i + 1]);
+        if (strcmp(argv[i], "--config") == 0 && i + 1 < argc) {
+            struct file_buffer text = {};
+            if (read_file(argv[i + 1], &text) != SPG_OK) {
+                fprintf(stderr, "device: cannot read config %s\n",
+                        argv[i + 1]);
+                return 2;
+            }
+            size_t                bad    = 0u;
+            const enum spg_status status =
+                spg_device_load(text.n, text.data, &dev, &bad);
+            free_file_buffer(&text);
+            if (status != SPG_OK) {
+                fprintf(stderr, "device: invalid config %s: %s (channel %zu)\n",
+                        argv[i + 1], spg_status_to_string(status), bad);
                 return 2;
             }
             i += 1;
@@ -1159,10 +1164,14 @@ static int device_command(const int argc, char **argv) {
     if (strcmp(argv[i], "list") == 0) {
         for (size_t c = 0u; c < dev.n_channels; c += 1u) {
             const struct spg_device_channel *ch = &dev.channels[c];
-            printf("(channel (name \"%s\") (reg %u) (min %lld) (max %lld) "
-                   "(mode %s))\n",
-                   ch->name, (unsigned)ch->reg, (long long)ch->min,
-                   (long long)ch->max, ch->writable ? "w" : "r");
+            printf("(channel (name \"%s\") (program \"%s\") "
+                   "(range %lld %lld)",
+                   ch->name, ch->program, (long long)ch->min,
+                   (long long)ch->max);
+            if (ch->writable) {
+                printf(" (safe %lld)", (long long)ch->safe);
+            }
+            printf(")\n");
         }
         return 0;
     }
@@ -1202,14 +1211,8 @@ static int device_command(const int argc, char **argv) {
         }
     }
 
-    enum spg_status status = spg_device_connect(&dev, host, (uint16_t)port);
-    if (status != SPG_OK) {
-        fprintf(stderr, "device: connect %s:%ld failed: %s\n", host, port,
-                spg_status_to_string(status));
-        return 1;
-    }
-
-    int exit_code = 0;
+    int             exit_code = 0;
+    enum spg_status status    = SPG_OK;
     if (is_read) {
         int64_t reading = 0;
         status          = spg_device_read(&dev, name, &reading);
@@ -1232,7 +1235,6 @@ static int device_command(const int argc, char **argv) {
             exit_code = 1;
         }
     }
-    spg_device_close(&dev);
     return exit_code;
 }
 
@@ -2070,9 +2072,7 @@ static int agent_command(int argc, char **argv) {
     /* Attached machine (device_write). Declared per run: a channel table is
      * the operator saying what this agent may move, which is not something a
      * model or a runtime-discovered config should be able to widen. */
-    struct spg_device device      = {};
-    const char       *device_host = nullptr;
-    long              device_port = 502;
+    struct spg_device device = {};
     /* In STEPS, not milliseconds: this loop's injected clock is `step + 1`.
      * Two means the machine may miss one decision's worth of contact before
      * it is driven to its safe state. */
@@ -2159,17 +2159,21 @@ static int agent_command(int argc, char **argv) {
             i += 1;
             continue;
         }
-        if (strcmp(argv[i], "--device-host") == 0 && i + 1 < argc) {
-            device_host = argv[i + 1];
-            i += 1;
-            continue;
-        }
-        if (strcmp(argv[i], "--device-port") == 0 && i + 1 < argc) {
-            char *end   = nullptr;
-            device_port = strtol(argv[i + 1], &end, 10);
-            if (end == argv[i + 1] || *end != '\0' || device_port < 1 ||
-                device_port > 65535) {
-                fprintf(stderr, "agent: bad --device-port: %s\n", argv[i + 1]);
+        if (strcmp(argv[i], "--device") == 0 && i + 1 < argc) {
+            struct file_buffer device_text = {};
+            if (read_file(argv[i + 1], &device_text) != SPG_OK) {
+                fprintf(stderr, "agent: cannot read device config %s\n",
+                        argv[i + 1]);
+                return 2;
+            }
+            size_t                bad     = 0u;
+            const enum spg_status dstatus = spg_device_load(
+                device_text.n, device_text.data, &device, &bad);
+            free_file_buffer(&device_text);
+            if (dstatus != SPG_OK) {
+                fprintf(stderr, "agent: invalid device config %s: %s"
+                                " (channel %zu)\n",
+                        argv[i + 1], spg_status_to_string(dstatus), bad);
                 return 2;
             }
             i += 1;
@@ -2510,21 +2514,11 @@ static int agent_command(int argc, char **argv) {
         fprintf(stderr, "agent: host telemetry unavailable; the machine block"
                         " renders unknown\n");
     }
-    if (device_host != nullptr) {
-        if (device.n_channels == 0u) {
-            fprintf(stderr, "agent: --device-host without any --device-channel;"
-                            " a machine with no declared channels can only be"
-                            " refused\n");
-            return 2;
-        }
-        const enum spg_status dst =
-            spg_device_connect(&device, device_host, (uint16_t)device_port);
-        if (dst != SPG_OK) {
-            fprintf(stderr, "agent: device %s:%ld unreachable: %s\n",
-                    device_host, device_port, spg_status_to_string(dst));
-            return 1;
-        }
-        /* Armed against the same injected clock the ticks use — a step
+    if (device.n_channels > 0u) {
+        /* No connect step: the first sample IS the connectivity probe. A
+         * channel table is the intent; the programs answer or render unknown.
+         *
+         * Armed against the same injected clock the ticks use — a step
          * counter starting at 1 — so a replay reaches the same watchdog
          * verdict the live run did. */
         spg_device_arm_watchdog(&device, device_watchdog_steps, 0u);
@@ -2566,8 +2560,8 @@ static int agent_command(int argc, char **argv) {
          * never declared what it may touch may not touch anything. */
         .profile      = profile_path != nullptr ? &profile : nullptr,
         .pause_ledger = &pause_ledger,
-        .device       = device_host != nullptr ? &device : nullptr,
-        .device_state = device_host != nullptr ? &device_state : nullptr,
+        .device       = device.n_channels > 0u ? &device : nullptr,
+        .device_state = device.n_channels > 0u ? &device_state : nullptr,
     };
     const struct spg_agent_run_config rcfg = {
         .max_steps   = max_steps,

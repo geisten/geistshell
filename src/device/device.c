@@ -1,19 +1,24 @@
-/* Modbus TCP client and the channel table it drives.
+/* The channel table and the one transport under it: a program.
  *
  * Split in three parts, in order of how testable they are: the table (pure),
- * the wire codec (pure), the socket (not). Everything that decides anything
- * lives in the first two. */
+ * the config form (pure), the exec (bounded by spg_cmd_executor_run).
+ * Everything that decides anything lives in the first two — every refusal is
+ * made before a fork, so all of it runs in tests where no program exists. */
 
 #include "geistshell/device.h"
 
-#include <arpa/inet.h>
-#include <errno.h>
-#include <netdb.h>
+#include "geistshell/cmd_executor.h"
+#include "geistshell/sexpr.h"
+
 #include <stdio.h>
+#include <stdlib.h>
 #include <string.h>
-#include <sys/socket.h>
-#include <sys/time.h>
-#include <unistd.h>
+
+/* Enough for a full (device ...) table of 32 channels; a config that needs
+ * more than this is not a config, it is a program. Stack, not heap — the
+ * no-allocation discipline of the rest of the codebase. */
+#define DEVICE_TOKENS 1024u
+#define DEVICE_NODES  512u
 
 /* --- The table -------------------------------------------------------- */
 
@@ -21,7 +26,7 @@ void spg_device_init(struct spg_device *dev) {
     if (dev == nullptr) {
         return;
     }
-    *dev = (struct spg_device){.fd = -1, .txn = 0u, .n_channels = 0u};
+    *dev = (struct spg_device){.n_channels = 0u};
 }
 
 enum spg_status
@@ -30,7 +35,8 @@ spg_device_add_channel(struct spg_device               *dev,
     if (dev == nullptr || channel == nullptr) {
         return SPG_E_INVALID_ARG;
     }
-    if (channel->name[0] == '\0' || channel->min > channel->max) {
+    if (channel->name[0] == '\0' || channel->program[0] == '\0' ||
+        channel->min > channel->max) {
         return SPG_E_INVALID_ARG;
     }
     if (channel->writable &&
@@ -41,7 +47,7 @@ spg_device_add_channel(struct spg_device               *dev,
     }
     if (spg_device_find(dev, channel->name) != nullptr) {
         /* Two channels under one name means a write could reach either
-         * register depending on table order. Refuse the table instead. */
+         * program depending on table order. Refuse the table instead. */
         return SPG_E_INVALID_ARG;
     }
     if (dev->n_channels >= SPG_DEVICE_MAX_CHANNELS) {
@@ -65,181 +71,303 @@ const struct spg_device_channel *spg_device_find(const struct spg_device *dev,
     return nullptr;
 }
 
-/* Read one ':'-delimited field as a signed integer. Returns the offset just
- * past the field, or 0 on malformed input. */
-static size_t scan_int(size_t n, const char text[], size_t at, int64_t *out) {
-    if (at >= n) {
-        return 0u;
+/* --- The config form --------------------------------------------------- */
+
+/* Parse a signed integer that spans a whole symbol node. */
+static bool span_to_i64(const size_t input_n, const char input[],
+                        const struct spg_text_span span, int64_t *out) {
+    if (span.length == 0u || span.length >= 24u ||
+        span.offset > input_n || span.length > input_n - span.offset) {
+        return false;
     }
-    bool negative = false;
-    if (text[at] == '-') {
-        negative = true;
-        at += 1u;
+    char buffer[24];
+    memcpy(buffer, input + span.offset, span.length);
+    buffer[span.length] = '\0';
+    char         *end   = nullptr;
+    const int64_t value = (int64_t)strtoll(buffer, &end, 10);
+    if (end != buffer + span.length) {
+        return false;
     }
-    int64_t value = 0;
-    size_t  start = at;
-    for (; at < n && text[at] >= '0' && text[at] <= '9'; at += 1u) {
-        if (value > (INT64_MAX - (text[at] - '0')) / 10) {
-            return 0u; /* an overflowing bound is not a bound */
+    *out = value;
+    return true;
+}
+
+static bool span_to_text(const size_t input_n, const char input[],
+                         const struct spg_text_span span, const size_t cap,
+                         char out[]) {
+    if (span.length == 0u || span.length + 1u > cap ||
+        span.offset > input_n || span.length > input_n - span.offset) {
+        return false;
+    }
+    memcpy(out, input + span.offset, span.length);
+    out[span.length] = '\0';
+    return true;
+}
+
+/* One (channel ...) node into a channel struct. (safe ...) present means
+ * writable — see device.h for why that is one statement, not two. */
+static enum spg_status
+parse_channel_node(const size_t input_n, const char input[],
+                   const struct spg_sexpr_node nodes[], const uint32_t channel,
+                   struct spg_device_channel *out) {
+    *out           = (struct spg_device_channel){};
+    bool has_name  = false;
+    bool has_prog  = false;
+    bool has_range = false;
+
+    const uint32_t head = spg_sexpr_first_child(nodes, channel);
+    if (head == SPG_SEXPR_INVALID_INDEX ||
+        nodes[head].kind != SPG_SEXPR_NODE_SYMBOL ||
+        !spg_sexpr_span_eq_cstr(input_n, input, nodes[head].span, "channel")) {
+        return SPG_E_SCHEMA;
+    }
+    for (uint32_t field = nodes[head].next_sibling;
+         field != SPG_SEXPR_INVALID_INDEX; field = nodes[field].next_sibling) {
+        if (nodes[field].kind != SPG_SEXPR_NODE_LIST) {
+            return SPG_E_SCHEMA;
         }
-        value = value * 10 + (text[at] - '0');
+        const uint32_t key   = spg_sexpr_first_child(nodes, field);
+        const uint32_t value = spg_sexpr_second_child(nodes, field);
+        if (key == SPG_SEXPR_INVALID_INDEX ||
+            value == SPG_SEXPR_INVALID_INDEX ||
+            nodes[key].kind != SPG_SEXPR_NODE_SYMBOL) {
+            return SPG_E_SCHEMA;
+        }
+        if (spg_sexpr_span_eq_cstr(input_n, input, nodes[key].span, "name")) {
+            struct spg_text_span payload = {};
+            if (nodes[value].kind != SPG_SEXPR_NODE_STRING ||
+                !spg_sexpr_string_payload_span(&nodes[value], &payload) ||
+                !span_to_text(input_n, input, payload, SPG_DEVICE_NAME_CAP,
+                              out->name)) {
+                return SPG_E_SCHEMA;
+            }
+            has_name = true;
+        } else if (spg_sexpr_span_eq_cstr(input_n, input, nodes[key].span,
+                                          "program")) {
+            struct spg_text_span payload = {};
+            if (nodes[value].kind != SPG_SEXPR_NODE_STRING ||
+                !spg_sexpr_string_payload_span(&nodes[value], &payload) ||
+                !span_to_text(input_n, input, payload, SPG_DEVICE_PROGRAM_CAP,
+                              out->program)) {
+                return SPG_E_SCHEMA;
+            }
+            has_prog = true;
+        } else if (spg_sexpr_span_eq_cstr(input_n, input, nodes[key].span,
+                                          "range")) {
+            const uint32_t hi = nodes[value].next_sibling;
+            if (nodes[value].kind != SPG_SEXPR_NODE_SYMBOL ||
+                hi == SPG_SEXPR_INVALID_INDEX ||
+                nodes[hi].kind != SPG_SEXPR_NODE_SYMBOL ||
+                !span_to_i64(input_n, input, nodes[value].span, &out->min) ||
+                !span_to_i64(input_n, input, nodes[hi].span, &out->max)) {
+                return SPG_E_SCHEMA;
+            }
+            has_range = true;
+        } else if (spg_sexpr_span_eq_cstr(input_n, input, nodes[key].span,
+                                          "safe")) {
+            if (nodes[value].kind != SPG_SEXPR_NODE_SYMBOL ||
+                !span_to_i64(input_n, input, nodes[value].span, &out->safe)) {
+                return SPG_E_SCHEMA;
+            }
+            out->writable = true;
+        } else {
+            return SPG_E_SCHEMA; /* an unknown field is a misspelled field */
+        }
     }
-    if (at == start) {
-        return 0u;
+    if (!has_name || !has_prog || !has_range) {
+        return SPG_E_SCHEMA;
     }
-    *out = negative ? -value : value;
-    return at;
+    return SPG_OK;
 }
 
-static size_t skip_colon(size_t n, const char text[], size_t at) {
-    return (at < n && text[at] == ':') ? at + 1u : 0u;
-}
-
-enum spg_status spg_device_parse_channel(const size_t text_n, const char text[],
+enum spg_status spg_device_parse_channel(const size_t text_n,
+                                         const char   text[],
                                          struct spg_device_channel *out) {
     if (out == nullptr || (text_n > 0u && text == nullptr)) {
         return SPG_E_INVALID_ARG;
     }
-    *out = (struct spg_device_channel){};
+    struct spg_sexpr_token tokens[DEVICE_TOKENS];
+    struct spg_sexpr_node  nodes[DEVICE_NODES];
+    size_t                 token_count = 0u;
+    size_t                 node_count  = 0u;
+    struct spg_sexpr_error error       = {};
+    const enum spg_status  status =
+        spg_sexpr_parse_text(text_n, text, DEVICE_TOKENS, tokens, DEVICE_NODES,
+                             nodes, &token_count, &node_count, &error);
+    if (status != SPG_OK) {
+        return status;
+    }
+    if (node_count == 0u || nodes[0].kind != SPG_SEXPR_NODE_LIST) {
+        return SPG_E_SCHEMA;
+    }
+    return parse_channel_node(text_n, text, nodes, 0u, out);
+}
 
-    size_t at = 0u;
-    while (at < text_n && text[at] != ':') {
-        if (at + 1u >= SPG_DEVICE_NAME_CAP) {
-            return SPG_E_LIMIT;
+enum spg_status spg_device_load(const size_t text_n, const char text[],
+                                struct spg_device *dev, size_t *out_bad) {
+    if (dev == nullptr || (text_n > 0u && text == nullptr)) {
+        return SPG_E_INVALID_ARG;
+    }
+    struct spg_sexpr_token tokens[DEVICE_TOKENS];
+    struct spg_sexpr_node  nodes[DEVICE_NODES];
+    size_t                 token_count = 0u;
+    size_t                 node_count  = 0u;
+    struct spg_sexpr_error error       = {};
+    const enum spg_status  status =
+        spg_sexpr_parse_text(text_n, text, DEVICE_TOKENS, tokens, DEVICE_NODES,
+                             nodes, &token_count, &node_count, &error);
+    if (status != SPG_OK) {
+        return status;
+    }
+    if (node_count == 0u || nodes[0].kind != SPG_SEXPR_NODE_LIST) {
+        return SPG_E_SCHEMA;
+    }
+    const uint32_t head = spg_sexpr_first_child(nodes, 0u);
+    if (head == SPG_SEXPR_INVALID_INDEX ||
+        nodes[head].kind != SPG_SEXPR_NODE_SYMBOL ||
+        !spg_sexpr_span_eq_cstr(text_n, text, nodes[head].span, "device")) {
+        return SPG_E_SCHEMA;
+    }
+    size_t index = 0u;
+    for (uint32_t node = nodes[head].next_sibling;
+         node != SPG_SEXPR_INVALID_INDEX;
+         node = nodes[node].next_sibling, index += 1u) {
+        struct spg_device_channel channel = {};
+        enum spg_status           cstatus = SPG_E_SCHEMA;
+        if (nodes[node].kind == SPG_SEXPR_NODE_LIST) {
+            cstatus = parse_channel_node(text_n, text, nodes, node, &channel);
         }
-        out->name[at] = text[at];
-        at += 1u;
-    }
-    if (at == 0u) {
-        return SPG_E_FORMAT; /* an unnamed channel cannot be addressed */
-    }
-    out->name[at] = '\0';
-
-    int64_t reg = 0, min = 0, max = 0;
-    at = skip_colon(text_n, text, at);
-    if (at == 0u || (at = scan_int(text_n, text, at, &reg)) == 0u) {
-        return SPG_E_FORMAT;
-    }
-    at = skip_colon(text_n, text, at);
-    if (at == 0u || (at = scan_int(text_n, text, at, &min)) == 0u) {
-        return SPG_E_FORMAT;
-    }
-    at = skip_colon(text_n, text, at);
-    if (at == 0u || (at = scan_int(text_n, text, at, &max)) == 0u) {
-        return SPG_E_FORMAT;
-    }
-    at = skip_colon(text_n, text, at);
-    if (at == 0u || at >= text_n) {
-        return SPG_E_FORMAT;
-    }
-    if (text[at] == 'w') {
-        out->writable = true;
-    } else if (text[at] != 'r') {
-        return SPG_E_FORMAT;
-    }
-    at += 1u;
-
-    if (out->writable) {
-        /* Required, not optional. A writable channel with no declared safe
-         * value leaves the loss-of-contact decision to whatever the machine
-         * was last told, which is the state least likely to be safe. */
-        int64_t safe = 0;
-        at           = skip_colon(text_n, text, at);
-        if (at == 0u || (at = scan_int(text_n, text, at, &safe)) == 0u) {
-            return SPG_E_FORMAT;
+        if (cstatus == SPG_OK) {
+            cstatus = spg_device_add_channel(dev, &channel);
         }
-        out->safe = safe;
+        if (cstatus != SPG_OK) {
+            if (out_bad != nullptr) {
+                *out_bad = index;
+            }
+            return cstatus;
+        }
     }
-    if (at != text_n) {
-        return SPG_E_FORMAT; /* trailing text means the operator meant something
-                                this parser did not understand */
-    }
-    if (reg < 0 || reg > UINT16_MAX || min > max) {
-        return SPG_E_FORMAT;
-    }
-    if (out->writable && (out->safe < min || out->safe > max)) {
-        return SPG_E_FORMAT;
-    }
-    out->reg = (uint16_t)reg;
-    out->min = min;
-    out->max = max;
     return SPG_OK;
 }
 
-/* --- The wire --------------------------------------------------------- */
+/* --- The transport: one program --------------------------------------- */
 
-static void put_u16(uint8_t out[static 2], const uint16_t value) {
-    /* Written byte by byte rather than by casting a uint16_t*: Modbus is
-     * big-endian on the wire regardless of the host, and a cast would make the
-     * frame depend on the CPU it was built for. */
-    out[0] = (uint8_t)(value >> 8);
-    out[1] = (uint8_t)(value & 0xffu);
+/* Run the channel's program, bounded: SPG_DEVICE_TIMEOUT_MS, then the whole
+ * process group is killed — a silent machine must never stall the loop that
+ * governs it. stderr is captured and dropped here; the device executor is
+ * where failures become journal entries. */
+static enum spg_status run_program(const char *program, const char *argument,
+                                   const size_t stdout_cap,
+                                   char        stdout_buf[]) {
+    const char *argv[2] = {program, argument};
+    char        stderr_buf[256];
+    const struct spg_cmd_request request = {
+        .argc       = argument == nullptr ? 1u : 2u,
+        .argv       = argv,
+        .timeout_ms = (uint64_t)SPG_DEVICE_TIMEOUT_MS,
+        .limits     = SPG_CMD_DEFAULT_LIMITS,
+        .stdout_cap = stdout_cap,
+        .stdout_buf = stdout_buf,
+        .stderr_cap = sizeof stderr_buf,
+        .stderr_buf = stderr_buf,
+    };
+    struct spg_cmd_result result = {};
+    const enum spg_status status = spg_cmd_executor_run(1u, &request, &result);
+    if (status != SPG_OK || result.status != SPG_OK) {
+        return SPG_E_IO;
+    }
+    if (!result.started || !result.exited || result.exit_code != 0) {
+        return SPG_E_IO; /* covers the timeout: killed is not exited-0 */
+    }
+    return SPG_OK;
 }
 
-static uint16_t get_u16(const uint8_t in[static 2]) {
-    return (uint16_t)(((uint16_t)in[0] << 8) | (uint16_t)in[1]);
+/* One integer, optionally wrapped in whitespace — anything else on stdout is
+ * a program that did not keep the contract, and its number is not trusted. */
+static bool parse_output(const char text[], int64_t *out) {
+    const char *at = text;
+    while (*at == ' ' || *at == '\t' || *at == '\n' || *at == '\r') {
+        at += 1;
+    }
+    if (*at == '\0') {
+        return false;
+    }
+    char         *end   = nullptr;
+    const int64_t value = (int64_t)strtoll(at, &end, 10);
+    if (end == at) {
+        return false;
+    }
+    while (*end == ' ' || *end == '\t' || *end == '\n' || *end == '\r') {
+        end += 1;
+    }
+    if (*end != '\0') {
+        return false;
+    }
+    *out = value;
+    return true;
 }
 
-/* MBAP header: transaction(2) protocol(2) length(2) unit(1), then the PDU. */
-static size_t encode(const uint16_t txn, const uint16_t unit,
-                     const uint8_t function, const uint16_t reg,
-                     const uint16_t arg, uint8_t out[static 12]) {
-    put_u16(&out[0], txn);
-    put_u16(&out[2], 0u); /* protocol id: always 0 for Modbus */
-    put_u16(&out[4], 6u); /* length: unit + function + two 16-bit fields */
-    out[6] = (uint8_t)unit;
-    out[7] = function;
-    put_u16(&out[8], reg);
-    put_u16(&out[10], arg);
-    return 12u;
-}
-
-size_t spg_modbus_encode_read(const uint16_t txn, const uint16_t unit,
-                              const uint16_t reg, uint8_t out[static 12]) {
-    return encode(txn, unit, 0x03u, reg, 1u, out); /* one register */
-}
-
-size_t spg_modbus_encode_write(const uint16_t txn, const uint16_t unit,
-                               const uint16_t reg, const uint16_t value,
-                               uint8_t out[static 12]) {
-    return encode(txn, unit, 0x06u, reg, value, out);
-}
-
-enum spg_status spg_modbus_decode(const size_t n, const uint8_t frame[],
-                                  const uint16_t txn, uint16_t *out_value) {
-    if (out_value == nullptr || (n > 0u && frame == nullptr)) {
+enum spg_status spg_device_read(struct spg_device *dev, const char *name,
+                                int64_t *out) {
+    if (dev == nullptr || out == nullptr) {
         return SPG_E_INVALID_ARG;
     }
-    if (n < 9u) {
+    const struct spg_device_channel *channel = spg_device_find(dev, name);
+    if (channel == nullptr) {
+        return SPG_E_NOT_FOUND;
+    }
+    char                  output[64] = {};
+    const enum spg_status status =
+        run_program(channel->program, nullptr, sizeof output, output);
+    if (status != SPG_OK) {
+        return status;
+    }
+    int64_t value = 0;
+    if (!parse_output(output, &value)) {
         return SPG_E_FORMAT;
     }
-    if (get_u16(&frame[0]) != txn) {
-        /* Somebody else's answer. On a bus fronted by a gateway this is how one
-         * machine's reading gets attributed to another. */
-        return SPG_E_REPLAY_MISMATCH;
+    *out = value;
+    /* Contact is contact: a successful read keeps the watchdog fed, so a run
+     * that only observes does not look like a machine gone silent. */
+    dev->contact_pending = true;
+    return SPG_OK;
+}
+
+enum spg_status spg_device_write(struct spg_device *dev, const char *name,
+                                 const int64_t value) {
+    if (dev == nullptr) {
+        return SPG_E_INVALID_ARG;
     }
-    if (get_u16(&frame[2]) != 0u) {
-        return SPG_E_FORMAT;
+    /* Every refusal is decided BEFORE the fork, so all of it can be tested
+     * without a program that exists. A safety check reachable only once a
+     * machine is plugged in is a safety check nobody runs. */
+    const struct spg_device_channel *channel = spg_device_find(dev, name);
+    if (channel == nullptr) {
+        return SPG_E_NOT_FOUND;
     }
-    const uint8_t function = frame[7];
-    if ((function & 0x80u) != 0u) {
-        return SPG_E_IO; /* the device refused; frame[8] carries its code */
+    if (!channel->writable) {
+        return SPG_E_POLICY_DENIED;
     }
-    if (function == 0x03u) {
-        if (n < 11u || frame[8] != 2u) {
-            return SPG_E_FORMAT;
-        }
-        *out_value = get_u16(&frame[9]);
-        return SPG_OK;
+    if (value < channel->min || value > channel->max) {
+        return SPG_E_LIMIT; /* refused, not clamped — see device.h */
     }
-    if (function == 0x06u) {
-        if (n < 12u) {
-            return SPG_E_FORMAT;
-        }
-        *out_value = get_u16(&frame[10]); /* echo of the written value */
-        return SPG_OK;
+    char argument[24];
+    (void)snprintf(argument, sizeof argument, "%lld", (long long)value);
+    char                  output[64] = {};
+    const enum spg_status status =
+        run_program(channel->program, argument, sizeof output, output);
+    if (status != SPG_OK) {
+        return status;
     }
-    return SPG_E_UNSUPPORTED;
+    int64_t echo = 0;
+    if (parse_output(output, &echo) && echo != value) {
+        /* The device acknowledged a different value than it was told. Treated
+         * as a failure: a caller that believes its write landed will build the
+         * next decision on a number the machine never accepted. */
+        return SPG_E_IO;
+    }
+    dev->contact_pending = true;
+    return SPG_OK;
 }
 
 /* --- The watchdog ----------------------------------------------------- */
@@ -294,190 +422,6 @@ enum spg_status spg_device_safe_state(struct spg_device *dev) {
         }
     }
     return first_failure;
-}
-
-/* --- The machine ------------------------------------------------------ */
-
-enum spg_status spg_device_connect(struct spg_device *dev, const char *host,
-                                   const uint16_t port) {
-    if (dev == nullptr || host == nullptr) {
-        return SPG_E_INVALID_ARG;
-    }
-    if (dev->fd >= 0) {
-        return SPG_E_INVALID_STATE;
-    }
-    char port_text[6] = {};
-    (void)snprintf(port_text, sizeof port_text, "%u", (unsigned)port);
-
-    struct addrinfo  hints = {.ai_family   = AF_UNSPEC,
-                              .ai_socktype = SOCK_STREAM};
-    struct addrinfo *list  = nullptr;
-    if (getaddrinfo(host, port_text, &hints, &list) != 0) {
-        return SPG_E_IO;
-    }
-    enum spg_status status = SPG_E_IO;
-    for (const struct addrinfo *it = list; it != nullptr; it = it->ai_next) {
-        const int fd = socket(it->ai_family, it->ai_socktype, it->ai_protocol);
-        if (fd < 0) {
-            continue;
-        }
-        /* Both directions bounded. A machine that accepts the connection and
-         * then goes quiet is the failure this guards: without it the governing
-         * loop blocks in read() and stops governing anything. */
-        struct timeval tv = {.tv_sec  = SPG_DEVICE_TIMEOUT_MS / 1000,
-                             .tv_usec = (SPG_DEVICE_TIMEOUT_MS % 1000) * 1000};
-        (void)setsockopt(fd, SOL_SOCKET, SO_RCVTIMEO, &tv, sizeof tv);
-        (void)setsockopt(fd, SOL_SOCKET, SO_SNDTIMEO, &tv, sizeof tv);
-        if (connect(fd, it->ai_addr, it->ai_addrlen) == 0) {
-            dev->fd = fd;
-            status  = SPG_OK;
-            break;
-        }
-        (void)close(fd);
-    }
-    freeaddrinfo(list);
-    return status;
-}
-
-void spg_device_close(struct spg_device *dev) {
-    if (dev != nullptr && dev->fd >= 0) {
-        (void)close(dev->fd);
-        dev->fd = -1;
-    }
-}
-
-static enum spg_status write_all(const int fd, const size_t n,
-                                 const uint8_t buf[]) {
-    size_t sent = 0u;
-    while (sent < n) {
-        const ssize_t got = send(fd, &buf[sent], n - sent, 0);
-        if (got <= 0) {
-            if (got < 0 && errno == EINTR) {
-                continue;
-            }
-            return SPG_E_IO;
-        }
-        sent += (size_t)got;
-    }
-    return SPG_OK;
-}
-
-static enum spg_status read_exact(const int fd, const size_t n, uint8_t buf[]) {
-    size_t have = 0u;
-    while (have < n) {
-        const ssize_t got = recv(fd, &buf[have], n - have, 0);
-        if (got <= 0) {
-            if (got < 0 && errno == EINTR) {
-                continue;
-            }
-            return SPG_E_IO; /* covers the timeout: a silent machine is an
-                                unreachable machine, not a slow one */
-        }
-        have += (size_t)got;
-    }
-    return SPG_OK;
-}
-
-/* One request, one response. The MBAP length field says how much follows, so
- * the reply is read in two steps rather than guessed at. */
-static enum spg_status transact(struct spg_device *dev, const size_t n,
-                                const uint8_t request[], const uint16_t txn,
-                                uint16_t *out_value) {
-    enum spg_status status = write_all(dev->fd, n, request);
-    if (status != SPG_OK) {
-        return status;
-    }
-    uint8_t reply[SPG_MODBUS_FRAME_CAP] = {};
-    status                              = read_exact(dev->fd, 6u, reply);
-    if (status != SPG_OK) {
-        return status;
-    }
-    const uint16_t remaining = get_u16(&reply[4]);
-    if (remaining == 0u || remaining > SPG_MODBUS_FRAME_CAP - 6u) {
-        return SPG_E_FORMAT;
-    }
-    status = read_exact(dev->fd, remaining, &reply[6]);
-    if (status != SPG_OK) {
-        return status;
-    }
-    status = spg_modbus_decode((size_t)remaining + 6u, reply, txn, out_value);
-    if (status == SPG_OK) {
-        /* Set here rather than in read/write so no future caller can add a
-         * transaction that talks to the machine without counting as contact. */
-        dev->contact_pending = true;
-    }
-    return status;
-}
-
-enum spg_status spg_device_read(struct spg_device *dev, const char *name,
-                                int64_t *out) {
-    if (dev == nullptr || out == nullptr) {
-        return SPG_E_INVALID_ARG;
-    }
-    if (dev->fd < 0) {
-        return SPG_E_INVALID_STATE;
-    }
-    const struct spg_device_channel *channel = spg_device_find(dev, name);
-    if (channel == nullptr) {
-        return SPG_E_NOT_FOUND;
-    }
-    dev->txn += 1u;
-    uint8_t      request[SPG_MODBUS_FRAME_CAP] = {};
-    const size_t n =
-        spg_modbus_encode_read(dev->txn, channel->unit, channel->reg, request);
-    uint16_t              value  = 0u;
-    const enum spg_status status = transact(dev, n, request, dev->txn, &value);
-    if (status != SPG_OK) {
-        return status;
-    }
-    /* Registers carry signed measurements as two's complement — a below-zero
-     * temperature is the common case that a plain unsigned read gets wrong by
-     * 65536. */
-    *out = (int64_t)(int16_t)value;
-    return SPG_OK;
-}
-
-enum spg_status spg_device_write(struct spg_device *dev, const char *name,
-                                 const int64_t value) {
-    if (dev == nullptr) {
-        return SPG_E_INVALID_ARG;
-    }
-    /* Every refusal is decided BEFORE the connection is consulted, so all of
-     * it can be tested without a socket. A safety check reachable only once a
-     * machine is plugged in is a safety check nobody runs. */
-    const struct spg_device_channel *channel = spg_device_find(dev, name);
-    if (channel == nullptr) {
-        return SPG_E_NOT_FOUND;
-    }
-    if (!channel->writable) {
-        return SPG_E_POLICY_DENIED;
-    }
-    if (value < channel->min || value > channel->max) {
-        return SPG_E_LIMIT; /* refused, not clamped — see device.h */
-    }
-    if (value < INT16_MIN || value > INT16_MAX) {
-        return SPG_E_OVERFLOW;
-    }
-    if (dev->fd < 0) {
-        return SPG_E_INVALID_STATE;
-    }
-    dev->txn += 1u;
-    uint8_t      request[SPG_MODBUS_FRAME_CAP] = {};
-    const size_t n =
-        spg_modbus_encode_write(dev->txn, channel->unit, channel->reg,
-                                (uint16_t)(int16_t)value, request);
-    uint16_t              echo   = 0u;
-    const enum spg_status status = transact(dev, n, request, dev->txn, &echo);
-    if (status != SPG_OK) {
-        return status;
-    }
-    if ((int64_t)(int16_t)echo != value) {
-        /* The device acknowledged a different value than it was told. Treated
-         * as a failure: a caller that believes its write landed will build the
-         * next decision on a number the machine never accepted. */
-        return SPG_E_IO;
-    }
-    return SPG_OK;
 }
 
 /* --- What the agent sees ----------------------------------------------- */
