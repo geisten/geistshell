@@ -5,6 +5,14 @@
  * Everything that decides anything lives in the first two — every refusal is
  * made before a fork, so all of it runs in tests where no program exists. */
 
+/* getaddrinfo/freeaddrinfo and struct addrinfo are POSIX, and glibc hides them
+ * unless a feature-test macro asks for them. `-std=c23` defines __STRICT_ANSI__,
+ * so on Linux this file did not compile at all — while macOS and the BSDs
+ * declare them by default and never complained. Found by the first CI run that
+ * built this repo on Linux (#105); the same 200809L the other POSIX-using
+ * sources in this tree already declare. */
+#define _POSIX_C_SOURCE 200809L
+
 #include "geistshell/device.h"
 
 #include "geistshell/cmd_executor.h"

@@ -1,0 +1,125 @@
+name: CI
+
+# geistshell had no CI at all (#105). Every "make test green" was one person on
+# one machine — and 8 of the 84 test files only execute on Linux (/proc,
+# SIGSTOP, __linux__), so on that machine they step aside and the suite still
+# exits 0. Three platforms, and skipped=0 required where the tests can run.
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  build-test:
+    name: ${{ matrix.name }}
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 40
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          # The development host. Catches nothing the author would not see, but
+          # pins what people actually run — and it is the leg where the machine
+          # backend's tests legitimately skip.
+          - name: macOS arm64
+            runner: macos-15
+            expect_skips: allowed
+
+          # The deployment target (Raspberry Pi 5 is ARM64 Linux). This is the
+          # only leg where the /proc + signal tests execute at all, so it is the
+          # one that must not skip.
+          - name: Linux arm64
+            runner: ubuntu-24.04-arm
+            expect_skips: none
+
+          # The portable reference. detect-target.sh returns `linux` here, a
+          # target geistshell's Makefile had no link flags for until #105 —
+          # nothing had ever built this repo on x86_64.
+          - name: Linux x86_64
+            runner: ubuntu-latest
+            expect_skips: none
+
+    steps:
+      - uses: actions/checkout@v4
+
+      # LIBOMP_PREFIX, because detection looks for libomp.dylib under a fixed
+      # path and falls back to the plain `mac` target when it is absent — a
+      # target geistlib's own CI never builds, and where v0.8.2 breaks on a
+      # -Werror unused function. The prefix on a runner is not guaranteed to be
+      # the default one, so it is read from brew rather than assumed.
+      - name: Install deps (macOS)
+        if: runner.os == 'macOS'
+        run: |
+          brew install libomp
+          echo "LIBOMP_PREFIX=$(brew --prefix libomp)" >> "$GITHUB_ENV"
+
+      - name: Install deps (Linux)
+        if: runner.os == 'Linux'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends \
+            gcc-14 libopenblas-dev libomp-dev libfftw3-dev
+
+      # A clean tree, always. #99 found the suite passing on a geistshell-chat
+      # binary left over from an earlier build that no rule promised; an
+      # incremental CI would have reproduced that bug rather than caught it.
+      # HOST_CC: the repo defaults to clang, and Ubuntu's clang-18 has no C23
+      # `constexpr` — it landed in clang 19, and include/geistshell/device.h
+      # uses it. geistlib pins gcc-14 on Linux for exactly this reason.
+      - name: Build (host-debug = ASan + UBSan)
+        run: make ${{ runner.os == 'Linux' && 'HOST_CC=gcc-14' || '' }}
+
+      # pipefail, or `tee` reports success and every failing test is swallowed —
+      # the same defect this file exists to prevent, one layer up. GitHub's
+      # default shell does not set it.
+      # The target is printed so a wrong one is visible in the log instead of
+      # surfacing as a confusing error inside libgeist.
+      - name: Show build target
+        run: sh scripts/detect-target.sh
+
+      - name: Test
+        shell: bash
+        run: |
+          set -o pipefail
+          make ${{ runner.os == 'Linux' && 'HOST_CC=gcc-14' || '' }} test | tee test.log
+
+      # A run whose Linux-only tests all stepped aside must not look like a run
+      # where they passed. On macOS a skip is expected and fine; on Linux it
+      # means the thing under test did not run.
+      - name: No silent skips
+        run: |
+          summary=$(grep '^test summary:' test.log || true)
+          echo "$summary"
+          [ -n "$summary" ] || { echo "::error::make test printed no summary"; exit 1; }
+          skipped=$(printf '%s' "$summary" | sed 's/.*skipped=//')
+          if [ "${{ matrix.expect_skips }}" = "none" ] && [ "$skipped" != "0" ]; then
+            echo "::error::$skipped test(s) skipped on a platform where they should run"
+            grep ': SKIP' test.log || true
+            exit 1
+          fi
+
+      # The determinism canary, called out separately so a hash drift is
+      # readable in the check list instead of buried in 47 lines of output.
+      - name: Baseline journal hash
+        run: SPG_BIN=build/host-debug/bin/geistshell sh test/test_cli_baseline.sh
+
+  release-build:
+    # host-debug carries ASan/UBSan; -O3 -DNDEBUG is a different compile and has
+    # its own warnings. The Pi runs this one, so it cannot be untested.
+    name: host-release builds
+    runs-on: ubuntu-24.04-arm
+    timeout-minutes: 40
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install deps
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends \
+            gcc-14 libopenblas-dev libomp-dev libfftw3-dev
+      - run: make HOST_CC=gcc-14 host-release

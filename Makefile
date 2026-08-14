@@ -19,6 +19,25 @@ endif
 GEIST_REPO ?= https://github.com/geisten/geistlib.git
 GEIST_REF  ?= v0.8.2
 
+# Build target for the engine. Detected from the HOST, not from deps/geist:
+# the old fallback asked mk/detect-target.sh and echoed `mac` when the engine
+# was not cloned yet — which is every clean checkout, so CI built the mac target
+# on Linux and died inside libgeist. Overridable from the environment or the
+# command line (#105).
+#
+# Mirrors deps/geist/mk/detect-target.sh: mac-omp when Homebrew libomp is there,
+# pi5 for ARM64 Linux, linux otherwise.
+# Build target for the engine. Detected from the HOST, not from deps/geist: the
+# old fallback asked mk/detect-target.sh and echoed `mac` when the engine was
+# not cloned yet — which is every clean checkout, so CI built the mac target on
+# Linux and died inside libgeist. Overridable from the environment or the
+# command line (#105).
+#
+# Mirrors deps/geist/mk/detect-target.sh: mac-omp when Homebrew libomp is
+# present, pi5 for ARM64 Linux, linux otherwise.
+LIBOMP_PREFIX ?= /opt/homebrew/opt/libomp
+GEIST_TARGET  ?= $(shell LIBOMP_PREFIX="$(LIBOMP_PREFIX)" sh scripts/detect-target.sh)
+
 BUILD_MODE ?= host-debug
 
 # Optional REMOTE model adapter (libcurl transport, OpenAI-compatible). Off by
@@ -32,7 +51,6 @@ endif
 HOST_CC ?= clang
 
 AR ?= ar
-LIBOMP_PREFIX ?= /opt/homebrew/opt/libomp
 
 ifeq ($(BUILD_MODE),host-debug)
     MODE_DIR := host-debug
@@ -40,14 +58,12 @@ ifeq ($(BUILD_MODE),host-debug)
     SPG_OPT_FLAGS := -O1 -g -fsanitize=address,undefined -fno-omit-frame-pointer
     SPG_LD_FLAGS := -fsanitize=address,undefined
     GEIST_MODE := asan
-    GEIST_TARGET := $(shell if [ -x "$(GEIST_DIR)/mk/detect-target.sh" ]; then cd "$(GEIST_DIR)" && mk/detect-target.sh; else echo mac; fi)
 else ifeq ($(BUILD_MODE),host-release)
     MODE_DIR := host-release
     CC := $(HOST_CC)
     SPG_OPT_FLAGS := -O3 -DNDEBUG
     SPG_LD_FLAGS :=
     GEIST_MODE := release
-    GEIST_TARGET := $(shell if [ -x "$(GEIST_DIR)/mk/detect-target.sh" ]; then cd "$(GEIST_DIR)" && mk/detect-target.sh; else echo mac; fi)
 else
     $(error Unknown BUILD_MODE=$(BUILD_MODE). Use host-debug or host-release)
 endif
@@ -75,6 +91,12 @@ else ifeq ($(GEIST_TARGET),mac)
     GEIST_LINK_FLAGS := -framework Accelerate
 else ifeq ($(GEIST_TARGET),pi5)
     GEIST_LINK_FLAGS := -fopenmp -lopenblas -lfftw3f
+else ifeq ($(GEIST_TARGET),linux)
+    # Generic Linux (x86_64, and ARM64 that is not a Pi 5). detect-target.sh
+    # returns `linux` there, and this case did not exist — the link fell through
+    # to the empty `else` and failed on OpenBLAS/OpenMP symbols. Nothing caught
+    # it because nothing ever built this repo on x86_64 (#105).
+    GEIST_LINK_FLAGS := -fopenmp -lopenblas
 else
     GEIST_LINK_FLAGS :=
 endif
@@ -196,8 +218,13 @@ update-engine:
 		git -C "$(GEIST_DIR)" checkout --quiet $(GEIST_REF); \
 	fi
 
+# CC is forwarded, and that is not cosmetic. geistshell picked its compiler
+# (HOST_CC) for a reason — C23 needs gcc >= 14 or clang >= 19 — but the engine
+# sub-make used to fall back to plain `cc`, so on Ubuntu the shell built with
+# gcc-14 and the engine died on `-std=c23` with the system gcc. Two compilers
+# for one binary is also an ASan/ABI mismatch waiting to be debugged at 3am.
 $(GEIST_LIB): sync-engine
-	$(MAKE) -C $(GEIST_DIR) TARGET=$(GEIST_TARGET) MODE=$(GEIST_MODE) lib
+	$(MAKE) -C $(GEIST_DIR) CC=$(CC) TARGET=$(GEIST_TARGET) MODE=$(GEIST_MODE) lib
 
 lib: $(SPG_LIB)
 
@@ -213,7 +240,15 @@ $(CHAT_BIN): $(CHAT_OBJECTS) $(SPG_LIB) $(GEIST_LIB)
 	@mkdir -p $(@D)
 	$(CC) $(SPG_LD_FLAGS) -o $@ $(CHAT_OBJECTS) $(SPG_LIB) $(GEIST_LIB) $(LDLIBS)
 
-$(OBJ_DIR)/%.o: %.c
+# Order-only: nothing compiles before the engine's headers exist. Only the
+# BINARIES depended on $(GEIST_LIB), so on a tree without deps/geist make was
+# free to compile first and die on `#include <geist.h>` — which every
+# development machine hides, because deps/geist is already there. The first CI
+# run on a clean checkout found it immediately (#105).
+$(GEIST_DIR)/include/geist.h:
+	$(MAKE) sync-engine
+
+$(OBJ_DIR)/%.o: %.c | $(GEIST_DIR)/include/geist.h
 	@mkdir -p $(@D)
 	$(CC) $(CFLAGS) -MMD -MP -c $< -o $@
 
@@ -238,16 +273,30 @@ check-backends:
 # the failure only showed after `make clean`: an incremental tree still had the
 # binary from an earlier `make all`, so the suite was green on a file no rule
 # had promised. A test target must build everything its tests execute.
+# The summary line exists because a SKIP and a PASS are indistinguishable in the
+# exit code, and 8 of the test files only execute on Linux (/proc, SIGSTOP,
+# __linux__). On a macOS laptop the machine backend's suite steps aside and this
+# target still exits 0 — which reads as "covered". CI asserts skipped=0 on the
+# Linux legs so that stops being invisible (#105).
+#
+# Output goes through a file rather than a pipe: POSIX sh has no PIPESTATUS, and
+# `cmd | tee` would report tee's status, silently swallowing every failure.
 test: $(TEST_BINS) $(PROBE_BINS) $(SPG_BIN) $(CHAT_BIN) $(WORKLOAD_BIN) check-backends
-	@status=0; \
+	@log=$$(mktemp); one=$$(mktemp); status=0; \
 	for t in $(TEST_BINS); do \
 		echo "$$t"; \
-		"$$t" || status=$$?; \
+		"$$t" >"$$one" 2>&1 || status=$$?; \
+		cat "$$one"; cat "$$one" >>"$$log"; \
 	done; \
 	for t in $(CLI_TESTS); do \
 		echo "$$t"; \
-		SPG_BIN="$(SPG_BIN)" sh "$$t" || status=$$?; \
+		SPG_BIN="$(SPG_BIN)" sh "$$t" >"$$one" 2>&1 || status=$$?; \
+		cat "$$one"; cat "$$one" >>"$$log"; \
 	done; \
+	passed=$$(grep -c ': PASS' "$$log" || true); \
+	skipped=$$(grep -c ': SKIP' "$$log" || true); \
+	rm -f "$$log" "$$one"; \
+	echo "test summary: passed=$$passed skipped=$$skipped"; \
 	exit $$status
 
 # Real-model benchmark. Deliberately NOT part of `test`: it needs a GGUF and
