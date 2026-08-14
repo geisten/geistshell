@@ -2597,26 +2597,61 @@ static int agent_command(int argc, char **argv) {
                                      .observation = expect_obs};
     }
 
-    /* Verifier-guided best-of-N (#2): up to best_of attempts, model loaded
-     * once; the choice-slot RNG drifts between attempts (temperature > 0), so
-     * each explores different valid decisions, and we keep the first the
-     * verifier passes. Needs an (expect ...) to select on — without it a single
-     * run. */
-    const size_t          attempts = have_expect ? best_of : 1u;
+    /* Best-of-N (#2, fixed in #55): up to best_of attempts, model loaded once;
+     * the choice-slot RNG drifts between attempts (temperature > 0), so each
+     * explores different valid decisions.
+     *
+     * Selection used to require an (expect ...) — the ANSWER — so without one
+     * the feature silently collapsed to a single attempt and was off in
+     * production. It now ranks attempts with spg_run_rank, which needs no
+     * oracle. A declared (expect ...) still wins when present: an attempt that
+     * satisfies it is unbeatable and ends the loop immediately.
+     *
+     * Ties are NOT broken on fewer steps, tempting as it looks. Without an
+     * expectation a one-step run cannot be told from a model that emitted
+     * `finish` immediately and did nothing, so preferring brevity would
+     * actively reward the degenerate answer. On a tie the first attempt wins:
+     * deterministic, and it invents no preference the data does not support. */
+    const size_t          attempts = best_of;
     enum spg_eval_outcome verdict  = SPG_EVAL_PASS;
     size_t                used     = 0u;
+    size_t                chosen   = 1u;   /* 1-based attempt that won */
+    int                   best_rank = -2;  /* below every real rank */
+    struct spg_agent_loop_result best_loop   = {};
+    enum spg_status              best_status = SPG_E_INVALID_STATE;
+    static char                  best_obs[AGENT_OBS_BYTES];
+    best_obs[0] = '\0';
     for (size_t a = 0u; a < attempts; a += 1u) {
         used   = a + 1u;
         usage  = (struct spg_policy_usage){}; /* each attempt is independent */
         status = spg_agent_run(&inputs, &rcfg, &ws, &usage, &loop_result);
-        if (!have_expect) {
-            break;
+
+        const enum spg_eval_outcome attempt_verdict =
+            have_expect ? spg_eval_judge(&expect, &loop_result, status, observation)
+                        : SPG_EVAL_PASS;
+        /* A satisfied expectation outranks every answer-free rung. */
+        const int rank = (have_expect && attempt_verdict == SPG_EVAL_PASS)
+                             ? 100
+                             : spg_run_rank(status, loop_result.termination);
+        if (rank > best_rank) {
+            best_rank   = rank;
+            best_loop   = loop_result;
+            best_status = status;
+            verdict     = attempt_verdict;
+            chosen      = used;
+            (void)snprintf(best_obs, sizeof best_obs, "%s", observation);
         }
-        verdict = spg_eval_judge(&expect, &loop_result, status, observation);
-        if (verdict == SPG_EVAL_PASS) {
-            break;
+        if (rank == 100) {
+            break; /* cannot be improved on */
+        }
+        if (!have_expect && rank >= 4) {
+            break; /* top answer-free rung: finished on its own */
         }
     }
+    loop_result = best_loop;
+    status      = best_status;
+    (void)snprintf(observation, sizeof observation, "%s", best_obs);
+
     printf("steps=%zu termination=%s journal=%s\n", loop_result.steps_taken,
            spg_agent_loop_termination_to_string(loop_result.termination),
            journal_path);
@@ -2625,13 +2660,15 @@ static int agent_command(int argc, char **argv) {
     }
     rc = (status == SPG_OK) ? 0 : 1;
 
+    /* best_of reporting is no longer conditional on an expectation: the whole
+     * point of #55 is that selection happens without one. */
+    if (attempts > 1u) {
+        printf("best_of=%zu attempts_used=%zu chosen=%zu rank=%d\n", attempts,
+               used, chosen, best_rank);
+    }
     if (have_expect) {
         printf("verdict=%s\n", spg_eval_outcome_to_string(verdict));
-        if (attempts > 1u) {
-            printf("best_of=%zu attempts_used=%zu\n", attempts, used);
-        }
-        /* a FAIL exits non-zero so a caller (and a future miner) can act on it
-         */
+        /* a FAIL exits non-zero so a caller (and a future miner) can act on it */
         if (verdict != SPG_EVAL_PASS && rc == 0) {
             rc = 1;
         }

@@ -304,6 +304,29 @@ regression), not a capability gain on a real model. Swap in a local or remote
 model and add `--samples N` to run the identical harness under noise — each case
 then reports `k of N` and the gate compares summed pass counts.
 
+### Best‑of‑N (`--best-of`)
+
+`--best-of N` samples up to N attempts (the choice‑slot RNG drifts between them
+when `temperature > 0`) and keeps the best. "Best" needs no oracle: attempts are
+ranked by how far the run got, which every run already records —
+
+```
+finished  >  max_steps  >  budget  >  denied  >  rejected  >  error
+```
+
+— the same order as the eval ladder, because a `max_steps` run *parsed*, *was
+allowed*, and executed real actions, while a `denied` run never got past the
+gate. It stops at the first `finished`, since nothing beats it.
+
+A declared `(expect "<substring>")` still wins when present: an attempt that
+satisfies it is unbeatable and ends the loop immediately. When none does, the
+answer‑free rank picks the survivor.
+
+Ties are deliberately **not** broken on fewer steps. Without an expectation a
+one‑step run cannot be distinguished from a model that emitted `finish`
+immediately and did nothing, so preferring brevity would reward exactly the
+degenerate answer. On a tie the first attempt wins.
+
 ## Where geistshell is different — and where it is not
 
 This section is deliberately critical. geistshell makes a sharp bet: be a
