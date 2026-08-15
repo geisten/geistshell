@@ -494,7 +494,13 @@ static enum spg_status generate_geist(
                     ss = decode_capability_slot(adapter, result, kind);
                     break;
                 case SPG_SCAFFOLD_NUMBER:
+                    /* The missing break here survived exactly as long as no
+                     * scaffold could reach a NUM slot: after the number, the
+                     * command-slot decoder ran too and wrote garbage where
+                     * SEG_DEVICE's closing literal belonged. -Wimplicit-
+                     * fallthrough now guards the whole class. */
                     ss = decode_number_slot(adapter, result);
+                    break;
                 case SPG_SCAFFOLD_COMMAND:
                     ss = decode_command_slot(adapter, result);
                     break;
