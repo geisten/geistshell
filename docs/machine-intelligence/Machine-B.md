@@ -73,6 +73,21 @@ dritten Fall hinzufügte.
 Ein geschlossenes Enum ist nur geschlossen, wenn jedes `switch` darüber
 vollständig ist. Hier war es das nicht, und niemand hat es bemerkt.
 
+**Nachtrag (#110): dieselbe Lektion, zweite Instanz, anderer Finder.** Was
+`-Wswitch` in `kinds_for_cap` fand, konnte es in `ALL_KINDS` nicht finden —
+eine Array-Initialisierung ist kein `switch`. Dort fehlten
+`machine_pause_process`, `machine_resume_process` und `device_write` bis
+zuletzt: parsebar, gescaffoldet, aber im Kind-Slot des Decoders **nicht
+tippbar**. Gefunden hat es kein Compiler, sondern MachineBench — zwei
+Modelle, denen der Goal-Text das Verb wörtlich nannte, schlugen 0/3 fehl,
+und die Journale zeigten einen Decoder, der die Antwort verbot, kein Modell,
+das sie verfehlte.
+
+Konsequenz für Messungen: jeder `--constrained`-Lauf vor #110, dessen
+richtige Antwort ein Maschinen- oder Anlagen-Verb gewesen wäre, hat ein
+verkürztes Menü gemessen. Die Diagnose-Zahlen (Phase 12, Go/No-Go) bleiben
+gültig — Diagnose endet in `finish`, das immer tippbar war.
+
 ### Der Parameter im String
 
 `(kind machine_set_fan) (target "fan:60")` — die Lüfterstufe reitet in der
