@@ -63,6 +63,15 @@ struct spg_model_profile {
      * why this is a decoding aid and not a security control (see cmd_menu.h).
      * Off keeps the slot free, which is the arm a baseline compares against. */
     bool                   command_mask;
+    /* #40's convergence stop, per model. Absent (has_ false) keeps the
+     * default `true`: an executed action that makes no progress ends the run
+     * FINISHED — right for diagnosis, where one answer is the job. `false`
+     * keeps the loop asking until the model itself finishes or the step cap
+     * hits. MachineBench is the consumer that finally earned this field: a
+     * controller that must STAY on a plant cannot be one the loop sends home
+     * early, and whether the model then stays is exactly the measurement. */
+    bool                   has_finish_on_no_progress;
+    bool                   finish_on_no_progress;
     bool                   present;
 };
 

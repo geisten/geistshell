@@ -42,6 +42,28 @@ static int test_parse(void) {
     if (strcmp(p.name, "x") != 0 || !p.present) {
         return 1;
     }
+    /* finish_on_no_progress is tri-state: absent means "the default", which
+     * must stay distinguishable from an explicit true — otherwise a profile
+     * could never say "hold the loop open" without also rewriting every
+     * profile that never mentioned the field. */
+    if (p.has_finish_on_no_progress) {
+        return 1; /* the fixture above never named the field */
+    }
+    if (load(LIT("(model_profile (name \"hold\")"
+                 " (finish_on_no_progress false))"),
+             &p) != SPG_OK ||
+        !p.has_finish_on_no_progress || p.finish_on_no_progress) {
+        return 1;
+    }
+    if (load(LIT("(model_profile (finish_on_no_progress true))"), &p) !=
+            SPG_OK ||
+        !p.has_finish_on_no_progress || !p.finish_on_no_progress) {
+        return 1;
+    }
+    if (load(LIT("(model_profile (finish_on_no_progress maybe))"), &p) !=
+        SPG_E_SCHEMA) {
+        return 1;
+    }
     return 0;
 }
 

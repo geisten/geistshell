@@ -2678,8 +2678,13 @@ static int agent_command(int argc, char **argv) {
         .max_repairs = max_repairs,
         /* #40: a model that acts validly but never emits (kind finish) would
          * run to the step cap; treat a converged (no-progress) run as done so
-         * it terminates FINISHED and an expect verdict can pass. */
-        .finish_on_no_progress = true,
+         * it terminates FINISHED and an expect verdict can pass. The model
+         * profile may override: a controller that must stay on a plant cannot
+         * be one the loop sends home early (see model_profile.h). */
+        .finish_on_no_progress =
+            model_profile.present && model_profile.has_finish_on_no_progress
+                ? model_profile.finish_on_no_progress
+                : true,
         .directive_slug        = directive_slug,
         .execution_enabled     = allow_exec,
         .exec_timeout_ms       = 5000u,
