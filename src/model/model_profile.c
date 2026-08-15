@@ -125,6 +125,18 @@ spg_model_profile_load(const size_t input_n, const char input[],
             return SPG_E_SCHEMA;
         }
     }
+    node = field_value(input_n, input, nodes, root, "finish_on_no_progress");
+    if (node != SPG_SEXPR_INVALID_INDEX) {
+        if (spg_sexpr_span_eq_cstr(input_n, input, nodes[node].span, "true")) {
+            out->finish_on_no_progress = true;
+        } else if (spg_sexpr_span_eq_cstr(input_n, input, nodes[node].span,
+                                          "false")) {
+            out->finish_on_no_progress = false;
+        } else {
+            return SPG_E_SCHEMA;
+        }
+        out->has_finish_on_no_progress = true;
+    }
     out->present = true;
     return SPG_OK;
 }
