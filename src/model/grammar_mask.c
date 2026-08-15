@@ -6,11 +6,20 @@
 
 /* Every action kind that parse_action_kind accepts. Their canonical names come
  * from spg_action_kind_to_string, so this list is the enum, not a second copy
- * of the strings. */
+ * of the strings.
+ *
+ * It IS a second copy of the enum's MEMBERSHIP though, and it drifted: the
+ * machine kinds and device_write were parseable and scaffolded but missing
+ * here, so the constrained decoder could not TYPE them — a model told to
+ * pause a process or drive a heater was railroaded into the other seven
+ * verbs. MachineBench surfaced it: 0/3 with the action named in the goal
+ * text is a decoder that forbids the answer, not a model that missed it. */
 static const enum spg_action_kind ALL_KINDS[] = {
-    SPG_ACTION_LOCAL_SHELL, SPG_ACTION_SSH_AUTH_PROBE, SPG_ACTION_SIMULATOR,
-    SPG_ACTION_MEMORY_SAVE, SPG_ACTION_MEMORY_DELETE,  SPG_ACTION_MEMORY_READ,
-    SPG_ACTION_FINISH,
+    SPG_ACTION_LOCAL_SHELL,   SPG_ACTION_SSH_AUTH_PROBE,
+    SPG_ACTION_SIMULATOR,     SPG_ACTION_MEMORY_SAVE,
+    SPG_ACTION_MEMORY_DELETE, SPG_ACTION_MEMORY_READ,
+    SPG_ACTION_MACHINE_PAUSE, SPG_ACTION_MACHINE_RESUME,
+    SPG_ACTION_DEVICE_WRITE,  SPG_ACTION_FINISH,
 };
 static const size_t KIND_COUNT = sizeof ALL_KINDS / sizeof ALL_KINDS[0];
 

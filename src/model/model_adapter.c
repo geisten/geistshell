@@ -464,7 +464,11 @@ static enum spg_status generate_geist(
 
         /* 2. kind-slot mask: constrain the slot to a valid kind enum name. */
         char        kindbuf[64];
-        const char *kn[8];
+        /* Room for every kind in ALL_KINDS. This was 8 when there were 7
+         * kinds; growing the enum would have silently truncated the menu,
+         * and the dropped names would have been device_write and finish —
+         * the actuator and the exit. */
+        const char *kn[16];
         const size_t  knn = spg_kind_names(kn, sizeof kn / sizeof kn[0]);
         const enum spg_status ks =
             decode_choice_slot(adapter, result, kn, knn, kindbuf, sizeof kindbuf);

@@ -161,6 +161,26 @@ int main(void) {
         return fail("leading-space name completes");
     }
 
+    /* The verbs that were missing from ALL_KINDS while being parseable and
+     * scaffolded: the constrained decoder could not TYPE them, so every
+     * --constrained run looked like a model that never reached the actuator.
+     * These lines are the regression guard against the list drifting again. */
+    if (!spg_kind_prefix_ok("", "device") ||
+        !spg_kind_prefix_ok("device", "_write") ||
+        !spg_kind_complete("device_write")) {
+        return fail("device_write must be typable under the mask");
+    }
+    if (!spg_kind_prefix_ok("", "machine") ||
+        !spg_kind_complete("machine_pause_process") ||
+        !spg_kind_complete("machine_resume_process")) {
+        return fail("machine kinds must be typable under the mask");
+    }
+    enum spg_action_kind parsed_kind;
+    if (!spg_kind_from_text("device_write", &parsed_kind) ||
+        parsed_kind != SPG_ACTION_DEVICE_WRITE) {
+        return fail("device_write must round-trip through the mask");
+    }
+
     /* Rejections: unknown text and overshoot past a complete name. */
     if (spg_kind_prefix_ok("", "xyz")) {
         return fail("'xyz' is not any kind prefix");
