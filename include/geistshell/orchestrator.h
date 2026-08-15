@@ -98,6 +98,8 @@ struct spg_orchestrator_state {
     /* Optional standing directive (a learned lesson), rendered every step as
      * (directive "..."). Null = none. */
     const char *directive;
+    /* Pre-rendered command menu (#56). Null = none. */
+    const char *tools;
 };
 
 struct spg_orchestrator_config {

@@ -773,6 +773,11 @@ enum spg_status spg_context_render(const struct spg_context_sources *sources,
         append_quoted_cstr(&state, sources->goal);
         append_cstr(&state, ")\n");
     }
+    if (sources->tools != nullptr && sources->tools[0] != '\0') {
+        append_cstr(&state, "(tools\n");
+        append_cstr(&state, sources->tools);
+        append_cstr(&state, ")\n");
+    }
     if (sources->exemplars != nullptr && sources->exemplars[0] != '\0') {
         append_cstr(&state, "(examples\n");
         append_cstr(&state, sources->exemplars);

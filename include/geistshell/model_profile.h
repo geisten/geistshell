@@ -58,6 +58,11 @@ struct spg_model_profile {
     /* Named chat_template, not template: the header is extern "C" guarded for
      * C++ consumers, where `template` is a keyword. */
     enum spg_chat_template chat_template;
+    /* #56: mask the first word of a decoded shell command to the command menu.
+     * Narrows what the model PROPOSES — not what the executor permits, which is
+     * why this is a decoding aid and not a security control (see cmd_menu.h).
+     * Off keeps the slot free, which is the arm a baseline compares against. */
+    bool                   command_mask;
     bool                   present;
 };
 

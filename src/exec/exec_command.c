@@ -6,7 +6,7 @@
 #include "geistshell/exec_command.h"
 
 #include "geistshell/cmd_executor.h"
-#include "geistshell/cmd_registry.h"
+#include "geistshell/cmd_menu.h"
 #include "geistshell/executor_boundary.h"
 #include "geistshell/host_probe.h"
 #include "geistshell/policy.h"
@@ -90,7 +90,7 @@ int spg_exec_command(const int argc, char **argv) {
     struct spg_host_info host = {};
     (void)spg_host_probe(&host); /* unknown host is fine; fields stay empty */
 
-    const struct spg_cmd_descriptor *desc = spg_cmd_registry_find(argv[0]);
+    const struct spg_cmd_menu_entry *desc = spg_cmd_menu_find(argv[0]);
     const bool     known        = desc != nullptr;
     const bool     uses_network = known && desc->uses_network;
     uint64_t       timeout_ms   = EXEC_DEF_TIMEOUT;

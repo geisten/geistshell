@@ -14,7 +14,12 @@ set -eu
 
 SPG_BIN=${SPG_BIN:-build/host-debug/bin/geistshell}
 JOURNAL=build/tick-demo.sgj  # path comes from examples/run.spg
-EXPECTED=52bd794e11885e1b8ae257ef037a1b87b2ed3fa8311ca85b557253c99e537365
+# Updated for #56: the command menu is now rendered into the context as a
+# (tools ...) section, so the model_input payload — and with it the hashed
+# record chain — legitimately changed. The run is still deterministic; it now
+# contains one more constant block.
+#   before 52bd794e11885e1b8ae257ef037a1b87b2ed3fa8311ca85b557253c99e537365
+EXPECTED=8b831838c4c21eb6f11903d7ece6013546e67ef89bccd7f1a4350cc077761c65
 
 sha256_of() {
     if command -v sha256sum >/dev/null 2>&1; then

@@ -327,6 +327,40 @@ one‑step run cannot be distinguished from a model that emitted `finish`
 immediately and did nothing, so preferring brevity would reward exactly the
 degenerate answer. On a tie the first attempt wins.
 
+### The command menu — and what it is not
+
+`local_shell` is an open action space; what a small model lacks is not
+permission but *discoverability*. The command menu is the list of commands the
+agent is **told about** — name, one‑line summary, flag hint — rendered into the
+constant part of its context. With `--command-mask` (agent) or
+`(command_mask true)` in a model profile (eval), the first word of a decoded
+command is additionally masked to those names. Only the program name:
+arguments are where a command carries its meaning.
+
+```
+(command_menu
+ ((name "ls")   (summary "list directory contents") (flags "-l -a -h"))
+ ((name "grep") (summary "search files for a pattern") (flags "-n -i -r")))
+```
+
+**This is not an allowlist and must not be read as one.** A command absent from
+the menu still runs if it gets past the real boundary; a command present in it
+still does not run if it does not. The boundary is the policy capability, the
+workdir prefix, the network flag, the timeout, the cleared environment and the
+OS sandbox — none of which this file touches.
+
+That is deliberate. A name filter on `argv[0]` is worthless against `sh -c`,
+and making it real would mean banning shell metacharacters, interpreters and
+path invocations — which is `local_shell` abolished, and with it the reason
+geistshell is not geistagent. A half allowlist is worse than none, because it
+gets believed.
+
+The consequence: a menu file is **untrusted input**, in the same class as the
+scenario and corpus text. It may influence what the model *proposes* and never
+what the executor *permits*. `test_cli_command_menu.sh` asserts exactly that, so
+a change making the menu authoritative fails loudly instead of quietly turning
+a data row into a privilege.
+
 ## Where geistshell is different — and where it is not
 
 This section is deliberately critical. geistshell makes a sharp bet: be a
