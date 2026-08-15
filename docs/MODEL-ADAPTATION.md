@@ -188,10 +188,11 @@ not as failure.
   (finish_on_no_progress false))
 ```
 
-Referenced from `run.spg` alongside `(policy …)` and `(scenario …)`.
-Precedence: **CLI > profile file > auto-detect** (auto-detect via
-`geist_model_arch()` + special-token probe, so a user with nothing but a GGUF
-needs no profile).
+Passed as `--model-profile <file>` — to `eval` since #54, to the live
+`agent` since #110 (before that, every live run spoke auto-detect, which for
+a base model means `none`). Precedence: **CLI > profile file > auto-detect**
+(auto-detect via `geist_model_arch()` + special-token probe, so a user with
+nothing but a GGUF needs no profile).
 
 Data, not code — the same call as the command menu in decision 7. The decisive
 property is that a profile file is **versionable and journalable**: when
