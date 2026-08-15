@@ -276,8 +276,18 @@ check-backends:
 # The summary line exists because a SKIP and a PASS are indistinguishable in the
 # exit code, and 8 of the test files only execute on Linux (/proc, SIGSTOP,
 # __linux__). On a macOS laptop the machine backend's suite steps aside and this
-# target still exits 0 — which reads as "covered". CI asserts skipped=0 on the
-# Linux legs so that stops being invisible (#105).
+# target still exits 0 — which reads as "covered" (#105).
+#
+# TWO CLASSES, counted separately, because conflating them made main red:
+#
+#   SKIP(host)  the host cannot run this — /proc, process signals. On a platform
+#               that HAS those, a skip means the thing under test did not run,
+#               and CI fails on it.
+#   SKIP        an optional artefact is absent — a GGUF, python3, a built gym
+#               env, a REMOTE=1 binary. Legitimate on every platform, including
+#               the ones where the host-gated tests must run.
+#
+# A test declares its own class, because the test is what knows which it is.
 #
 # Output goes through a file rather than a pipe: POSIX sh has no PIPESTATUS, and
 # `cmd | tee` would report tee's status, silently swallowing every failure.
@@ -295,8 +305,9 @@ test: $(TEST_BINS) $(PROBE_BINS) $(SPG_BIN) $(CHAT_BIN) $(WORKLOAD_BIN) check-ba
 	done; \
 	passed=$$(grep -c ': PASS' "$$log" || true); \
 	skipped=$$(grep -c ': SKIP' "$$log" || true); \
+	host_skipped=$$(grep -c ': SKIP(host)' "$$log" || true); \
 	rm -f "$$log" "$$one"; \
-	echo "test summary: passed=$$passed skipped=$$skipped"; \
+	echo "test summary: passed=$$passed skipped=$$skipped host_skipped=$$host_skipped"; \
 	exit $$status
 
 # Real-model benchmark. Deliberately NOT part of `test`: it needs a GGUF and

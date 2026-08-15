@@ -17,7 +17,7 @@ SCRIPT=build/machine-recovery-fake.txt
 RUNCFG=build/machine-recovery-run.spg
 
 if [ "$(uname -s)" != "Linux" ]; then
-    echo "test_cli_machine_recovery: SKIP (no process signals here)"
+    echo "test_cli_machine_recovery: SKIP(host) (no process signals here)"
     exit 0
 fi
 
