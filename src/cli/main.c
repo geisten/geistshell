@@ -2100,6 +2100,7 @@ static int agent_command(int argc, char **argv) {
      * counters to reflect its own action. */
     uint64_t    settle_ms    = 0u;
     const char *profile_path = nullptr; /* (process-profile ...) file */
+    const char *model_profile_path = nullptr; /* (model_profile ...) file */
     /* Attached machine (device_write). Declared per run: a channel table is
      * the operator saying what this agent may move, which is not something a
      * model or a runtime-discovered config should be able to widen. */
@@ -2255,6 +2256,11 @@ static int agent_command(int argc, char **argv) {
             i += 1;
             continue;
         }
+        if (strcmp(argv[i], "--model-profile") == 0 && i + 1 < argc) {
+            model_profile_path = argv[i + 1];
+            i += 1;
+            continue;
+        }
         if (strcmp(argv[i], "--best-of") == 0 && i + 1 < argc) {
             best_of = (size_t)strtoull(argv[i + 1], nullptr, 10);
             if (best_of == 0u) {
@@ -2271,6 +2277,7 @@ static int agent_command(int argc, char **argv) {
                 "usage: %s agent --config <run> [--fake-script <file>] "
                 "[--process-profile <file>] "
                 "[--command-menu <menu.spg>] [--command-mask] "
+                "[--model-profile <file>] "
                 "[--max-steps N] [--max-repairs N] [--allow-exec] "
                 "[--memory-dir <d>]\n"
                 "  without --fake-script the real model at the config's "
@@ -2525,6 +2532,29 @@ static int agent_command(int argc, char **argv) {
      * it needs an action to observe first. The timestamp is the run's, from the
      * same injected counter the journal uses — no clock is read here either. */
     struct spg_machine_state   machine = {};
+    /* #54 for the live agent: eval could describe HOW to speak to a model,
+     * the agent could not — so every agent run spoke auto-detect, which for
+     * a base model like BitNet means `none` (phase 12: 1/9 parses). Same
+     * file format, same loader, same field the eval path fills. */
+    static struct spg_model_profile model_profile;
+    model_profile = (struct spg_model_profile){};
+    if (model_profile_path != nullptr) {
+        struct file_buffer mtext = {};
+        if (read_file(model_profile_path, &mtext) != SPG_OK) {
+            fprintf(stderr, "agent: cannot read model profile: %s\n",
+                    model_profile_path);
+            return 2;
+        }
+        const enum spg_status ms = spg_model_profile_load(
+            mtext.n, mtext.data, CLI_TOKEN_CAPACITY, rec_tokens,
+            CLI_NODE_CAPACITY, rec_nodes, &model_profile);
+        free_file_buffer(&mtext);
+        if (ms != SPG_OK) {
+            fprintf(stderr, "agent: invalid model profile %s: %s\n",
+                    model_profile_path, spg_status_to_string(ms));
+            return 2;
+        }
+    }
     struct spg_process_profile profile = {};
     if (profile_path != nullptr) {
         struct file_buffer profile_text = {};
@@ -2638,7 +2668,8 @@ static int agent_command(int argc, char **argv) {
          * machine action as unmanaged. That is the right default: a run that
          * never declared what it may touch may not touch anything. */
         .profile      = profile_path != nullptr ? &profile : nullptr,
-        .pause_ledger = &pause_ledger,
+        .pause_ledger  = &pause_ledger,
+        .profile_model = model_profile.present ? &model_profile : nullptr,
         .device       = device.n_channels > 0u ? &device : nullptr,
         .device_state = device.n_channels > 0u ? &device_state : nullptr,
     };
