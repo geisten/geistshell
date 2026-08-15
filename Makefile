@@ -105,7 +105,7 @@ endif
 # private headers like src/base/heap.h) was dropped with the arena wrapper in
 # v0.3.1 — geistshell must not depend on libgeist internals.
 CPPFLAGS := -Iinclude -Iinclude/geistshell -I$(GEIST_DIR)/include -I$(DEPS_DIR)/jsmn
-WARNINGS := -Wall -Wextra -Wpedantic -Wconversion -Wshadow -Wstrict-prototypes
+WARNINGS := -Wall -Wextra -Wpedantic -Wconversion -Wshadow -Wstrict-prototypes -Wimplicit-fallthrough
 CFLAGS := -std=c23 $(WARNINGS) $(SPG_OPT_FLAGS) $(CPPFLAGS) $(REMOTE_DEFS)
 LDLIBS := $(GEIST_LINK_FLAGS) -lm -lpthread $(REMOTE_LIBS)
 
