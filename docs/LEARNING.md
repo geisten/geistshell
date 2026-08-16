@@ -625,6 +625,46 @@ print A, then B, then finish; or budgets tight enough that the first wrong
 decision costs the run). Until that corpus exists, every runtime-learning
 measurement here will read as a ceiling.
 
+## Headroom census — the lever-measurable corpus exists, and it is narrow (2026-08-16, Pi/Gemma)
+
+The ceiling above demanded a corpus where control *sometimes* fails. The
+census (`eval/bench_headroom.sh`) probes transform/compute shell tasks whose
+expected output is a function of the input — not producible by echoing the
+goal back, not rescuable by any guardrail; only the model's command choice
+decides. Per task: one greedy run + six sampled runs (T=0.9, seeds 1..6),
+constrained, quiesced box. Classification: `ceiling` (6/6), `floor` (0/6),
+`HEADROOM` otherwise. (The census spanned a Pi reboot mid-run; `reverse` was
+measured in both sessions with the identical result.)
+
+| task | recipe needed | greedy | sampled | verdict |
+|---|---|---|---|---|
+| echo a goal word (prior bench) | copy a literal | pass | 18/18 | ceiling |
+| twice (`MIRROR-MIRROR`) | compose goal literals | fail | 1/6 | **HEADROOM** |
+| seq (`1 2 3 4 5`) | compose counting literals | fail | 1/6 | **HEADROOM** |
+| sum (17+25 → `42`) | compute, then echo | fail | 0/6 | floor |
+| count (letters → `7`) | `wc` or count | fail | 0/6 | floor |
+| upper (`cloud` → `CLOUD`) | `tr` | fail | 0/6 | floor |
+| reverse (`STONE` → `ENOTS`) | `rev` | fail | 0/6 | floor |
+
+**The difficulty landscape on a 2B constrained model is nearly binary.**
+Echoing a literal from the goal is a ceiling; anything requiring a tool
+recipe (`tr`, `rev`, `wc`) or an internal computation (17+25) is a hard
+floor — across 24 sampled runs not one tool invocation succeeded. The only
+band in between is **literal composition**: the answer's parts are in the
+goal, but arranging them (`MIRROR-MIRROR`, `1 2 3 4 5`) succeeds in ~1/6
+samples. That band is real, reproducible — and two tasks wide.
+
+Two consequences. First, the levers are now decidable: on `seq`/`twice`,
+control fails 5/6, so a directive that carries the exact recipe ("emit
+`echo 1 2 3 4 5`") has genuine room to lift, and attempts-to-pass has dynamic
+range — re-running `bench_directive.sh` over this corpus is the pending
+Hebel-1 measurement. Second, the floor class bounds what any prompt-side
+learning can achieve here: a lesson cannot teach this model to *use a tool*
+it never samples; that class needs either the skill-as-forced-prefix
+mechanism (decode-side, #26 follow-up) or a larger model. Widening the corpus
+means minting more literal-composition variants, and each needs its own
+census row before it counts as headroom.
+
 ## Not to be confused with geistagent
 
 The sibling [geistagent](https://github.com/geisten/geistagent) runs the same
