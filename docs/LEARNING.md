@@ -581,6 +581,50 @@ real GGUF, ~1 min/turn):
   lesson); the example DSL scenarios are not model-completable by an untrained
   Gemma, so a contrived breaking task is future work.
 
+## Directive × best-of-N — ceiling, question undecided (2026-08-16, Pi/Gemma, engine v0.9)
+
+Every directive probe above ran **greedy**, where a directive must flip the
+argmax to show at all. Under temperature sampling it only has to *shift
+probability mass*, and the best-of-N verifier amplifies any shift into a
+measurable difference in attempts-to-pass. `eval/bench_directive.sh` measures
+exactly that: the six goal-word shell tasks, control (no lesson) vs learned
+(a "finish after the goal word" lesson rendered as the Weg-1 strong channel
+`(directive "...")` every step), constrained, N=6, T=0.9, three reps, quiesced
+box, engine pinned at geist v0.9.0.
+
+| | pass | attempts_sum |
+|---|---|---|
+| control | 18/18 | 18 (minimum) |
+| lesson  | 18/18 | 18 (minimum) |
+
+**Every run passed on the first sampled attempt in both arms — a ceiling.**
+Attempts-to-pass can only differentiate when control sometimes fails; here the
+metric sat at its floor for all 36 runs, so the question this bench was built
+to answer — does the directive shift sampling mass? — is **undecided**, not
+answered. The honest verdict is "no measurable signal on this corpus", not
+"channel dead".
+
+The ceiling itself is a finding. In the corrected best-of-N measurement
+(v0.2.1, before Weg 2) greedy still failed 2/5 of these tasks and OKAY needed
+attempt 2; since then the Weg-2 guardrail (budget-denied repeat after a success
+= converged → FINISHED) and the v0.9 engine landed, and together they remove
+this corpus's entire failure mode deterministically — the standing conclusion
+(*guardrails subsume the learning headroom*) now holds **completely** on this
+corpus, reproduced at T=0.9 over 18 runs.
+
+One genuine side result: the strong-channel directive was present every step
+of 18 runs and regressed **nothing** — earlier probes showed a lesson can flip
+pass → denied, so "at worst harmless" is new information about the channel,
+and context for how often the keep-gate must actually veto.
+
+Consequence for the lever order (directive-under-sampling → structure-carry →
+lesson-as-slot-bias): before any of them can be decided, the corpus needs
+**measured headroom** — tasks where control demonstrably fails sometimes under
+sampling and the failure mode is *not* guardrail-covered (multi-step goals:
+print A, then B, then finish; or budgets tight enough that the first wrong
+decision costs the run). Until that corpus exists, every runtime-learning
+measurement here will read as a ceiling.
+
 ## Not to be confused with geistagent
 
 The sibling [geistagent](https://github.com/geisten/geistagent) runs the same
