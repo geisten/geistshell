@@ -587,9 +587,6 @@ static void print_budget_summary(const struct spg_run_budgets *budgets) {
     printf("budget.memory_actions=%llu\n",
            (unsigned long long)budgets->memory_actions);
     printf("budget.wall_ms=%llu\n", (unsigned long long)budgets->wall_ms);
-    printf("budget.journal_bytes=%llu\n",
-           (unsigned long long)budgets->journal_bytes);
-    printf("budget.risk_bp=%llu\n", (unsigned long long)budgets->risk_bp);
 }
 
 static int policy_check_command(const char *path) {
@@ -2089,6 +2086,7 @@ static int agent_command(int argc, char **argv) {
     size_t      max_repairs    = 2u;
     bool        allow_exec     = false;
     bool        constrained    = false;
+    bool     host_status   = false; /* live CPU/temp/process telemetry */
     float    sample_temp   = 0.0f; /* >0 lets the free slots vary (best-of-N) */
     bool     has_seed      = false;
     uint64_t seed_override = 0u; /* per-attempt seed for best-of-N sampling */
@@ -2168,6 +2166,12 @@ static int agent_command(int argc, char **argv) {
             /* #34: force the real model's output to begin with the
              * recommendation opening, then decode freely. */
             constrained = true;
+            continue;
+        }
+        if (strcmp(argv[i], "--host-status") == 0) {
+            /* put the machine itself in the context every step: CPU count,
+             * load average, die temperature, running process count. */
+            host_status = true;
             continue;
         }
         if (strcmp(argv[i], "--directive-slug") == 0 && i + 1 < argc) {
@@ -2280,7 +2284,9 @@ static int agent_command(int argc, char **argv) {
                 "[--command-menu <menu.spg>] [--command-mask] "
                 "[--model-profile <file>] "
                 "[--max-steps N] [--max-repairs N] [--allow-exec] "
-                "[--memory-dir <d>]\n"
+                "[--memory-dir <d>] [--host-status]\n"
+                "  --host-status puts live CPU load, temperature and process "
+                "count in every step's context\n"
                 "  without --fake-script the real model at the config's "
                 "(model ...) path is run and journaled\n",
                 argv[0]);
@@ -2487,6 +2493,7 @@ static int agent_command(int argc, char **argv) {
     static char                   shell_stdout[AGENT_SHELL_STDOUT];
     static char                   shell_stderr[AGENT_SHELL_STDERR];
     static char                   mem_index[AGENT_OBS_BYTES];
+    static char                   host_status_buf[SPG_HOST_STATUS_CAP];
     static struct spg_journal_record_header trajectory[256];
 
     const struct spg_agent_run_workspace ws = {
@@ -2523,6 +2530,8 @@ static int agent_command(int argc, char **argv) {
         .trajectory              = trajectory,
         .memory_index_capacity   = sizeof mem_index,
         .memory_index            = mem_index,
+        .host_status_capacity    = host_status ? sizeof host_status_buf : 0u,
+        .host_status             = host_status ? host_status_buf : nullptr,
     };
     char *goal_cstr = nullptr; /* materialized (goal "...") span, or null */
     if (run.has_goal) {
@@ -2674,9 +2683,25 @@ static int agent_command(int argc, char **argv) {
         .device       = device.n_channels > 0u ? &device : nullptr,
         .device_state = device.n_channels > 0u ? &device_state : nullptr,
     };
+    /* Read before rcfg so the loop can watch it: the expect marker has to be
+     * known at run time, not only at judge time. */
+    const bool have_expect =
+        run.has_expect && run.expect_observation.length < sizeof observation;
+    char                   expect_obs[AGENT_OBS_BYTES];
+    struct spg_eval_expect expect = {};
+    if (have_expect) {
+        memcpy(expect_obs, run_text.data + run.expect_observation.offset,
+               run.expect_observation.length);
+        expect_obs[run.expect_observation.length] = '\0';
+        expect = (struct spg_eval_expect){.check_termination = true,
+                                          .termination = SPG_AGENT_LOOP_FINISHED,
+                                          .observation = expect_obs};
+    }
+
     const struct spg_agent_run_config rcfg = {
-        .max_steps   = max_steps,
-        .max_repairs = max_repairs,
+        .max_steps         = max_steps,
+        .max_repairs       = max_repairs,
+        .observation_marker = have_expect ? expect_obs : nullptr,
         /* #40: a model that acts validly but never emits (kind finish) would
          * run to the step cap; treat a converged (no-progress) run as done so
          * it terminates FINISHED and an expect verdict can pass. The model
@@ -2695,23 +2720,6 @@ static int agent_command(int argc, char **argv) {
     };
     struct spg_policy_usage      usage       = {};
     struct spg_agent_loop_result loop_result = {};
-
-    /* Optional success criterion (docs/LEARNING.md P1): judge the real run the
-     * same way the eval loop judges a scripted case — model-free, zero tokens.
-     */
-    const bool have_expect =
-        run.has_expect && run.expect_observation.length < sizeof observation;
-    char                   expect_obs[AGENT_OBS_BYTES];
-    struct spg_eval_expect expect = {};
-    if (have_expect) {
-        memcpy(expect_obs, run_text.data + run.expect_observation.offset,
-               run.expect_observation.length);
-        expect_obs[run.expect_observation.length] = '\0';
-        expect =
-            (struct spg_eval_expect){.check_termination = true,
-                                     .termination = SPG_AGENT_LOOP_FINISHED,
-                                     .observation = expect_obs};
-    }
 
     /* Best-of-N (#2, fixed in #55): up to best_of attempts, model loaded once;
      * the choice-slot RNG drifts between attempts (temperature > 0), so each
@@ -3643,6 +3651,7 @@ static enum spg_status eval_run_suite(const char                 *suite_path,
             .context_refs        = CLI_CONTEXT_REFS,
             .exec_working_dir    = has_fixture ? sandbox : nullptr,
             .exec_workdir_prefix = has_fixture ? sandbox : nullptr,
+            .observation_marker  = expect.observation,
         };
         char       model_kind[16];
         const bool has_model = eval_str(nod, c, suite_text.n, suite_text.data,

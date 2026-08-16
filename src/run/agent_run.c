@@ -73,6 +73,8 @@ enum spg_status spg_agent_run(const struct spg_agent_run_inputs *inputs,
         .shell_stderr_buf              = workspace->shell_stderr,
         .memory_index_capacity         = workspace->memory_index_capacity,
         .memory_index_buf              = workspace->memory_index,
+        .host_status_capacity          = workspace->host_status_capacity,
+        .host_status_buf               = workspace->host_status,
     };
 
     struct spg_orchestrator_state state = {
@@ -131,6 +133,8 @@ enum spg_status spg_agent_run(const struct spg_agent_run_inputs *inputs,
         .machine_settle_ms       = inputs->machine_settle_ms,
         .token_budget            = inputs->run->budgets.tokens,
         .step_budget             = inputs->run->budgets.inference_steps,
+        .wall_budget_ms          = inputs->run->budgets.wall_ms,
+        .observation_marker      = config->observation_marker,
         .journal_header_capacity = workspace->trajectory_capacity,
         .journal_headers         = workspace->trajectory,
     };

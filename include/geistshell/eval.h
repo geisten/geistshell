@@ -25,7 +25,7 @@ enum spg_eval_outcome {
     SPG_EVAL_PASS = 0,
     SPG_EVAL_FAIL_TERMINATION, /* termination reason did not match */
     SPG_EVAL_FAIL_STEPS,       /* step count outside [min, max] */
-    SPG_EVAL_FAIL_OBSERVATION, /* required observation substring absent */
+    SPG_EVAL_FAIL_OBSERVATION, /* required substring in no step's observation */
     SPG_EVAL_FAIL_RUN_ERROR,   /* the run returned a non-OK status */
 };
 
@@ -34,7 +34,11 @@ struct spg_eval_expect {
     enum spg_agent_loop_termination termination;
     size_t                          min_steps;   /* 0 = no lower bound */
     size_t                          max_steps;   /* 0 = no upper bound */
-    const char                     *observation; /* required substring, or null */
+    /* Required substring, or null. Satisfied if it appeared in ANY step's
+     * observation, provided the caller also set the same string as
+     * spg_agent_run_config.observation_marker so the loop could latch it;
+     * otherwise only the final observation is checked. */
+    const char                     *observation;
 };
 
 struct spg_eval_case_result {

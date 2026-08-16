@@ -74,7 +74,7 @@ cat > "$T/run.spg" <<EOF
  (corpus "examples/corpus.spg")
  (journal "$T/j.sgj")
  (seed 42)
- (budgets (inference_steps 4) (tokens 256) (shell_actions 0) (sim_actions 4) (memory_actions 4) (wall_ms 10000) (journal_bytes 1048576) (risk_bp 10000)))
+ (budgets (inference_steps 4) (tokens 256) (shell_actions 0) (sim_actions 4) (memory_actions 4) (wall_ms 10000)))
 EOF
 
 # bound the run so a hang never wedges the suite (macOS has no timeout(1))

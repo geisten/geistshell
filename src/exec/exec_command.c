@@ -130,7 +130,7 @@ int spg_exec_command(const int argc, char **argv) {
     render_host(&w, &host);
     (void)spg_sexpr_writer_append_text(&w, " (command");
     render_field(&w, "name", argv[0]);
-    render_bool(&w, "known", known);
+    render_bool(&w, "uses_network", uses_network);
     render_u64(&w, "argc", (uint64_t)argc);
     (void)spg_sexpr_writer_append_text(&w, ")");
     (void)spg_sexpr_writer_append_text(&w, " (boundary");

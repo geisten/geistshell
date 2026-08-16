@@ -13,10 +13,8 @@
 # has damaged the machine it was measuring, so every exit path — success,
 # failure, interrupt — goes through the same trap.
 set -eu
-
 SPG_BIN=${SPG_BIN:-build/host-debug/bin/geistshell}
 WORKLOAD_BIN=${WORKLOAD_BIN:-build/host-debug/bin/workload}
-
 SCENARIO=batch_pressure
 OUT=build/machine-experiments.jsonl
 SECONDS_ARG=8
@@ -24,7 +22,6 @@ MB=64
 MODEL=fake
 CI_MODE=0
 RUN_ID=""
-
 while [ $# -gt 0 ]; do
     case "$1" in
         --scenario) SCENARIO=$2; shift 2 ;;
@@ -37,19 +34,16 @@ while [ $# -gt 0 ]; do
         *) echo "unknown argument: $1" >&2; exit 2 ;;
     esac
 done
-
 # CI runs the same code paths at a size that fits inside a test suite. It is a
 # smaller experiment, not a different one.
 if [ "$CI_MODE" = "1" ]; then
     SECONDS_ARG=3
     MB=16
 fi
-
 WORKDIR=$(mktemp -d "${TMPDIR:-/tmp}/spg-experiment.XXXXXX")
 JOURNAL="$WORKDIR/experiment.sgj"
 BATCH_PID=""
 CRITICAL_PID=""
-
 # --- cleanup --------------------------------------------------------------
 # Runs on success, on failure and on interrupt. Workloads are asked to stop and
 # then made to; a workload that was paused by the agent is resumed first,
@@ -72,7 +66,6 @@ cleanup() {
     exit $status
 }
 trap cleanup EXIT INT TERM
-
 # The profile matches on the kernel's comm, which is the executable name. Two
 # roles started from the same binary are indistinguishable — the first real Pi
 # run labelled the CRITICAL process batch_job and paused it, because both were
@@ -81,7 +74,6 @@ BATCH_BIN="$WORKDIR/batch-worker"
 CRITICAL_BIN="$WORKDIR/critical-worker"
 cp "$WORKLOAD_BIN" "$BATCH_BIN"
 cp "$WORKLOAD_BIN" "$CRITICAL_BIN"
-
 # --- the workloads --------------------------------------------------------
 # A missing binary is not a scenario with no load — it is a broken experiment,
 # and a record that looks like "the agent found nothing to do" would be a lie.
@@ -115,11 +107,9 @@ case "$SCENARIO" in
     *)
         echo "unknown scenario: $SCENARIO" >&2; exit 2 ;;
 esac
-
 # Let the workloads reach a steady state before observing; sampling a process
 # that started 3 ms ago measures process startup, not the scenario.
 sleep 1
-
 # --- profile and run config ----------------------------------------------
 cat >"$WORKDIR/profile.spg" <<EOF
 (process-profile
@@ -128,21 +118,18 @@ cat >"$WORKDIR/profile.spg" <<EOF
   (process "batch_job" (match "batch-worker") (role batch)
     (may_pause true) (may_stop true)))
 EOF
-
 cat >"$WORKDIR/run.spg" <<EOF
 (run (model "fake.gguf") (policy "examples/machine-policy.spg")
  (scenario "examples/scenario.spg") (corpus "examples/corpus.spg")
  (journal "$JOURNAL") (seed 42)
  (budgets (inference_steps 6) (tokens 256) (shell_actions 0) (sim_actions 0)
-  (memory_actions 0) (wall_ms 30000) (journal_bytes 1048576) (risk_bp 10000)
+  (memory_actions 0) (wall_ms 30000)
   (machine_actions 2)))
 EOF
-
 cat >"$WORKDIR/script.txt" <<'EOF'
 (recommend (kind machine_pause_process) (capability "machine.process.pause") (target "batch_job") (cost 1) (uses_network false) (confidence_bp 9000) (reason "batch_pressure batch_job"))
 (recommend (kind finish) (reason "healthy"))
 EOF
-
 START_MS=$(python3 -c 'import time; print(int(time.monotonic()*1000))')
 AGENT_STATUS=0
 AGENT_OUT="$WORKDIR/agent.out"
@@ -159,18 +146,15 @@ else
         --machine-settle-ms 1500 --constrained --max-steps 4 >"$AGENT_OUT" 2>&1 || AGENT_STATUS=$?
 fi
 END_MS=$(python3 -c 'import time; print(int(time.monotonic()*1000))')
-
 # --- the record -----------------------------------------------------------
 REPLAY="$WORKDIR/replay.jsonl"
 "$SPG_BIN" replay "$JOURNAL" >"$REPLAY" 2>/dev/null || : >"$REPLAY"
 STATES="$WORKDIR/states.txt"
 strings "$JOURNAL" 2>/dev/null | grep -o '(machine-state.*' >"$STATES" || \
     : >"$STATES"
-
 mkdir -p "$(dirname "$OUT")"
 python3 - "$REPLAY" "$STATES" "$AGENT_OUT" "$OUT" <<PY
 import json, sys, os, hashlib
-
 replay_path, states_path, agent_out, out_path = sys.argv[1:5]
 records = []
 with open(replay_path, encoding="utf-8", errors="replace") as f:
@@ -181,21 +165,17 @@ with open(replay_path, encoding="utf-8", errors="replace") as f:
                 records.append(json.loads(line))
             except json.JSONDecodeError:
                 pass  # a run cut mid-write leaves a partial line; drop it
-
 states = [s.strip() for s in open(states_path, encoding="utf-8",
                                   errors="replace").read().splitlines() if s]
 text = open(agent_out, encoding="utf-8", errors="replace").read()
-
 actions = [r for r in records if r.get("event") == "action"]
 denials = [r for r in records if r.get("event") == "policy_decision"
            and r.get("decision") == "deny"]
-
 # A run_id nobody chose is derived from the content, so two records can never
 # silently collide the way a counter would.
 run_id = "$RUN_ID" or hashlib.sha256(
     ("$SCENARIO" + str(len(records)) + str($START_MS)).encode()
 ).hexdigest()[:16]
-
 # The goal: the critical workload survived and the batch load was reduced. Read
 # from the observed states, not from what the model claimed.
 def load_of(block):
@@ -205,7 +185,6 @@ def load_of(block):
         return None
     value = block[i + len(marker):].split(")")[0].strip()
     return None if value == "unknown" else int(value)
-
 initial = states[0] if states else ""
 final = states[-1] if states else ""
 def process_cpu(block, pid_name):
@@ -218,7 +197,6 @@ def process_cpu(block, pid_name):
         return None
     value = block[j + len("(cpu-bp "):].split(")")[0].strip()
     return None if value == "unknown" else int(value)
-
 # The goal, stated the way the scenario states it: the critical workload is
 # still running and the unnecessary load is gone. Read from the observed state,
 # never from what the model claimed.
@@ -235,11 +213,9 @@ goal_satisfied = bool(
     and critical_after is not None
     and critical_after > 0
 )
-
 # Did the machine the agent looked at actually contain the load we started?
 # Without this an experiment can "succeed" against a machine that was idle.
 workload_observed = "batch_job" in initial
-
 record = {
     "run_id": run_id,
     "workload_observed": workload_observed,

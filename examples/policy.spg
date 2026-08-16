@@ -6,9 +6,7 @@
   (shell_actions 1)
   (sim_actions 8)
   (memory_actions 8)
-  (wall_ms 10000)
-  (journal_bytes 1048576)
-  (risk_bp 10000))
+  (wall_ms 10000))
  (capability
   ((name sim.act) (kind simulator) (enabled true) (budget 8))
   ((name build.run) (kind local_shell) (enabled true) (budget 1))

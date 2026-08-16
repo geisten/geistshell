@@ -6,23 +6,18 @@
  * still the one the gate decided about, because a pid can be recycled in
  * between. A test that only covered the first would miss the bug that matters
  * most. */
-
 #include "geistshell/machine_executor.h"
 #include "geistshell/policy_gate.h"
 #include "geistshell/process_profile.h"
-
 #include <stdio.h>
 #include <string.h>
-
 #define LIT(s) (sizeof(s) - 1u), (s)
-
 static const char profile_text[] =
     "(process-profile\n"
     "  (process \"critical_app\" (match \"crit\") (role critical)\n"
     "    (may_pause false) (may_stop false))\n"
     "  (process \"batch_job\" (match \"batch\") (role batch)\n"
     "    (may_pause true) (may_stop true)))\n";
-
 static bool load_profile(struct spg_process_profile *out) {
     static struct spg_sexpr_token    tokens[512];
     static struct spg_sexpr_node     nodes[512];
@@ -30,7 +25,6 @@ static bool load_profile(struct spg_process_profile *out) {
     return spg_process_profile_load(LIT(profile_text), 512u, tokens, 512u,
                                     nodes, out, &err) == SPG_OK;
 }
-
 static struct spg_machine_state two_processes(void) {
     struct spg_machine_state s = {.n_processes = 2u};
     s.processes[0] =
@@ -43,7 +37,6 @@ static struct spg_machine_state two_processes(void) {
     memcpy(s.processes[1].profile_id, "batch_job", sizeof "batch_job");
     return s;
 }
-
 /* Build a recommendation the way the parser would, so the gate sees the same
  * spans a real model output produces. */
 static bool parse_rec(const char *text, struct spg_recommendation *out) {
@@ -54,24 +47,21 @@ static bool parse_rec(const char *text, struct spg_recommendation *out) {
                                     nodes, out, &err) == SPG_OK &&
            out->state == SPG_RECOMMENDATION_VALID;
 }
-
 static const char policy_text[] =
     "(policy\n"
     " (network_default deny)\n"
     " (budgets (inference_steps 8) (tokens 256) (shell_actions 0)\n"
     "  (sim_actions 0) (memory_actions 0) (wall_ms 1000)\n"
-    "  (journal_bytes 4096) (risk_bp 10000) (machine_actions 4))\n"
+    " (machine_actions 4))\n"
     " (capability\n"
     "  ((name machine.process.pause) (kind machine_process)\n"
     "   (enabled true) (budget 4))))\n";
-
 struct gate_env {
     struct spg_policy_config   policy;
     struct spg_process_profile profile;
     struct spg_machine_state   machine;
     struct spg_policy_usage    usage;
 };
-
 static bool gate_env_init(struct gate_env *env) {
     static struct spg_sexpr_token  tokens[512];
     static struct spg_sexpr_node   nodes[512];
@@ -88,7 +78,6 @@ static bool gate_env_init(struct gate_env *env) {
     env->usage   = (struct spg_policy_usage){};
     return true;
 }
-
 static enum spg_policy_deny_reason
 decide(struct gate_env *env, const char *rec_text, bool with_profile) {
     struct spg_recommendation rec = {};
@@ -117,12 +106,10 @@ decide(struct gate_env *env, const char *rec_text, bool with_profile) {
                ? SPG_POLICY_DENY_NONE
                : result.decision.deny_reason;
 }
-
 #define PAUSE(t)                                                               \
     "(recommend (kind machine_pause_process) "                                 \
     "(capability \"machine.process.pause\") (target \"" t "\") (cost 1) "      \
     "(uses_network false) (confidence_bp 9000) (reason \"r\"))"
-
 static int test_allows_managed_batch(void) {
     struct gate_env env = {};
     if (!gate_env_init(&env)) {
@@ -131,7 +118,6 @@ static int test_allows_managed_batch(void) {
     return decide(&env, PAUSE("batch_job"), true) == SPG_POLICY_DENY_NONE ? 0
                                                                           : 1;
 }
-
 /* The one denial the whole phase is built around: a critical process is never
  * pausable, and the refusal comes from the policy layer, not from the executor
  * deciding to be careful. */
@@ -148,7 +134,6 @@ static int test_denies_critical(void) {
     }
     return 0;
 }
-
 static int test_denies_unmanaged(void) {
     struct gate_env env = {};
     if (!gate_env_init(&env)) {
@@ -167,7 +152,6 @@ static int test_denies_unmanaged(void) {
     }
     return 0;
 }
-
 /* Managed and permitted, but not in this tick's snapshot: acting on it would
  * mean acting on a guess. */
 static int test_denies_unobserved(void) {
@@ -181,7 +165,6 @@ static int test_denies_unobserved(void) {
                ? 0
                : 1;
 }
-
 static int test_denies_when_budget_exhausted(void) {
     struct gate_env env = {};
     if (!gate_env_init(&env)) {
@@ -197,7 +180,6 @@ static int test_denies_when_budget_exhausted(void) {
     }
     return 0;
 }
-
 /* A protected process must not even cost budget to be refused, and the journal
  * should say why it was refused rather than that we ran out. */
 static int test_protection_precedes_budget(void) {
@@ -211,7 +193,6 @@ static int test_protection_precedes_budget(void) {
                ? 0
                : 1;
 }
-
 static int test_denies_wrong_capability(void) {
     struct gate_env env = {};
     if (!gate_env_init(&env)) {
@@ -229,7 +210,6 @@ static int test_denies_wrong_capability(void) {
     }
     return 0;
 }
-
 /* The grammar refuses a machine action carrying a command. This is the
  * property that makes the action space closed: there is no field through which
  * a shell string could reach an executor. */
@@ -250,7 +230,6 @@ static int test_grammar_rejects_command(void) {
                             "(reason \"r\"))";
     return parse_rec(no_target, &rec) ? 1 : 0;
 }
-
 /* Phase 6b (#80): a pause that cannot be recorded does not happen. Stopping a
  * process nobody owes a resume for is the one way this runtime leaves lasting
  * damage without any policy being violated. */
@@ -280,7 +259,6 @@ static int test_untracked_pause_is_refused(void) {
     }
     return 0;
 }
-
 /* The release must skip a pid whose identity no longer matches: resuming a
  * stranger is worse than resuming nothing. */
 static int test_release_is_identity_checked(void) {
@@ -310,11 +288,8 @@ static int test_release_is_identity_checked(void) {
                ? 0
                : 1;
 }
-
 /* --- executor ----------------------------------------------------------- */
-
 static struct spg_machine_pause_ledger test_ledger;
-
 static enum spg_machine_exec_outcome
 exec_target(const struct spg_machine_state *machine, const char *target,
             const bool enabled) {
@@ -332,7 +307,6 @@ exec_target(const struct spg_machine_state *machine, const char *target,
     }
     return r.outcome;
 }
-
 static int test_executor_resolves_target(void) {
     const struct spg_machine_state s = two_processes();
     /* An id the snapshot does not contain is not signalled, whatever the gate
@@ -350,7 +324,6 @@ static int test_executor_resolves_target(void) {
     }
     return 0;
 }
-
 /* pid 1 and the agent itself are refused by the executor even if every layer
  * above it said yes. The last line does not assume the others are perfect. */
 static int test_executor_refuses_dangerous_pids(void) {
@@ -377,7 +350,6 @@ static int test_executor_refuses_dangerous_pids(void) {
     }
     return 0;
 }
-
 static int test_executor_null_args(void) {
     char                                        payload[64];
     const struct spg_machine_executor_state     st  = {};
@@ -403,7 +375,6 @@ static int test_executor_null_args(void) {
     }
     return 0;
 }
-
 int main(void) {
     const struct {
         const char *name;

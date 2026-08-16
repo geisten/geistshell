@@ -5,17 +5,13 @@
  * worth testing is that the context of the tick AFTER an action carries the
  * world the action produced, and the only honest way to see that is to read
  * the context the agent was actually given. */
-
 #include "geistshell/agent_run.h"
 #include "geistshell/eval.h"
 #include "geistshell/machine_fixture.h"
 #include "geistshell/process_profile.h"
-
 #include <stdio.h>
 #include <string.h>
-
 #define LIT(s) (sizeof(s) - 1u), (s)
-
 static const char before_text[] =
     "(machine-state (cpu-load-bp 9400) (temperature-mc 68000)\n"
     " (memory-total-bytes 4245815296) (memory-used-bytes 1200000000)\n"
@@ -23,7 +19,6 @@ static const char before_text[] =
     " (rss-bytes 52428800))\n"
     " (process (id \"batch_job\") (role batch) (cpu-bp 8500)"
     " (rss-bytes 104857600)))\n";
-
 static const char after_text[] =
     "(machine-state (cpu-load-bp 1500) (temperature-mc 58000)\n"
     " (memory-total-bytes 4245815296) (memory-used-bytes 1150000000)\n"
@@ -31,31 +26,27 @@ static const char after_text[] =
     " (rss-bytes 52428800))\n"
     " (process (id \"batch_job\") (role batch) (cpu-bp 0)"
     " (rss-bytes 104857600)))\n";
-
 static const char profile_text[] =
     "(process-profile\n"
     "  (process \"critical_app\" (match \"crit\") (role critical)\n"
     "    (may_pause false) (may_stop false))\n"
     "  (process \"batch_job\" (match \"batch\") (role batch)\n"
     "    (may_pause true) (may_stop true)))\n";
-
 static const char policy_text[] =
     "(policy\n"
     " (network_default deny)\n"
     " (budgets (inference_steps 8) (tokens 256) (shell_actions 0)\n"
     "  (sim_actions 0) (memory_actions 0) (wall_ms 10000)\n"
-    "  (journal_bytes 65536) (risk_bp 10000) (machine_actions 4))\n"
+    " (machine_actions 4))\n"
     " (capability\n"
     "  ((name machine.process.pause) (kind machine_process)\n"
     "   (enabled true) (budget 4))))\n";
-
 static const char run_text[] =
     "(run (model \"fake.gguf\") (policy \"p\") (scenario \"s\")\n"
     " (corpus \"c\") (journal \"j\") (seed 42)\n"
     " (budgets (inference_steps 8) (tokens 256) (shell_actions 0)\n"
     "  (sim_actions 0) (memory_actions 0) (wall_ms 10000)\n"
-    "  (journal_bytes 65536) (risk_bp 10000) (machine_actions 4)))\n";
-
+    " (machine_actions 4)))\n";
 static bool load_state(const size_t n, const char text[],
                        struct spg_machine_state *out) {
     static struct spg_sexpr_token tokens[512];
@@ -63,7 +54,6 @@ static bool load_state(const size_t n, const char text[],
     return spg_machine_state_parse(n, text, 512u, tokens, 512u, nodes, out) ==
            SPG_OK;
 }
-
 static int test_second_tick_sees_the_effect(void) {
     struct spg_machine_state   before  = {};
     struct spg_machine_state   after   = {};
@@ -92,7 +82,6 @@ static int test_second_tick_sees_the_effect(void) {
                             &rerr) != SPG_OK) {
         return 1;
     }
-
     static char                           context[65536];
     static char                           model_output[8192];
     static struct spg_context_graph_ref   graph_refs[8];
@@ -128,7 +117,6 @@ static int test_second_tick_sees_the_effect(void) {
         .memory_index_capacity   = sizeof mem_index,
         .memory_index            = mem_index,
     };
-
     struct spg_machine_pause_ledger ledger = {};
     struct spg_agent_run_inputs     inputs = {
         .policy          = &policy,
@@ -142,7 +130,6 @@ static int test_second_tick_sees_the_effect(void) {
         .pause_ledger    = &ledger,
     };
     const struct spg_agent_run_config cfg = {.max_steps = 4u};
-
     const struct spg_fake_response script[] = {
         {.n = 0u,
          .text =
@@ -186,7 +173,6 @@ static int test_second_tick_sees_the_effect(void) {
     }
     return 0;
 }
-
 /* Without refresh the loop is what phase 6 had: one snapshot for the whole
  * run. Keeping that path working matters — a diagnosis run has no action whose
  * effect it would need to see. */
@@ -197,7 +183,6 @@ static int test_without_refresh_the_snapshot_holds(void) {
     }
     return before.n_processes == 2u ? 0 : 1;
 }
-
 int main(void) {
     const struct {
         const char *name;

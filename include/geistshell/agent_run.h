@@ -98,6 +98,10 @@ struct spg_agent_run_config {
      * (directive "...") — the strong steering channel (vs the mind-palace
      * index). Null/absent or missing in the store -> no directive line. */
     const char *directive_slug;
+    /* Success marker watched across every step's observation, not just the
+     * final one — see agent_loop.h. Set it to the (expect ...) substring the
+     * run is judged against. Null = not watched. */
+    const char *observation_marker;
 };
 
 /* Caller-owned scratch. All buffers must be non-null with non-zero capacity
@@ -134,8 +138,12 @@ struct spg_agent_run_workspace {
     struct spg_journal_record_header *trajectory;
     /* Optional: when inputs->store is set, the mind-palace index is rendered
      * here each step and injected into context (so lessons/memories recall). */
-    size_t memory_index_capacity;
-    char  *memory_index;
+    size_t                  memory_index_capacity;
+    char                   *memory_index;
+    /* Optional: when set, live host telemetry is rendered here each step and
+     * injected as (host_status ...). Null = off (the default). */
+    size_t                  host_status_capacity;
+    char                   *host_status;
 };
 
 /* Runs the loop, filling *usage (zeroed first) and *result. Returns

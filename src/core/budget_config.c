@@ -32,10 +32,11 @@ static const struct budget_field budget_fields[] = {
     {"machine_actions", offsetof(struct spg_run_budgets, machine_actions), true,
      UINT64_MAX},
     {"wall_ms", offsetof(struct spg_run_budgets, wall_ms), false, 0u},
-    {"journal_bytes", offsetof(struct spg_run_budgets, journal_bytes), false,
-     0u},
-    {"risk_bp", offsetof(struct spg_run_budgets, risk_bp), false, 0u},
 };
+/* journal_bytes and risk_bp were declared, rendered into every prompt, and
+ * enforced nowhere; removed 2026-08-09. Unknown names fall through the table
+ * below and fail SPG_E_SCHEMA, so an old config breaks loudly rather than
+ * silently paying context bytes for a number nothing reads. */
 
 static constexpr size_t budget_field_count =
     sizeof(budget_fields) / sizeof(budget_fields[0]);

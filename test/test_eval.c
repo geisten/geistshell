@@ -17,7 +17,7 @@
 static const char policy_text[] =
     "(policy (network_default deny)"
     " (budgets (inference_steps 100) (tokens 4096) (shell_actions 8)"
-    "  (sim_actions 8) (wall_ms 60000) (journal_bytes 1048576) (risk_bp 10000))"
+    "  (sim_actions 8) (wall_ms 60000))"
     " (capability ((name sim.act) (kind simulator) (enabled true) (budget 8))))";
 
 static const char scenario_text[] =
@@ -29,7 +29,7 @@ static const char run_text[] =
     "(run (model \"fake\") (policy \"p\") (scenario \"s\") (corpus \"c\")"
     " (journal \"j\") (seed 42)"
     " (budgets (inference_steps 100) (tokens 4096) (shell_actions 8)"
-    "  (sim_actions 8) (wall_ms 60000) (journal_bytes 1048576) (risk_bp 10000)))";
+    "  (sim_actions 8) (wall_ms 60000)))";
 
 #define FR(s) ((struct spg_fake_response){.n = sizeof(s) - 1u, .text = (s)})
 

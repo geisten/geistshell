@@ -25,17 +25,14 @@ static void build_budgets(const struct spg_run_config    *run,
     *out = (struct spg_context_budget_view){
         .inference_steps =
             budget_item(configured.inference_steps, consumed.inference_steps),
-        .tokens = budget_item(configured.tokens, consumed.tokens),
-        .shell_actions =
-            budget_item(configured.shell_actions, consumed.shell_actions),
-        .sim_actions =
-            budget_item(configured.sim_actions, consumed.sim_actions),
-        .memory_actions =
-            budget_item(configured.memory_actions, consumed.memory_actions),
-        .wall_ms = budget_item(configured.wall_ms, consumed.wall_ms),
-        .journal_bytes =
-            budget_item(configured.journal_bytes, consumed.journal_bytes),
-        .risk_bp = budget_item(configured.risk_bp, consumed.risk_bp),
+        .tokens        = budget_item(configured.tokens, consumed.tokens),
+        .shell_actions = budget_item(configured.shell_actions,
+                                     consumed.shell_actions),
+        .sim_actions   = budget_item(configured.sim_actions,
+                                     consumed.sim_actions),
+        .memory_actions = budget_item(configured.memory_actions,
+                                      consumed.memory_actions),
+        .wall_ms       = budget_item(configured.wall_ms, consumed.wall_ms),
     };
 }
 
@@ -562,8 +559,6 @@ static void render_budgets(struct render_state                  *state,
     append_budget_line(state, "sim_actions", budgets->sim_actions);
     append_budget_line(state, "memory_actions", budgets->memory_actions);
     append_budget_line(state, "wall_ms", budgets->wall_ms);
-    append_budget_line(state, "journal_bytes", budgets->journal_bytes);
-    append_budget_line(state, "risk_bp", budgets->risk_bp);
     append_cstr(state, ")\n");
 }
 
@@ -784,6 +779,13 @@ enum spg_status spg_context_render(const struct spg_context_sources *sources,
         append_cstr(&state, ")\n");
     }
     render_budgets(&state, &view->budgets);
+    /* Beside the budgets on purpose: both answer "what have I got left to
+     * spend", one in policy units and one in machine units. Already a complete
+     * s-expression, so it goes in verbatim. */
+    if (sources->host_status != nullptr && sources->host_status[0] != '\0') {
+        append_cstr(&state, sources->host_status);
+        append_char(&state, '\n');
+    }
     render_machine(sources, &state);
     render_graph(sources, view, &state);
     render_memory(sources, view, &state);

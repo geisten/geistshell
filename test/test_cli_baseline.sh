@@ -19,7 +19,11 @@ JOURNAL=build/tick-demo.sgj  # path comes from examples/run.spg
 # record chain — legitimately changed. The run is still deterministic; it now
 # contains one more constant block.
 #   before 52bd794e11885e1b8ae257ef037a1b87b2ed3fa8311ca85b557253c99e537365
-EXPECTED=8b831838c4c21eb6f11903d7ece6013546e67ef89bccd7f1a4350cc077761c65
+# Updated for the budget cleanup: journal_bytes and risk_bp left the config
+# and with them the two (budget ...) lines in the rendered context, so the
+# model_input payload — and the hashed record chain — legitimately changed.
+#   before 8b831838c4c21eb6f11903d7ece6013546e67ef89bccd7f1a4350cc077761c65
+EXPECTED=fa9442b2ff091b7c35d8d75bf5a150970c7ece18f65a4c73dc1bf4f72f26fd1a
 
 sha256_of() {
     if command -v sha256sum >/dev/null 2>&1; then

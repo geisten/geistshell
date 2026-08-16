@@ -19,8 +19,6 @@
   (sim_actions 0)
   (memory_actions 0)
   (wall_ms 10000)
-  (journal_bytes 1048576)
-  (risk_bp 10000)
   ; device_write consumes machine_actions — it shares the budget with
   ; pause/resume while keeping its own capability.
   (machine_actions 4))

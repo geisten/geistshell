@@ -59,6 +59,12 @@ struct spg_agent_loop_config {
      * an observation parameter, not hidden behaviour, so the caller sets it. */
     uint64_t machine_settle_ms;
 
+    /* Wall-clock cap, checked between steps against CLOCK_MONOTONIC. Sourced
+     * from budgets.wall_ms. A step already in flight is not interrupted — a
+     * hung shell action is bounded by exec_timeout_ms, not by this. 0 =
+     * unlimited. */
+    uint64_t wall_budget_ms;
+
     /* Self-repair: when a step's recommendation is malformed, write the parse
      * error into the observation channel and retry instead of terminating, up
      * to this many times total. 0 = terminate on the first rejection. Repairs
@@ -73,6 +79,15 @@ struct spg_agent_loop_config {
      * but never chooses `(kind finish)`, so it acts forever until the step cap.
      * Off by default (a plain max_steps run is unchanged); the CLI enables it. */
     bool finish_on_no_progress;
+
+    /* Success marker for the (expect ...) verdict. The observation channel is
+     * overwritten every step, so judging the FINAL observation alone scores a
+     * run that reached the goal and then took one more step as a failure
+     * (measured 2026-08-09: a simulator step followed by a shell step ended on
+     * "exit 0" and scored fail_observation with termination=finished). The loop
+     * therefore watches every step's observation and records whether the marker
+     * ever appeared. Null = not watched. */
+    const char *observation_marker;
 
     /* Slug-triggered lesson auto-injection budget (docs/LEARNING.md P6): when a
      * step is rejected and a stored lesson names that failure slug, its
@@ -97,6 +112,9 @@ struct spg_agent_loop_result {
      * actions must be checked against what happened, not against how many
      * times the model was asked. */
     size_t                          actions_executed;
+    /* config.observation_marker appeared in some step's observation. False when
+     * no marker was configured. */
+    bool                            observation_seen;
     enum spg_agent_loop_termination termination;
     enum spg_status                 last_status; /* last tick status */
     struct spg_orchestrator_result  last;        /* final step's result */

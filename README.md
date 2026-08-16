@@ -11,21 +11,19 @@ The language model is swappable and external (the [geist](https://github.com/gei
 engine, pinned). geistshell owns everything *around* the model: perception,
 governance, execution, audit, memory, evaluation, and learning.
 
-## geistshell vs geistagent — two runtimes, two jobs
+## geistshell 
 
 They are deliberately separate because they enforce different security models;
 merging them would weaken both.
 
-| | **geistshell** (this repo) | **[geistagent](https://github.com/geisten/geistagent)** |
+| | **geistshell** (this repo) | |
 |---|---|---|
-| Job | *execute* arbitrary governed actions (shell, scripts) and learn from them | *call* a fixed, host-supplied toolset safely |
-| Action space | open — any command the policy gate + OS sandbox allow | closed — an off-list tool name never runs |
-| Output model | incremental (`poll()`-drained stdout/stderr, journaled) | one atomic `tool.result` per call |
-| Learning | built-in eval-gated self-improvement loop (`improve`) | offline skill miner over the same gate |
-| Use it for | "write a script, run it, watch the output, react" | "turn on the hallway light" |
+| Job | *execute* arbitrary governed actions (shell, scripts) and learn from them | |
+| Action space | open — any command the policy gate + OS sandbox allow | |
+| Output model | incremental (`poll()`-drained stdout/stderr, journaled) |  |
+| Learning | built-in eval-gated self-improvement loop (`improve`) | |
+| Use it for | "write a script, run it, watch the output, react" |  |
 
-Rule of thumb: **bounded tool-calling → geistagent; open action execution →
-geistshell.**
 
 Device control is the exception that proves the rule: geistshell drives real
 machines through a *closed* channel table (range-checked, safe-valued,

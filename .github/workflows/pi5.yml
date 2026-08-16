@@ -1,0 +1,88 @@
+name: Raspberry Pi 5
+
+# The Pi is a persistent self-hosted machine. Only branches in this repository
+# may execute PR code on it; fork PRs must never run on the private host.
+on:
+  pull_request:
+    branches: [main]
+    types: [opened, synchronize, reopened, ready_for_review]
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: pi5-geistshell-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  test-bench:
+    name: tests + benchmark (Pi 5)
+    if: >-
+      ${{ github.event_name != 'pull_request' ||
+          (!github.event.pull_request.draft &&
+           github.event.pull_request.head.repo.full_name == github.repository) }}
+    runs-on: [self-hosted, Linux, ARM64, pi5]
+    timeout-minutes: 60
+
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+
+      - name: Verify Pi 5 environment
+        run: |
+          set -eu
+          test "$(uname -m)" = aarch64
+          gcc --version | head -n 1
+          test "$(gcc -dumpversion | cut -d. -f1)" -ge 14
+          nproc
+          vcgencmd measure_temp 2>/dev/null || true
+          vcgencmd get_throttled 2>/dev/null || true
+
+      - name: Clean build and test
+        run: |
+          set -eu
+          make clean
+          make sync-engine
+          make host-debug HOST_CC=gcc
+          make test BUILD_MODE=host-debug HOST_CC=gcc
+
+      - name: Release build
+        if: always()
+        run: make host-release HOST_CC=gcc
+
+      - name: Deterministic end-to-end benchmarks
+        if: always()
+        env:
+          SPG_BIN: build/host-release/bin/geistshell
+        run: |
+          set -eu
+          test -x "$SPG_BIN"
+          sh examples/eval/bench/improve_benchmark.sh | tee pi5-improve-bench.txt
+          sh eval/bench_context.sh | tee pi5-context-bench.txt
+
+      - name: Add benchmarks to job summary
+        if: always()
+        run: |
+          {
+            echo '### Eval-gated improvement'
+            echo '```text'
+            cat pi5-improve-bench.txt 2>/dev/null || echo 'benchmark did not produce output'
+            echo '```'
+            echo '### Context cost'
+            echo '```text'
+            cat pi5-context-bench.txt 2>/dev/null || echo 'benchmark did not produce output'
+            echo '```'
+          } >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Upload benchmark results
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: geistshell-pi5-benchmarks-${{ github.run_id }}
+          path: pi5-*-bench.txt
+          if-no-files-found: ignore
+          retention-days: 14

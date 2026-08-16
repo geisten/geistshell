@@ -1,6 +1,8 @@
 #include "geistshell/device_executor.h"
 #include "geistshell/orchestrator.h"
 
+#include "geistshell/host_probe.h"
+
 #include <string.h>
 
 static bool
@@ -192,6 +194,20 @@ spg_orchestrator_tick(struct spg_orchestrator_state           *state,
                             workspace->memory_index_buf, nullptr, nullptr);
         memory_index = workspace->memory_index_buf;
     }
+    /* Re-read the machine every tick: a load average or a die temperature from
+     * the previous step is not telemetry, it is a stale number that reads like
+     * telemetry. A host that answers nothing leaves the line out entirely. */
+    const char *host_status = nullptr;
+    if (workspace->host_status_buf != nullptr &&
+        workspace->host_status_capacity > 0u) {
+        struct spg_host_telemetry telemetry = {};
+        if (spg_host_telemetry_read(&telemetry) == SPG_OK &&
+            spg_host_telemetry_render(&telemetry,
+                                      workspace->host_status_capacity,
+                                      workspace->host_status_buf) == SPG_OK) {
+            host_status = workspace->host_status_buf;
+        }
+    }
     struct spg_actor_state actor_state = {
         .graph                = state->graph,
         .memory               = state->memory,
@@ -216,6 +232,7 @@ spg_orchestrator_tick(struct spg_orchestrator_state           *state,
         .machine_goal         = state->machine_goal,
         .profile              = state->profile_model,
         .machine_ablate       = state->machine_ablate,
+        .host_status          = host_status,
     };
     const struct spg_actor_step_config actor_config = {
         .actor_id            = config->actor_id,

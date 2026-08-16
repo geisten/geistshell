@@ -11,8 +11,6 @@
   (sim_actions 0)
   (memory_actions 0)
   (wall_ms 10000)
-  (journal_bytes 1048576)
-  (risk_bp 10000)
   (machine_actions 4))
  (capability
   ((name machine.process.pause) (kind machine_process) (enabled true) (budget 2))

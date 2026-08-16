@@ -36,7 +36,7 @@ run_pass() { # $1 = memory dir, $2 = distill|none ; prints table, returns via ec
     while [ "$k" -lt "$N" ]; do
         k=$((k+1)); eval "goal=\$G$k; cmd=\$C$k; exp=\$E$k"
         J="$T/j_${MODE}_$k.sgj"
-        printf '(run\n (model "fake.gguf")\n (policy "examples/policy.spg")\n (scenario "examples/scenario.spg")\n (corpus "examples/corpus.spg")\n (journal "%s")\n (seed 42)\n (budgets (inference_steps 4) (tokens 256) (shell_actions 1) (sim_actions 8) (wall_ms 30000) (journal_bytes 1048576) (risk_bp 10000))\n (expect "%s"))\n' "$J" "$exp" > "$T/run.spg"
+        printf '(run\n (model "fake.gguf")\n (policy "examples/policy.spg")\n (scenario "examples/scenario.spg")\n (corpus "examples/corpus.spg")\n (journal "%s")\n (seed 42)\n (budgets (inference_steps 4) (tokens 256) (shell_actions 1) (sim_actions 8) (wall_ms 30000))\n (expect "%s"))\n' "$J" "$exp" > "$T/run.spg"
         printf '(recommend (kind local_shell) (capability "build.run") (cost 1) (uses_network false) (confidence_bp 7000) (reason "task") (command "%s"))\n(recommend (kind finish) (reason "done"))\n' "$cmd" > "$T/s.txt"
 
         "$SPG" memory directive "$SKILL_SLUG" --dir "$MEM" >/dev/null 2>&1 && inj=yes || inj=no
