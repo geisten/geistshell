@@ -254,7 +254,8 @@ $(OBJ_DIR)/%.o: %.c | $(GEIST_DIR)/include/geist.h
 
 # Phase 8 (#68): reproducible load for machine experiments. Same flags as
 # everything else, so a sanitiser build covers it too.
-$(WORKLOAD_BIN): examples/machine/workloads/workload.c | $(BIN_DIR)
+$(WORKLOAD_BIN): examples/machine/workloads/workload.c
+	@mkdir -p $(@D)
 	$(CC) $(CFLAGS) -o $@ $<
 
 # Link-time backend selection means a build compiles exactly ONE of the three
