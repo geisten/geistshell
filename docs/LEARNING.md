@@ -665,6 +665,43 @@ mechanism (decode-side, #26 follow-up) or a larger model. Widening the corpus
 means minting more literal-composition variants, and each needs its own
 census row before it counts as headroom.
 
+## Directive × best-of-N on the headroom corpus — first positive lift (2026-08-17, Pi/Gemma)
+
+`bench_directive_headroom.sh`: the two census HEADROOM tasks, each with a
+lesson whose description IS the exact recipe ("Emit the shell command: echo
+1 2 3 4 5"), rendered as the Weg-1 strong channel every step. Control vs
+lesson, best-of-6, T=0.9, three reps, quiesced box, engine v0.9.0.
+
+| task / rep | control pass/att | lesson pass/att |
+|---|---|---|
+| seq 1..3 | 1/1, 1/2, 1/1 | 1/2, 1/1, 1/1 |
+| twice 1 | 1/4 | 1/2 |
+| twice 2 | **0/6** | **1/1** |
+| twice 3 | 1/2 | 1/2 |
+| **total** | **5/6 pass, 16 attempts** | **6/6 pass, 9 attempts** |
+
+**The directive shifts sampling mass — the first positive lift a lesson has
+ever shown in this project.** On `twice`, the task with real headroom, the
+recipe directive dominated every rep (4→2, 6→1, 2→2 attempts) and converted
+the one run control lost outright. `seq` tied exactly (best-of-6 turned out
+to be near-ceiling there; the census's single-shot 1/6 understated it) and
+contributes no signal either way.
+
+The resolution of the greedy-era conclusion: a directive **cannot flip the
+greedy argmax** (every earlier probe), but under temperature sampling it
+**biases the draw**, and the best-of-N verifier converts that bias into fewer
+attempts and recovered runs. Lessons on a small model are a *sampling prior*,
+not a command — they pay off only in the sampled+verified regime, which
+best-of-N (#2) already made the production path for borderline tasks.
+
+Honest bounds: n=6 paired runs, and the signal lives in one task — `twice` —
+because the corpus's headroom band is that narrow. The direction was
+consistent across all three reps and includes a 0/6→1/1 conversion, but
+widening the literal-composition corpus (each new task census-verified first)
+is what would turn "first positive lift" into a load-bearing number. Next
+per the lever ladder: structure-carry (Hebel 3) and lesson-as-slot-bias
+(Hebel 2), both now decidable on this corpus.
+
 ## Not to be confused with geistagent
 
 The sibling [geistagent](https://github.com/geisten/geistagent) runs the same
