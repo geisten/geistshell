@@ -11,9 +11,7 @@ static const char policy_text[] =
     "  (tokens 4096)"
     "  (shell_actions 1)"
     "  (sim_actions 8)"
-    "  (wall_ms 60000)"
-    "  (journal_bytes 1048576)"
-    "  (risk_bp 10000))"
+    "  (wall_ms 60000))"
     " (capability"
     "  ((name build.run) (kind local_shell) (enabled true) (budget 1))"
     "  ((name sim.act) (kind simulator) (enabled true) (budget 8))))";

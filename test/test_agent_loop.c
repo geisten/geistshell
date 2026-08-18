@@ -25,9 +25,7 @@ static const char policy_text[] =
     "  (tokens 4096)"
     "  (shell_actions 8)"
     "  (sim_actions 8)"
-    "  (wall_ms 60000)"
-    "  (journal_bytes 1048576)"
-    "  (risk_bp 10000))"
+    "  (wall_ms 60000))"
     " (capability"
     "  ((name sim.act) (kind simulator) (enabled true) (budget 8))"
     "  ((name build.run) (kind local_shell) (enabled true) (budget 8))"
@@ -90,6 +88,12 @@ static int load_sim(struct spg_sim_config *sim) {
                ? 0
                : 1;
 }
+
+/* Only the wall-budget and observation-marker tests vary these, and run_script
+ * already takes seven parameters — file-scope knobs are a shorter diff than
+ * more arguments threaded through every call site. Reset them after use. */
+static uint64_t    g_wall_budget_ms     = 0u;
+static const char *g_observation_marker = nullptr;
 
 /* Run a scripted agent loop. Returns 0 on setup success (the loop's own status
  * is in *out via the result + the returned run status). */
@@ -184,6 +188,8 @@ static int run_script(const struct spg_fake_response *resp, const size_t count,
         .max_steps               = max_steps,
         .max_repairs             = max_repairs,
         .step_budget             = step_budget,
+        .wall_budget_ms          = g_wall_budget_ms,
+        .observation_marker      = g_observation_marker,
         .finish_on_no_progress   = finish_on_no_progress,
         .journal_header_capacity = sizeof fx->trajectory / sizeof fx->trajectory[0],
         .journal_headers         = fx->trajectory,
@@ -275,6 +281,107 @@ static int test_max_steps(void) {
                        : 1;
     teardown(&fx);
     return ok;
+}
+
+/* wall_ms used to be declared in every run config, rendered into every prompt,
+ * and enforced nowhere. Each step sleeps 100 ms against a 30 ms budget, so the
+ * guard must fire before step 2. The second half runs the identical script with
+ * an unlimited wall budget and expects it to reach the step cap — without that
+ * control the first half would also pass if the loop stopped for some other
+ * reason. */
+static int test_wall_budget(void) {
+    static const struct spg_fake_response script[] = {
+        FR("(recommend (kind local_shell) (capability \"build.run\") (cost 1) "
+           "(uses_network false) (confidence_bp 7000) (reason \"wait\") "
+           "(command \"sleep 0.1\"))"),
+        FR("(recommend (kind local_shell) (capability \"build.run\") (cost 1) "
+           "(uses_network false) (confidence_bp 7000) (reason \"wait\") "
+           "(command \"sleep 0.1\"))"),
+        FR("(recommend (kind local_shell) (capability \"build.run\") (cost 1) "
+           "(uses_network false) (confidence_bp 7000) (reason \"wait\") "
+           "(command \"sleep 0.1\"))"),
+    };
+    struct loop_fixture          fx  = {};
+    struct spg_agent_loop_result out = {};
+
+    g_wall_budget_ms = 30u;
+    const int setup  = run_script(script, 3u, 3u, true, 0u, 0u, false, &fx, &out);
+    g_wall_budget_ms = 0u;
+    if (setup != 0) {
+        teardown(&fx);
+        return 1;
+    }
+    const int capped = (out.termination == SPG_AGENT_LOOP_BUDGET &&
+                        out.steps_taken == 1u)
+                           ? 0
+                           : 1;
+    teardown(&fx);
+    if (capped != 0) {
+        return 1;
+    }
+
+    struct loop_fixture          fx2  = {};
+    struct spg_agent_loop_result out2 = {};
+    if (run_script(script, 3u, 3u, true, 0u, 0u, false, &fx2, &out2) != 0) {
+        teardown(&fx2);
+        return 1;
+    }
+    const int uncapped = (out2.termination == SPG_AGENT_LOOP_MAX_STEPS &&
+                          out2.steps_taken == 3u)
+                             ? 0
+                             : 1;
+    teardown(&fx2);
+    return uncapped;
+}
+
+/* The observation channel is overwritten every step, so an (expect ...) marker
+ * judged against the final observation alone scores a run that reached the goal
+ * and then took one more step as a failure. The loop latches the marker while it
+ * is still current. Step 1 emits it, step 2 replaces it, step 3 finishes — the
+ * test asserts BOTH that the latch caught it and that the final observation no
+ * longer holds it, otherwise it would pass even without the latch. The control
+ * run watches a string no step produces. */
+static int test_observation_marker_latched(void) {
+    static const struct spg_fake_response script[] = {
+        FR("(recommend (kind local_shell) (capability \"build.run\") (cost 1) "
+           "(uses_network false) (confidence_bp 7000) (reason \"probe\") "
+           "(command \"echo marker-early\"))"),
+        FR("(recommend (kind local_shell) (capability \"build.run\") (cost 1) "
+           "(uses_network false) (confidence_bp 7000) (reason \"probe\") "
+           "(command \"echo something-else\"))"),
+        FR("(recommend (kind finish) (reason \"done\"))"),
+    };
+    struct loop_fixture          fx  = {};
+    struct spg_agent_loop_result out = {};
+
+    g_observation_marker = "marker-early";
+    const int setup = run_script(script, 3u, 4u, true, 0u, 0u, false, &fx, &out);
+    g_observation_marker = nullptr;
+    if (setup != 0) {
+        teardown(&fx);
+        return 1;
+    }
+    const int latched = (out.observation_seen &&
+                         strstr(fx.observation, "marker-early") == nullptr)
+                            ? 0
+                            : 1;
+    teardown(&fx);
+    if (latched != 0) {
+        return 1;
+    }
+
+    struct loop_fixture          fx2  = {};
+    struct spg_agent_loop_result out2 = {};
+    g_observation_marker = "never-produced-by-any-step";
+    const int setup2 = run_script(script, 3u, 4u, true, 0u, 0u, false, &fx2, &out2);
+    g_observation_marker = nullptr;
+    if (setup2 != 0) {
+        teardown(&fx2);
+        return 1;
+    }
+    const int clean = out2.observation_seen ? 1 : 0;
+    teardown(&fx2);
+    return clean;
 }
 
 static int test_no_progress_finishes(void) {
@@ -456,6 +563,14 @@ int main(void) {
     }
     if (test_step_budget() != 0) {
         fprintf(stderr, "test_step_budget failed\n");
+        return 1;
+    }
+    if (test_wall_budget() != 0) {
+        fprintf(stderr, "test_wall_budget failed\n");
+        return 1;
+    }
+    if (test_observation_marker_latched() != 0) {
+        fprintf(stderr, "test_observation_marker_latched failed\n");
         return 1;
     }
     if (test_max_steps() != 0) {

@@ -16,7 +16,7 @@ cat > "$T/run.spg" <<EOF
  (corpus "examples/corpus.spg")
  (journal "$T/j.sgj")
  (seed 42)
- (budgets (inference_steps 8) (tokens 256) (shell_actions 1) (sim_actions 8) (wall_ms 10000) (journal_bytes 1048576) (risk_bp 10000)))
+ (budgets (inference_steps 8) (tokens 256) (shell_actions 1) (sim_actions 8) (wall_ms 10000)))
 EOF
 
 # Script: one governed shell step, then finish.
@@ -86,7 +86,7 @@ cat > "$T/run1.spg" <<EOF
  (corpus "examples/corpus.spg")
  (journal "$T/j1.sgj")
  (seed 42)
- (budgets (inference_steps 1) (tokens 256) (shell_actions 1) (sim_actions 8) (wall_ms 10000) (journal_bytes 1048576) (risk_bp 10000)))
+ (budgets (inference_steps 1) (tokens 256) (shell_actions 1) (sim_actions 8) (wall_ms 10000)))
 EOF
 cat > "$T/sim_script.txt" <<'EOF'
 (recommend (kind simulator) (capability "sim.act") (cost 1) (uses_network false) (confidence_bp 7000) (reason "r"))

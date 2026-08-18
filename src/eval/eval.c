@@ -60,7 +60,12 @@ enum spg_eval_outcome spg_eval_judge(const struct spg_eval_expect *expect,
         (expect->max_steps > 0u && loop->steps_taken > expect->max_steps)) {
         return SPG_EVAL_FAIL_STEPS;
     }
-    if (expect->observation != nullptr &&
+    /* The marker counts if it appeared in ANY step's observation (the loop
+     * latches that when the caller set config->observation_marker) — the final
+     * observation alone would fail a run that reached the goal and then took
+     * one more step. `observation` stays the fallback for callers that do not
+     * set the marker. */
+    if (expect->observation != nullptr && !loop->observation_seen &&
         strstr(observation, expect->observation) == nullptr) {
         return SPG_EVAL_FAIL_OBSERVATION;
     }

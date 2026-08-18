@@ -45,8 +45,8 @@ static const struct spg_schema_field_rule run_fields[] = {
      .unique     = true},
     {.name       = "budgets",
      .value_kind = SPG_SCHEMA_VALUE_LIST,
-     .min_values = 7u,
-     .max_values = 9u, /* 7 required + optional memory/machine_actions */
+     .min_values = 5u,
+     .max_values = 7u, /* 5 required + optional memory/machine_actions */
      .required   = true,
      .unique     = true},
     /* Optional success criterion (docs/LEARNING.md P1): a substring the

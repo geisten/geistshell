@@ -13,14 +13,14 @@ REC='(recommend (kind memory_save) (capability "mem.write") (cost 1) (uses_netwo
 write_run_config() { # $1 = policy path
     cat > "$T/run.spg" <<EOF
 (run (model "fake.gguf") (policy "$1") (scenario "examples/scenario.spg") (corpus "examples/corpus.spg") (journal "$T/j.sgj") (seed 42)
- (budgets (inference_steps 8) (tokens 256) (shell_actions 1) (sim_actions 8) (wall_ms 10000) (journal_bytes 1048576) (risk_bp 10000)))
+ (budgets (inference_steps 8) (tokens 256) (shell_actions 1) (sim_actions 8) (wall_ms 10000)))
 EOF
 }
 
 # --- ALLOW: capability enabled -> the action persists and is journaled ---
 cat > "$T/policy-allow.spg" <<'EOF'
 (policy (network_default deny)
- (budgets (inference_steps 8) (tokens 256) (shell_actions 1) (sim_actions 8) (wall_ms 10000) (journal_bytes 1048576) (risk_bp 10000))
+ (budgets (inference_steps 8) (tokens 256) (shell_actions 1) (sim_actions 8) (wall_ms 10000))
  (capability ((name mem.write) (kind memory) (enabled true) (budget 8))))
 EOF
 write_run_config "$T/policy-allow.spg"
@@ -42,7 +42,7 @@ cmp "$T/j_first.sgj" "$T/j.sgj"
 # --- DENY: capability disabled -> policy gate blocks it, nothing written ---
 cat > "$T/policy-deny.spg" <<'EOF'
 (policy (network_default deny)
- (budgets (inference_steps 8) (tokens 256) (shell_actions 1) (sim_actions 8) (wall_ms 10000) (journal_bytes 1048576) (risk_bp 10000))
+ (budgets (inference_steps 8) (tokens 256) (shell_actions 1) (sim_actions 8) (wall_ms 10000))
  (capability ((name mem.write) (kind memory) (enabled false) (budget 8))))
 EOF
 write_run_config "$T/policy-deny.spg"

@@ -54,6 +54,29 @@ is the honest place to build "learns from use."
    slug keeps recurring, the lesson is flagged for revision or removal. A
    counter reads the journal; the model only ever runs in normal operation.
 
+   `audit <journal>… --memory-dir <d>` does that counting. One journal file is
+   one run, so the file count is the run count and the file's mtime is when the
+   run finished; the lesson file's mtime is when it was minted. The journals
+   split at that mtime and the audit reports hits-per-run on each side:
+
+   ```
+   {"journals":5,"lesson-rejected":8,"lesson-denied":0}
+   {"lesson":"lesson-rejected","before":{"runs":3,"hits":6},
+    "after":{"runs":2,"hits":2},"verdict":"improving"}
+   ```
+
+   The split is the whole point. A lesson exists *because* of a failure, so its
+   pre-mint runs guarantee a non-zero count; a single summed total can only ever
+   say "still recurring", and can never tell a lesson that works from one that
+   does not. Verdicts: `pending` (no run since the mint yet — the honest state
+   right after minting), `kept` (zero hits since), `improving` (a lower rate
+   since), `review` (no better).
+
+   Only the two journalled failure modes are counted, `lesson-rejected` and
+   `lesson-denied`. Budget, max-steps and error terminations mint lessons but
+   leave no marker in the journal, so they cannot be audited until the loop
+   writes one.
+
 ## Sequence-length discipline (small models)
 
 - **Slug-triggered auto-injection**, not model-directed recall: at the moment
@@ -557,6 +580,127 @@ real GGUF, ~1 min/turn):
   model can actually complete (so a guard can pass and then be broken by a
   lesson); the example DSL scenarios are not model-completable by an untrained
   Gemma, so a contrived breaking task is future work.
+
+## Directive × best-of-N — ceiling, question undecided (2026-08-16, Pi/Gemma, engine v0.9)
+
+Every directive probe above ran **greedy**, where a directive must flip the
+argmax to show at all. Under temperature sampling it only has to *shift
+probability mass*, and the best-of-N verifier amplifies any shift into a
+measurable difference in attempts-to-pass. `eval/bench_directive.sh` measures
+exactly that: the six goal-word shell tasks, control (no lesson) vs learned
+(a "finish after the goal word" lesson rendered as the Weg-1 strong channel
+`(directive "...")` every step), constrained, N=6, T=0.9, three reps, quiesced
+box, engine pinned at geist v0.9.0.
+
+| | pass | attempts_sum |
+|---|---|---|
+| control | 18/18 | 18 (minimum) |
+| lesson  | 18/18 | 18 (minimum) |
+
+**Every run passed on the first sampled attempt in both arms — a ceiling.**
+Attempts-to-pass can only differentiate when control sometimes fails; here the
+metric sat at its floor for all 36 runs, so the question this bench was built
+to answer — does the directive shift sampling mass? — is **undecided**, not
+answered. The honest verdict is "no measurable signal on this corpus", not
+"channel dead".
+
+The ceiling itself is a finding. In the corrected best-of-N measurement
+(v0.2.1, before Weg 2) greedy still failed 2/5 of these tasks and OKAY needed
+attempt 2; since then the Weg-2 guardrail (budget-denied repeat after a success
+= converged → FINISHED) and the v0.9 engine landed, and together they remove
+this corpus's entire failure mode deterministically — the standing conclusion
+(*guardrails subsume the learning headroom*) now holds **completely** on this
+corpus, reproduced at T=0.9 over 18 runs.
+
+One genuine side result: the strong-channel directive was present every step
+of 18 runs and regressed **nothing** — earlier probes showed a lesson can flip
+pass → denied, so "at worst harmless" is new information about the channel,
+and context for how often the keep-gate must actually veto.
+
+Consequence for the lever order (directive-under-sampling → structure-carry →
+lesson-as-slot-bias): before any of them can be decided, the corpus needs
+**measured headroom** — tasks where control demonstrably fails sometimes under
+sampling and the failure mode is *not* guardrail-covered (multi-step goals:
+print A, then B, then finish; or budgets tight enough that the first wrong
+decision costs the run). Until that corpus exists, every runtime-learning
+measurement here will read as a ceiling.
+
+## Headroom census — the lever-measurable corpus exists, and it is narrow (2026-08-16, Pi/Gemma)
+
+The ceiling above demanded a corpus where control *sometimes* fails. The
+census (`eval/bench_headroom.sh`) probes transform/compute shell tasks whose
+expected output is a function of the input — not producible by echoing the
+goal back, not rescuable by any guardrail; only the model's command choice
+decides. Per task: one greedy run + six sampled runs (T=0.9, seeds 1..6),
+constrained, quiesced box. Classification: `ceiling` (6/6), `floor` (0/6),
+`HEADROOM` otherwise. (The census spanned a Pi reboot mid-run; `reverse` was
+measured in both sessions with the identical result.)
+
+| task | recipe needed | greedy | sampled | verdict |
+|---|---|---|---|---|
+| echo a goal word (prior bench) | copy a literal | pass | 18/18 | ceiling |
+| twice (`MIRROR-MIRROR`) | compose goal literals | fail | 1/6 | **HEADROOM** |
+| seq (`1 2 3 4 5`) | compose counting literals | fail | 1/6 | **HEADROOM** |
+| sum (17+25 → `42`) | compute, then echo | fail | 0/6 | floor |
+| count (letters → `7`) | `wc` or count | fail | 0/6 | floor |
+| upper (`cloud` → `CLOUD`) | `tr` | fail | 0/6 | floor |
+| reverse (`STONE` → `ENOTS`) | `rev` | fail | 0/6 | floor |
+
+**The difficulty landscape on a 2B constrained model is nearly binary.**
+Echoing a literal from the goal is a ceiling; anything requiring a tool
+recipe (`tr`, `rev`, `wc`) or an internal computation (17+25) is a hard
+floor — across 24 sampled runs not one tool invocation succeeded. The only
+band in between is **literal composition**: the answer's parts are in the
+goal, but arranging them (`MIRROR-MIRROR`, `1 2 3 4 5`) succeeds in ~1/6
+samples. That band is real, reproducible — and two tasks wide.
+
+Two consequences. First, the levers are now decidable: on `seq`/`twice`,
+control fails 5/6, so a directive that carries the exact recipe ("emit
+`echo 1 2 3 4 5`") has genuine room to lift, and attempts-to-pass has dynamic
+range — re-running `bench_directive.sh` over this corpus is the pending
+Hebel-1 measurement. Second, the floor class bounds what any prompt-side
+learning can achieve here: a lesson cannot teach this model to *use a tool*
+it never samples; that class needs either the skill-as-forced-prefix
+mechanism (decode-side, #26 follow-up) or a larger model. Widening the corpus
+means minting more literal-composition variants, and each needs its own
+census row before it counts as headroom.
+
+## Directive × best-of-N on the headroom corpus — first positive lift (2026-08-17, Pi/Gemma)
+
+`bench_directive_headroom.sh`: the two census HEADROOM tasks, each with a
+lesson whose description IS the exact recipe ("Emit the shell command: echo
+1 2 3 4 5"), rendered as the Weg-1 strong channel every step. Control vs
+lesson, best-of-6, T=0.9, three reps, quiesced box, engine v0.9.0.
+
+| task / rep | control pass/att | lesson pass/att |
+|---|---|---|
+| seq 1..3 | 1/1, 1/2, 1/1 | 1/2, 1/1, 1/1 |
+| twice 1 | 1/4 | 1/2 |
+| twice 2 | **0/6** | **1/1** |
+| twice 3 | 1/2 | 1/2 |
+| **total** | **5/6 pass, 16 attempts** | **6/6 pass, 9 attempts** |
+
+**The directive shifts sampling mass — the first positive lift a lesson has
+ever shown in this project.** On `twice`, the task with real headroom, the
+recipe directive dominated every rep (4→2, 6→1, 2→2 attempts) and converted
+the one run control lost outright. `seq` tied exactly (best-of-6 turned out
+to be near-ceiling there; the census's single-shot 1/6 understated it) and
+contributes no signal either way.
+
+The resolution of the greedy-era conclusion: a directive **cannot flip the
+greedy argmax** (every earlier probe), but under temperature sampling it
+**biases the draw**, and the best-of-N verifier converts that bias into fewer
+attempts and recovered runs. Lessons on a small model are a *sampling prior*,
+not a command — they pay off only in the sampled+verified regime, which
+best-of-N (#2) already made the production path for borderline tasks.
+
+Honest bounds: n=6 paired runs, and the signal lives in one task — `twice` —
+because the corpus's headroom band is that narrow. The direction was
+consistent across all three reps and includes a 0/6→1/1 conversion, but
+widening the literal-composition corpus (each new task census-verified first)
+is what would turn "first positive lift" into a load-bearing number. Next
+per the lever ladder: structure-carry (Hebel 3) and lesson-as-slot-bias
+(Hebel 2), both now decidable on this corpus.
 
 ## Not to be confused with geistagent
 

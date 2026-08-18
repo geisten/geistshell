@@ -16,9 +16,7 @@ static const char valid_run[] =
     "  (tokens 4096)"
     "  (shell_actions 8)"
     "  (sim_actions 250)"
-    "  (wall_ms 60000)"
-    "  (journal_bytes 1048576)"
-    "  (risk_bp 10000)))";
+    "  (wall_ms 60000)))";
 
 static enum spg_status load_text(const char *text,
                                  struct spg_run_config *config,
@@ -65,9 +63,7 @@ static int test_valid_run_config(void) {
         config.budgets.tokens != 4096u ||
         config.budgets.shell_actions != 8u ||
         config.budgets.sim_actions != 250u ||
-        config.budgets.wall_ms != 60000u ||
-        config.budgets.journal_bytes != 1048576u ||
-        config.budgets.risk_bp != 10000u) {
+        config.budgets.wall_ms != 60000u) {
         return 1;
     }
     return 0;
@@ -99,9 +95,7 @@ static int test_expect_present(void) {
         "  (tokens 4096)"
         "  (shell_actions 8)"
         "  (sim_actions 250)"
-        "  (wall_ms 60000)"
-        "  (journal_bytes 1048576)"
-        "  (risk_bp 10000))"
+        "  (wall_ms 60000))"
         " (expect \"report generated\"))";
     struct spg_run_config       config = {};
     struct spg_run_config_error error  = {};
@@ -127,9 +121,7 @@ static int test_missing_required_field(void) {
         "  (tokens 4096)"
         "  (shell_actions 8)"
         "  (sim_actions 250)"
-        "  (wall_ms 60000)"
-        "  (journal_bytes 1048576)"
-        "  (risk_bp 10000)))";
+        "  (wall_ms 60000)))";
     struct spg_run_config       config = {};
     struct spg_run_config_error error  = {};
     const enum spg_status status = load_text(text, &config, &error);
@@ -151,8 +143,7 @@ static int test_duplicate_budget(void) {
         "  (tokens 1)"
         "  (shell_actions 8)"
         "  (sim_actions 250)"
-        "  (wall_ms 60000)"
-        "  (journal_bytes 1048576)))";
+        "  (wall_ms 60000)))";
     struct spg_run_config       config = {};
     struct spg_run_config_error error  = {};
     const enum spg_status status = load_text(text, &config, &error);
@@ -174,7 +165,6 @@ static int test_unknown_budget(void) {
         "  (shell_actions 8)"
         "  (sim_actions 250)"
         "  (wall_ms 60000)"
-        "  (journal_bytes 1048576)"
         "  (unknown 10000)))";
     struct spg_run_config       config = {};
     struct spg_run_config_error error  = {};
@@ -196,9 +186,7 @@ static int test_invalid_seed(void) {
         "  (tokens 4096)"
         "  (shell_actions 8)"
         "  (sim_actions 250)"
-        "  (wall_ms 60000)"
-        "  (journal_bytes 1048576)"
-        "  (risk_bp 10000)))";
+        "  (wall_ms 60000)))";
     struct spg_run_config       config = {};
     struct spg_run_config_error error  = {};
     const enum spg_status status = load_text(text, &config, &error);
@@ -219,9 +207,7 @@ static int test_integer_overflow(void) {
         "  (tokens 4096)"
         "  (shell_actions 8)"
         "  (sim_actions 250)"
-        "  (wall_ms 60000)"
-        "  (journal_bytes 1048576)"
-        "  (risk_bp 10000)))";
+        "  (wall_ms 60000)))";
     struct spg_run_config       config = {};
     struct spg_run_config_error error  = {};
     const enum spg_status status = load_text(text, &config, &error);

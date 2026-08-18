@@ -36,8 +36,17 @@
 #include <string.h>
 #include <sys/file.h>
 #include <sys/resource.h>
+#include <sys/stat.h> /* stat: the audit dates a run against a lesson's mint */
 #include <time.h>
 #include <unistd.h> /* mkstemp/write/close/unlink: the guard-gate temp suite */
+
+/* free-and-null; formerly from the engine's heap.h, internalised in geist v0.9 */
+static void safe_free(void **ptr) {
+    if (ptr != nullptr) {
+        free(*ptr);
+        *ptr = nullptr;
+    }
+}
 
 #define CLI_TOKEN_CAPACITY 1024u
 #define CLI_NODE_CAPACITY 1024u
@@ -586,9 +595,6 @@ static void print_budget_summary(const struct spg_run_budgets *budgets) {
     printf("budget.memory_actions=%llu\n",
            (unsigned long long)budgets->memory_actions);
     printf("budget.wall_ms=%llu\n", (unsigned long long)budgets->wall_ms);
-    printf("budget.journal_bytes=%llu\n",
-           (unsigned long long)budgets->journal_bytes);
-    printf("budget.risk_bp=%llu\n", (unsigned long long)budgets->risk_bp);
 }
 
 static int policy_check_command(const char *path) {
@@ -2088,6 +2094,7 @@ static int agent_command(int argc, char **argv) {
     size_t      max_repairs    = 2u;
     bool        allow_exec     = false;
     bool        constrained    = false;
+    bool     host_status   = false; /* live CPU/temp/process telemetry */
     float    sample_temp   = 0.0f; /* >0 lets the free slots vary (best-of-N) */
     bool     has_seed      = false;
     uint64_t seed_override = 0u; /* per-attempt seed for best-of-N sampling */
@@ -2167,6 +2174,12 @@ static int agent_command(int argc, char **argv) {
             /* #34: force the real model's output to begin with the
              * recommendation opening, then decode freely. */
             constrained = true;
+            continue;
+        }
+        if (strcmp(argv[i], "--host-status") == 0) {
+            /* put the machine itself in the context every step: CPU count,
+             * load average, die temperature, running process count. */
+            host_status = true;
             continue;
         }
         if (strcmp(argv[i], "--directive-slug") == 0 && i + 1 < argc) {
@@ -2279,7 +2292,9 @@ static int agent_command(int argc, char **argv) {
                 "[--command-menu <menu.spg>] [--command-mask] "
                 "[--model-profile <file>] "
                 "[--max-steps N] [--max-repairs N] [--allow-exec] "
-                "[--memory-dir <d>]\n"
+                "[--memory-dir <d>] [--host-status]\n"
+                "  --host-status puts live CPU load, temperature and process "
+                "count in every step's context\n"
                 "  without --fake-script the real model at the config's "
                 "(model ...) path is run and journaled\n",
                 argv[0]);
@@ -2486,6 +2501,7 @@ static int agent_command(int argc, char **argv) {
     static char                   shell_stdout[AGENT_SHELL_STDOUT];
     static char                   shell_stderr[AGENT_SHELL_STDERR];
     static char                   mem_index[AGENT_OBS_BYTES];
+    static char                   host_status_buf[SPG_HOST_STATUS_CAP];
     static struct spg_journal_record_header trajectory[256];
 
     const struct spg_agent_run_workspace ws = {
@@ -2522,6 +2538,8 @@ static int agent_command(int argc, char **argv) {
         .trajectory              = trajectory,
         .memory_index_capacity   = sizeof mem_index,
         .memory_index            = mem_index,
+        .host_status_capacity    = host_status ? sizeof host_status_buf : 0u,
+        .host_status             = host_status ? host_status_buf : nullptr,
     };
     char *goal_cstr = nullptr; /* materialized (goal "...") span, or null */
     if (run.has_goal) {
@@ -2673,9 +2691,25 @@ static int agent_command(int argc, char **argv) {
         .device       = device.n_channels > 0u ? &device : nullptr,
         .device_state = device.n_channels > 0u ? &device_state : nullptr,
     };
+    /* Read before rcfg so the loop can watch it: the expect marker has to be
+     * known at run time, not only at judge time. */
+    const bool have_expect =
+        run.has_expect && run.expect_observation.length < sizeof observation;
+    char                   expect_obs[AGENT_OBS_BYTES];
+    struct spg_eval_expect expect = {};
+    if (have_expect) {
+        memcpy(expect_obs, run_text.data + run.expect_observation.offset,
+               run.expect_observation.length);
+        expect_obs[run.expect_observation.length] = '\0';
+        expect = (struct spg_eval_expect){.check_termination = true,
+                                          .termination = SPG_AGENT_LOOP_FINISHED,
+                                          .observation = expect_obs};
+    }
+
     const struct spg_agent_run_config rcfg = {
-        .max_steps   = max_steps,
-        .max_repairs = max_repairs,
+        .max_steps         = max_steps,
+        .max_repairs       = max_repairs,
+        .observation_marker = have_expect ? expect_obs : nullptr,
         /* #40: a model that acts validly but never emits (kind finish) would
          * run to the step cap; treat a converged (no-progress) run as done so
          * it terminates FINISHED and an expect verdict can pass. The model
@@ -2694,23 +2728,6 @@ static int agent_command(int argc, char **argv) {
     };
     struct spg_policy_usage      usage       = {};
     struct spg_agent_loop_result loop_result = {};
-
-    /* Optional success criterion (docs/LEARNING.md P1): judge the real run the
-     * same way the eval loop judges a scripted case — model-free, zero tokens.
-     */
-    const bool have_expect =
-        run.has_expect && run.expect_observation.length < sizeof observation;
-    char                   expect_obs[AGENT_OBS_BYTES];
-    struct spg_eval_expect expect = {};
-    if (have_expect) {
-        memcpy(expect_obs, run_text.data + run.expect_observation.offset,
-               run.expect_observation.length);
-        expect_obs[run.expect_observation.length] = '\0';
-        expect =
-            (struct spg_eval_expect){.check_termination = true,
-                                     .termination = SPG_AGENT_LOOP_FINISHED,
-                                     .observation = expect_obs};
-    }
 
     /* Best-of-N (#2, fixed in #55): up to best_of attempts, model loaded once;
      * the choice-slot RNG drifts between attempts (temperature > 0), so each
@@ -3642,6 +3659,7 @@ static enum spg_status eval_run_suite(const char                 *suite_path,
             .context_refs        = CLI_CONTEXT_REFS,
             .exec_working_dir    = has_fixture ? sandbox : nullptr,
             .exec_workdir_prefix = has_fixture ? sandbox : nullptr,
+            .observation_marker  = expect.observation,
         };
         char       model_kind[16];
         const bool has_model = eval_str(nod, c, suite_text.n, suite_text.data,
@@ -4343,11 +4361,38 @@ static int distill_command(int argc, char **argv) {
     return 0;
 }
 
+/* Modification time in whole seconds; false when the file is unreadable. */
+static bool file_mtime(const char *path, time_t *out) {
+    struct stat st;
+    if (stat(path, &st) != 0) {
+        return false;
+    }
+    *out = st.st_mtime;
+    return true;
+}
+
+/* The k-th counter of a recurrence tally, in the order of audit_slugs below —
+ * C has no pointer-to-member, and two counters do not earn a callback. */
+static size_t recurrence_slot(const struct spg_recurrence *r, const size_t k) {
+    return k == 0u ? r->rejected : r->denied;
+}
+
+static const char *const audit_slugs[] = {"lesson-rejected", "lesson-denied"};
+
 /* Longitudinal benefit audit (docs/LEARNING.md P7): a kept lesson earns its
- * keep only if its failure slug stops recurring in later real runs. Sum the
- * failure-mode events across the given journals and, for each kept lesson in
- * the memory dir, flag whether its slug still recurs (review) or has dropped
- * to zero (kept). Model-free: reads journals only. */
+ * keep only if its failure slug stops recurring in runs that happened AFTER it
+ * was minted. Summing every journal into one bucket cannot show that — the
+ * lesson exists *because* of a failure, so the pre-mint runs guarantee a
+ * non-zero count and the verdict would read "review" forever. One journal file
+ * is one run (the writer truncates on open), so the file count is the run count
+ * and the file's mtime is when that run finished; a lesson's mtime is when it
+ * was saved. Split the journals at the lesson's mtime, count hits per run on
+ * each side, and compare the two rates. Model-free: journals and mtimes only.
+ * ponytail: mtime at one-second granularity, and a run that STARTED before the
+ * mint but finished after it lands on the "after" side. Both only matter if
+ * runs and mints interleave inside a second; the nightly loop this is for is
+ * days apart. Stamping the mint time into the journal's first record would be
+ * exact — wire that when a run can outlive a mint. */
 static int audit_command(int argc, char **argv) {
     const char *memory_dir = nullptr;
     const char *journals[EVAL_MAX_CASES];
@@ -4370,18 +4415,27 @@ static int audit_command(int argc, char **argv) {
         return 2;
     }
 
+    /* Per journal, so the tallies can be re-split at any lesson's mint time
+     * without re-reading the files. */
+    struct spg_recurrence per[EVAL_MAX_CASES] = {};
+    time_t                finished[EVAL_MAX_CASES] = {};
     struct spg_recurrence total = {};
     for (size_t i = 0u; i < njournals; i += 1u) {
-        if (spg_journal_recurrence(journals[i], &total) != SPG_OK) {
+        if (spg_journal_recurrence(journals[i], &per[i]) != SPG_OK) {
             fprintf(stderr, "audit: cannot read journal %s\n", journals[i]);
             return 1;
         }
+        if (!file_mtime(journals[i], &finished[i])) {
+            finished[i] = 0; /* unreadable mtime: counts as an early run */
+        }
+        total.rejected += per[i].rejected;
+        total.denied += per[i].denied;
     }
     printf("{\"journals\":%zu,\"lesson-rejected\":%zu,\"lesson-denied\":%zu}\n",
            njournals, total.rejected, total.denied);
 
-    /* Cross-reference kept lessons: a slug present in memory whose recurrence
-     * is still > 0 is not doing its job. */
+    /* Cross-reference kept lessons: for each one, the failure rate before it
+     * existed against the rate since. */
     if (memory_dir != nullptr) {
         struct spg_mem_store store;
         if (spg_mem_store_open(&store, spg_mem_resolve_dir(memory_dir)) !=
@@ -4390,20 +4444,42 @@ static int audit_command(int argc, char **argv) {
             return 1;
         }
         char probe[SPG_MEM_DESC_MAX + 1u];
-        const struct {
-            const char *slug;
-            size_t      count;
-        } kept[] = {{"lesson-rejected", total.rejected},
-                    {"lesson-denied", total.denied}};
-        for (size_t i = 0u; i < sizeof kept / sizeof kept[0]; i += 1u) {
-            if (spg_mem_directive(&store, kept[i].slug, 0u, sizeof probe,
+        for (size_t k = 0u; k < sizeof audit_slugs / sizeof audit_slugs[0];
+             k += 1u) {
+            if (spg_mem_directive(&store, audit_slugs[k], 0u, sizeof probe,
                                   probe) == 0u) {
                 continue; /* no such lesson kept */
             }
-            printf(
-                "{\"lesson\":\"%s\",\"recurrence\":%zu,\"verdict\":\"%s\"}\n",
-                kept[i].slug, kept[i].count,
-                kept[i].count > 0u ? "review" : "kept");
+            char path[SPG_MEM_PATH_MAX];
+            (void)snprintf(path, sizeof path, "%s/%s.md", store.dir,
+                           audit_slugs[k]);
+            time_t minted = 0;
+            if (!file_mtime(path, &minted)) {
+                continue;
+            }
+
+            size_t before_runs = 0u, after_runs = 0u, before = 0u, after = 0u;
+            for (size_t i = 0u; i < njournals; i += 1u) {
+                if (finished[i] > minted) {
+                    after_runs += 1u;
+                    after += recurrence_slot(&per[i], k);
+                } else {
+                    before_runs += 1u;
+                    before += recurrence_slot(&per[i], k);
+                }
+            }
+            /* Rates compared by cross-multiplication, so no floats and no
+             * divide-by-zero. "pending" is the honest verdict while no run has
+             * yet had the chance to benefit. */
+            const char *verdict =
+                after_runs == 0u ? "pending"
+                : after == 0u    ? "kept"
+                : after * before_runs < before * after_runs ? "improving"
+                                                            : "review";
+            printf("{\"lesson\":\"%s\",\"before\":{\"runs\":%zu,\"hits\":%zu},"
+                   "\"after\":{\"runs\":%zu,\"hits\":%zu},\"verdict\":\"%s\"}\n",
+                   audit_slugs[k], before_runs, before, after_runs, after,
+                   verdict);
         }
     }
     return 0;

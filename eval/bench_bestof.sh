@@ -50,7 +50,7 @@ run_task() { # $1 run.spg -> prints "greedy_pass bestof_pass attempts_used"
 
 mkrun() { # $1 journal $2 scenario $3 policy $4 goal-line -> writes run.spg, prints path
     f="$T2/$(basename "$1").spg"
-    printf '(run (model "%s") (policy "%s") (scenario "%s") (corpus "examples/corpus.spg") (journal "%s") (seed 1)\n (budgets (inference_steps 6) (tokens 512) (shell_actions 2) (sim_actions 6) (wall_ms 240000) (journal_bytes 1048576) (risk_bp 10000))\n %s (expect "%s"))\n' \
+    printf '(run (model "%s") (policy "%s") (scenario "%s") (corpus "examples/corpus.spg") (journal "%s") (seed 1)\n (budgets (inference_steps 6) (tokens 512) (shell_actions 2) (sim_actions 6) (wall_ms 240000))\n %s (expect "%s"))\n' \
         "$MODEL" "$3" "$2" "$1" "$4" "$5" > "$f"
     printf '%s' "$f"
 }

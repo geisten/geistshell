@@ -54,6 +54,9 @@ struct spg_actor_state {
      * every model got before profiles existed. */
     const struct spg_model_profile *profile;
     uint32_t                        machine_ablate;
+    /* Pre-rendered `(host_status ...)` line, or null. Refreshed per step by the
+     * orchestrator; the actor only forwards it. */
+    const char *host_status;
 };
 
 struct spg_actor_step_config {

@@ -18,9 +18,7 @@ struct spg_run_budgets {
     uint64_t sim_actions;
     uint64_t memory_actions;  /* optional in config; defaults to unlimited */
     uint64_t machine_actions; /* optional in config; defaults to unlimited */
-    uint64_t wall_ms;
-    uint64_t journal_bytes;
-    uint64_t risk_bp;
+    uint64_t wall_ms;         /* enforced between steps by the agent loop */
 };
 
 struct spg_run_config {

@@ -24,7 +24,7 @@ make_config() {  # $1 = journal, $2 = expect substring
  (corpus "examples/corpus.spg")
  (journal "$1")
  (seed 42)
- (budgets (inference_steps 8) (tokens 256) (shell_actions 1) (sim_actions 8) (wall_ms 10000) (journal_bytes 1048576) (risk_bp 10000))
+ (budgets (inference_steps 8) (tokens 256) (shell_actions 1) (sim_actions 8) (wall_ms 10000))
  (expect "$2"))
 EOF
 }
@@ -56,7 +56,7 @@ cat > "$T/run_noexpect.spg" <<EOF
  (corpus "examples/corpus.spg")
  (journal "$T/j.sgj")
  (seed 42)
- (budgets (inference_steps 8) (tokens 256) (shell_actions 1) (sim_actions 8) (wall_ms 10000) (journal_bytes 1048576) (risk_bp 10000)))
+ (budgets (inference_steps 8) (tokens 256) (shell_actions 1) (sim_actions 8) (wall_ms 10000)))
 EOF
 "$SPG_BIN" agent --config "$T/run_noexpect.spg" --fake-script "$T/script.txt" \
     --allow-exec --max-steps 5 > "$T/noexpect.out" 2>&1

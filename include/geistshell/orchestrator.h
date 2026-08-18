@@ -156,6 +156,14 @@ struct spg_orchestrator_workspace {
      * lessons are recalled. Null falls back to state->memory_index. */
     size_t memory_index_capacity;
     char  *memory_index_buf;
+
+    /* Optional: when present, live host telemetry (CPU count, load average,
+     * temperature, running process count) is re-read every tick, rendered into
+     * this buffer and injected as one (host_status ...) line. Null = no
+     * telemetry, which is the default — it is context budget spent on every
+     * single step. SPG_HOST_STATUS_CAP is the size that always fits. */
+    size_t host_status_capacity;
+    char  *host_status_buf;
 };
 
 struct spg_orchestrator_result {

@@ -32,7 +32,7 @@ POL=examples/policy.spg
 # one attempt: prints "<endpoint> <sticky>" as 0/1, where sticky = word in journal
 attempt() { # $1 goalword $2 temp $3 seed
     J="$D/j.sgj"
-    printf '(run (model "%s") (policy "%s") (scenario "%s") (corpus "examples/corpus.spg") (journal "%s") (seed 1)\n (budgets (inference_steps 6) (tokens 512) (shell_actions 2) (sim_actions 6) (wall_ms 240000) (journal_bytes 1048576) (risk_bp 10000))\n (goal "Run a local shell command that prints the word %s.") (expect "%s"))\n' \
+    printf '(run (model "%s") (policy "%s") (scenario "%s") (corpus "examples/corpus.spg") (journal "%s") (seed 1)\n (budgets (inference_steps 6) (tokens 512) (shell_actions 2) (sim_actions 6) (wall_ms 240000))\n (goal "Run a local shell command that prints the word %s.") (expect "%s"))\n' \
         "$MODEL" "$POL" "$D/sc.spg" "$J" "$1" "$1" > "$D/run.spg"
     V=$("$SPG" agent --config "$D/run.spg" --constrained --allow-exec \
             --temperature "$2" --seed "$3" 2>/dev/null | sed -n 's/.*verdict=\([a-z_]*\).*/\1/p' | tail -1 || true)

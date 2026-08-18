@@ -81,6 +81,11 @@ struct spg_context_sources {
      *
      * A proposal space, not an allowlist — see cmd_menu.h. */
     const char *tools;
+    /* Optional live host telemetry, pre-rendered as one `(host_status ...)`
+     * line (CPU count, load average, temperature, process count). Null = none,
+     * which is the default: it costs context budget on every single step, so a
+     * run that never reasons about the machine should not pay for it. */
+    const char *host_status;
 };
 
 struct spg_context_budget_item {
@@ -96,8 +101,6 @@ struct spg_context_budget_view {
     struct spg_context_budget_item sim_actions;
     struct spg_context_budget_item memory_actions;
     struct spg_context_budget_item wall_ms;
-    struct spg_context_budget_item journal_bytes;
-    struct spg_context_budget_item risk_bp;
 };
 
 struct spg_context_graph_ref {

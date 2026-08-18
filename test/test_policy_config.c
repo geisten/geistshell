@@ -11,9 +11,7 @@ static const char valid_policy[] =
     "  (tokens 4096)"
     "  (shell_actions 8)"
     "  (sim_actions 250)"
-    "  (wall_ms 60000)"
-    "  (journal_bytes 1048576)"
-    "  (risk_bp 10000))"
+    "  (wall_ms 60000))"
     " (capability"
     "  ((name build.run) (kind local_shell) (enabled true) (budget 8))"
     "  ((name auth_probe.ssh_publickey_single) (kind ssh_auth_probe)"
@@ -45,8 +43,7 @@ static int test_valid_policy_config(void) {
         return 1;
     }
     if (config.network_default != SPG_POLICY_NETWORK_DENY ||
-        config.budgets.tokens != 4096u || config.budgets.risk_bp != 10000u ||
-        config.capability_count != 3u) {
+        config.budgets.tokens != 4096u || config.capability_count != 3u) {
         return 1;
     }
     if (!span_eq(valid_policy, config.capabilities[0].name, "build.run") ||
@@ -73,9 +70,7 @@ static int test_network_allow_is_explicit(void) {
         "  (tokens 1)"
         "  (shell_actions 1)"
         "  (sim_actions 1)"
-        "  (wall_ms 1)"
-        "  (journal_bytes 1)"
-        "  (risk_bp 1)))";
+        "  (wall_ms 1)))";
     struct spg_policy_config       config = {};
     struct spg_policy_config_error error  = {};
     if (load_text(text, &config, &error) != SPG_OK) {
@@ -96,9 +91,7 @@ static int test_invalid_network_default(void) {
         "  (tokens 1)"
         "  (shell_actions 1)"
         "  (sim_actions 1)"
-        "  (wall_ms 1)"
-        "  (journal_bytes 1)"
-        "  (risk_bp 1)))";
+        "  (wall_ms 1)))";
     struct spg_policy_config       config = {};
     struct spg_policy_config_error error  = {};
     const enum spg_status status = load_text(text, &config, &error);
@@ -114,9 +107,7 @@ static int test_duplicate_capability_name(void) {
         "  (tokens 1)"
         "  (shell_actions 1)"
         "  (sim_actions 1)"
-        "  (wall_ms 1)"
-        "  (journal_bytes 1)"
-        "  (risk_bp 1))"
+        "  (wall_ms 1))"
         " (capability"
         "  ((name build.run) (kind local_shell) (enabled true) (budget 1))"
         "  ((name build.run) (kind local_shell) (enabled true) (budget 1))))";
@@ -135,9 +126,7 @@ static int test_invalid_capability_kind(void) {
         "  (tokens 1)"
         "  (shell_actions 1)"
         "  (sim_actions 1)"
-        "  (wall_ms 1)"
-        "  (journal_bytes 1)"
-        "  (risk_bp 1))"
+        "  (wall_ms 1))"
         " (capability"
         "  ((name build.run) (kind unknown) (enabled true) (budget 1))))";
     struct spg_policy_config       config = {};
@@ -155,9 +144,7 @@ static int test_invalid_enabled_value(void) {
         "  (tokens 1)"
         "  (shell_actions 1)"
         "  (sim_actions 1)"
-        "  (wall_ms 1)"
-        "  (journal_bytes 1)"
-        "  (risk_bp 1))"
+        "  (wall_ms 1))"
         " (capability"
         "  ((name build.run) (kind local_shell) (enabled yes) (budget 1))))";
     struct spg_policy_config       config = {};
@@ -175,9 +162,7 @@ static int test_invalid_budget_integer(void) {
         "  (tokens nope)"
         "  (shell_actions 1)"
         "  (sim_actions 1)"
-        "  (wall_ms 1)"
-        "  (journal_bytes 1)"
-        "  (risk_bp 1)))";
+        "  (wall_ms 1)))";
     struct spg_policy_config       config = {};
     struct spg_policy_config_error error  = {};
     const enum spg_status status = load_text(text, &config, &error);
@@ -193,9 +178,7 @@ static int test_missing_capability_field(void) {
         "  (tokens 1)"
         "  (shell_actions 1)"
         "  (sim_actions 1)"
-        "  (wall_ms 1)"
-        "  (journal_bytes 1)"
-        "  (risk_bp 1))"
+        "  (wall_ms 1))"
         " (capability"
         "  ((name build.run) (kind local_shell) (enabled true))))";
     struct spg_policy_config       config = {};

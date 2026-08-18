@@ -21,7 +21,7 @@ cat > "$T/guard.spg" <<EOF
  (corpus "examples/corpus.spg")
  (journal "$T/g.sgj")
  (seed 42)
- (budgets (inference_steps 8) (tokens 256) (shell_actions 1) (sim_actions 8) (wall_ms 10000) (journal_bytes 1048576) (risk_bp 10000))
+ (budgets (inference_steps 8) (tokens 256) (shell_actions 1) (sim_actions 8) (wall_ms 10000))
  (expect "PROOF"))
 EOF
 

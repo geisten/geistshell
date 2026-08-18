@@ -7,6 +7,7 @@
 #include "geistshell/executor_boundary.h"
 #include "geistshell/graph.h"
 #include "geistshell/hash.h"
+#include "geistshell/host_probe.h"
 #include "geistshell/journal.h"
 #include "geistshell/memory.h"
 #include "geistshell/model_adapter.h"

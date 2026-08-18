@@ -10,6 +10,17 @@
 
 #include <stdio.h>
 #include <string.h>
+#include <time.h>
+
+/* Milliseconds on a clock that does not jump: a wall budget must not be
+ * defeated by an NTP step or a timezone change. */
+static uint64_t monotonic_ms(void) {
+    struct timespec ts = {};
+    if (clock_gettime(CLOCK_MONOTONIC, &ts) != 0) {
+        return 0u;
+    }
+    return (uint64_t)ts.tv_sec * 1000u + (uint64_t)ts.tv_nsec / 1000000u;
+}
 
 /* FNV-1a over a C string — enough to spot a repeated observation (#40) without
  * a second copy of the buffer; the heavy spg_hash is overkill here. */
@@ -133,11 +144,14 @@ spg_agent_loop_run(struct spg_orchestrator_state           *state,
     uint64_t prev_obs_hash   = 0u;    /* #40: observation after the last */
     bool     have_prev_obs   = false; /* executed step, for stall detection */
     bool     made_progress   = false; /* an allowed action has executed */
+    const uint64_t started_ms = monotonic_ms();
     for (size_t step = 0u; step < config->max_steps; step += 1u) {
         if ((config->token_budget > 0u &&
              usage->consumed.tokens >= config->token_budget) ||
             (config->step_budget > 0u &&
-             usage->consumed.inference_steps >= config->step_budget)) {
+             usage->consumed.inference_steps >= config->step_budget) ||
+            (config->wall_budget_ms > 0u &&
+             monotonic_ms() - started_ms >= config->wall_budget_ms)) {
             result->termination = SPG_AGENT_LOOP_BUDGET;
             return SPG_OK;
         }
@@ -163,6 +177,15 @@ spg_agent_loop_run(struct spg_orchestrator_state           *state,
 
         accumulate_usage(usage, &step_result);
         parent_sequence = step_sequence(&step_result, parent_sequence);
+
+        /* Latch the success marker while this step's observation is still the
+         * current one — the next step overwrites the buffer. */
+        if (config->observation_marker != nullptr && !result->observation_seen &&
+            workspace->observation_buf != nullptr &&
+            strstr(workspace->observation_buf, config->observation_marker) !=
+                nullptr) {
+            result->observation_seen = true;
+        }
 
         if (spg_orchestrator_finished(&step_result)) {
             result->termination = SPG_AGENT_LOOP_FINISHED;
