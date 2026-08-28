@@ -369,6 +369,81 @@ it actually breaks. Adding any of them now is optimising against a feeling,
 which is the exact condition the learning gate has been in since it was built.
 
 
+## Why no intent router
+
+A recurring proposal for small-agent stacks puts a 30–100M classifier in front
+of the agent model: user input → router picks the relevant skill → a per-skill
+harness exposes 2–5 tools to the agent SLM. Decision 2 already records that the
+router from geistagent's `tools/agent.h` was not copied; this section records
+*why*, because the question keeps coming back.
+
+**1. The routing decision is already enforced, not taken.** A router exists to
+narrow an open tool catalogue before the agent model sees it. geistshell's
+action space is closed by construction: the policy enumerates capabilities,
+`grammar_mask.c` compiles that list into a per-token decoder mask, and an
+action kind outside the policy is not improbable — it is not decodable. A
+router in front would predict probabilistically what the mask guarantees
+deterministically. It adds a model without removing a decision.
+
+**2. The kind-dependent scaffold subsumes the flat list.** The old router
+selected from a flat tool-name list. Here the constrained decoder makes exactly
+two real decisions — `kind` and `capability` — and then prefills a
+kind-specific scaffold; the bureaucratic fields are never decoded at all
+(decision 2). A router could only duplicate the kind choice; the work that
+remains — filling the free-text slots — stays with the agent model either way.
+
+**3. Routing is governance, not inference.** Which kinds are available is a
+policy line (`(enabled false)`), journaled, budgeted, replayable. A model that
+routes *before* the harness sits outside the gated path: its decision is
+neither policy-checked nor byte-replayable without pinning a second GGUF, seed
+and version. Either its output goes through the gate anyway — then it
+contributed nothing — or the one property the spine exists for is weakened.
+
+**4. Measured: routing was never the failure mode.** The ladder (postscript)
+localised where small models actually fail. BitNet dies at *parse* — no router
+helps a model that cannot produce coherent slot text; the diagnosed cause is
+framing. Gemma parses 9/9 and fails at *task* (`wrong_diagnosis`) — form fine,
+cause missed; no router helps there either. Consistently, even the one piece
+worth adopting from the old router — PMI calibration of the kind choice — was
+deprioritised (step 8) because it presumes a parseable action. A whole routing
+model presumes strictly more.
+
+**5. Skill selection is retrieval, not routing.** The function the router
+serves — "relevant skill" — exists here as slug-triggered injection of
+`skill-<shape>` memories via the mind-palace index (LEARNING.md, decision 4),
+for the same reason model-directed recall was rejected: a small model may never
+emit the action the mechanism depends on. Keyword+recency over a handful of
+entries at top-5 is where a learned ranker has nothing to add.
+
+And the operational cost: a second model is a second GGUF in RAM on the Pi, a
+second pin to go stale (finding A shows the price of one), a second eval to
+keep honest. A feature flag is not a discount on the feature.
+
+### State of the field (August 2026), and where this could flip
+
+Current research does support fine-tuned SLM routers — for *flat catalogues of
+many tools or agents* (fine-tuned ~1.5B routers beat LLM baselines on
+multi-tool retrieval; SFT+RL router training is an active line: arXiv
+2608.00030, 2604.02367, 2504.10519). That is exactly the situation this
+architecture abolished: with ~6 policy-closed kinds there is nothing for a
+router to retrieve. The decision would be revisited if the action space became
+an open catalogue of dozens of skills, or for local-first/cloud-escalation
+cascades where a router decides *which model*, not which tool — a decision the
+policy cannot close.
+
+One honest caveat cuts the other way. The "constraint tax" line of work (arXiv
+2605.26128, 2604.06066, 2604.03616) measures that hard schema decoding lifts
+validity to 100% while *lowering* task accuracy on small models — wrong-but-
+valid outputs replace malformed ones ("reason free, constrain late"). That is
+not an argument for a router, but it is an argument against treating the
+grammar mask as free lift: it is precisely the Gemma failure the ladder
+surfaced (parse 100%, task low), and it is why parse-rate alone is never quoted
+as success here. The scaffold's mitigation is structural — literals are forced,
+the reasoning slots stay free-decoded — but the tax on the two choice slots is
+a real hypothesis, and it is what step 8's PMI calibration exists to measure,
+not assume.
+
+
 ## Postscript: what the measurement said
 
 Written after Phase 12 (#72) measured on real models what this document had
