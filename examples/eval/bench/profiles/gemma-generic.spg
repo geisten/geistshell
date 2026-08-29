@@ -1,0 +1,11 @@
+; Framing arm for the step-4 baseline (#127 follow-up).
+;
+; `generic` (plain User:/Assistant: labels), not `gemma`: geistlib's own note
+; records that Gemma with an external SentencePiece does better on generic
+; labels than on its native markers — the tokenizer does not map
+; <start_of_turn> to control tokens 105/106, so the native template would put
+; markers in the prompt the model never sees as markers.
+(model_profile
+  (name "gemma-generic")
+  (arch "gemma")
+  (template generic))

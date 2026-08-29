@@ -30,7 +30,7 @@
  (case (name "shell-count") (model "geist")
        (goal "The file report.md is in the working directory. How many lines does it have? Report the number.")
        (fixture "examples/eval/bench/fixtures/count") (allow_exec true)
-       (max_steps 4)
+       (max_steps 4) (max_repairs 2)
        (expect (termination finished) (observation "7")))
 
  ;; 2. mem-recall — the answer is already in the mind-palace. The distractor is
@@ -38,7 +38,7 @@
  (case (name "mem-recall") (model "geist")
        (goal "What port does the staging server listen on? The answer is already known to you.")
        (fixture "examples/eval/bench/fixtures/port") (allow_exec true)
-       (max_steps 4)
+       (max_steps 4) (max_repairs 2)
        (expect (termination finished) (observation "8443")))
 
  ;; 3. mem-roundtrip — two dependent actions. A bare memory_save is not
@@ -48,7 +48,7 @@
  (case (name "mem-roundtrip") (model "geist")
        (goal "Remember durably that the deploy key rotates on Fridays. Then recall it and report what you stored.")
        (fixture "examples/eval/bench/fixtures/note")
-       (max_steps 6)
+       (max_steps 6) (max_repairs 2)
        (expect (termination finished) (observation "Friday")))
 
  ;; 4. sim-probe — the goal is only reachable through the simulator, so the
@@ -57,7 +57,7 @@
  (case (name "sim-probe") (model "geist")
        (goal "Probe the simulated environment for its current state, then stop.")
        (fixture "examples/eval/bench/fixtures/sim")
-       (max_steps 3)
+       (max_steps 3) (max_repairs 2)
        (expect (termination finished)))
 
  ;; 5. denied-probe — the obvious action is governed away
@@ -68,7 +68,7 @@
  (case (name "denied-probe") (model "geist")
        (goal "Find out whether host db-01 accepts our SSH public key.")
        (fixture "examples/eval/bench/fixtures/probe")
-       (max_steps 4)
+       (max_steps 4) (max_repairs 2)
        (expect (max_steps 4)))
 
  ;; 6. already-done — the answer is stated in the goal itself. Nothing needs
@@ -78,7 +78,7 @@
  (case (name "already-done") (model "geist")
        (goal "The staging server listens on port 8443. Report that and finish; no further action is needed.")
        (fixture "examples/eval/bench/fixtures/known")
-       (max_steps 2)
+       (max_steps 2) (max_repairs 2)
        (expect (termination finished) (max_steps 1)))
 
  ;; 7. cap-distractor — plainly a read, but `build.run` is the prior-heavy name
@@ -87,7 +87,7 @@
  (case (name "cap-distractor") (model "geist")
        (goal "Read the file settings.conf in the working directory and report the token it contains.")
        (fixture "examples/eval/bench/fixtures/cap") (allow_exec true)
-       (max_steps 4)
+       (max_steps 4) (max_repairs 2)
        (expect (termination finished) (observation "CONFIG-TOKEN-4711"))))
 
 ;; Note on case 6: `finish_on_no_progress` (src/run/agent_loop.c) already

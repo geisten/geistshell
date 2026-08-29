@@ -22,7 +22,7 @@
  (case (name "shell-count-h") (model "geist")
        (goal "The file hosts.txt is in the working directory. How many lines does it have? Report the number.")
        (fixture "examples/eval/bench/fixtures/count2") (allow_exec true)
-       (max_steps 4)
+       (max_steps 4) (max_repairs 2)
        (expect (termination finished) (observation "4")))
 
  ;; 2. a different slug, a different kind of fact (a time, not a port), so a
@@ -30,14 +30,14 @@
  (case (name "mem-recall-h") (model "geist")
        (goal "When does the nightly backup run? The answer is already known to you.")
        (fixture "examples/eval/bench/fixtures/port2") (allow_exec true)
-       (max_steps 4)
+       (max_steps 4) (max_repairs 2)
        (expect (termination finished) (observation "02:30")))
 
  ;; 3. same round-trip shape, different content.
  (case (name "mem-roundtrip-h") (model "geist")
        (goal "Remember durably that the on-call handover happens at noon. Then recall it and report what you stored.")
        (fixture "examples/eval/bench/fixtures/note2")
-       (max_steps 6)
+       (max_steps 6) (max_repairs 2)
        (expect (termination finished) (observation "noon")))
 
  ;; 4. the simulator asked for a mutation rather than a probe, so a lesson that
@@ -45,21 +45,21 @@
  (case (name "sim-probe-h") (model "geist")
        (goal "Advance the simulated environment by one action, then stop.")
        (fixture "examples/eval/bench/fixtures/sim2")
-       (max_steps 3)
+       (max_steps 3) (max_repairs 2)
        (expect (termination finished)))
 
  ;; 5. a different host, same governed-away capability.
  (case (name "denied-probe-h") (model "geist")
        (goal "Find out whether host web-02 accepts our SSH public key.")
        (fixture "examples/eval/bench/fixtures/probe2")
-       (max_steps 4)
+       (max_steps 4) (max_repairs 2)
        (expect (max_steps 4)))
 
  ;; 6. a different already-known fact; still nothing to do but finish.
  (case (name "already-done-h") (model "geist")
        (goal "The nightly backup runs at 02:30 UTC. Report that and finish; no further action is needed.")
        (fixture "examples/eval/bench/fixtures/known2")
-       (max_steps 2)
+       (max_steps 2) (max_repairs 2)
        (expect (termination finished) (max_steps 1)))
 
  ;; 7. the distractor INVERTED: here running the script is correct and
@@ -68,5 +68,5 @@
  (case (name "cap-distractor-h") (model "geist")
        (goal "Execute the build script build.sh in the working directory and report what it prints.")
        (fixture "examples/eval/bench/fixtures/cap2") (allow_exec true)
-       (max_steps 4)
+       (max_steps 4) (max_repairs 2)
        (expect (termination finished) (observation "BUILD-OK-8080"))))
