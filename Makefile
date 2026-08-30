@@ -17,7 +17,7 @@ else
 endif
 
 GEIST_REPO ?= https://github.com/geisten/geistlib.git
-GEIST_REF  ?= v0.9.0
+GEIST_REF  ?= v0.10.1
 
 # Build target for the engine. Detected from the HOST, not from deps/geist:
 # the old fallback asked mk/detect-target.sh and echoed `mac` when the engine
