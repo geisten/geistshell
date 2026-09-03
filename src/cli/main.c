@@ -40,14 +40,6 @@
 #include <time.h>
 #include <unistd.h> /* mkstemp/write/close/unlink: the guard-gate temp suite */
 
-/* free-and-null; formerly from the engine's heap.h, internalised in geist v0.9 */
-static void safe_free(void **ptr) {
-    if (ptr != nullptr) {
-        free(*ptr);
-        *ptr = nullptr;
-    }
-}
-
 #define CLI_TOKEN_CAPACITY 1024u
 #define CLI_NODE_CAPACITY 1024u
 #define CLI_CONTEXT_BYTES 32768u
