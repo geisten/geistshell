@@ -40,14 +40,6 @@
 #include <time.h>
 #include <unistd.h> /* mkstemp/write/close/unlink: the guard-gate temp suite */
 
-/* free-and-null; formerly from the engine's heap.h, internalised in geist v0.9 */
-static void safe_free(void **ptr) {
-    if (ptr != nullptr) {
-        free(*ptr);
-        *ptr = nullptr;
-    }
-}
-
 #define CLI_TOKEN_CAPACITY 1024u
 #define CLI_NODE_CAPACITY 1024u
 #define CLI_CONTEXT_BYTES 32768u
@@ -2975,6 +2967,10 @@ struct eval_run_report {
      * Only reported for cases that declare (expect (observation ...)). */
     size_t case_answered[EVAL_MAX_CASES];
     bool   case_has_answer[EVAL_MAX_CASES];
+    /* #126: tokens consumed per case, summed over samples. Deterministic for
+     * scripted fakes (one token per tick), so it can live in the default
+     * output — unlike wall time, which stays behind --timing. */
+    uint64_t case_tokens[EVAL_MAX_CASES];
     /* Phase 10 (#70): wall time per case and peak RSS for the whole suite.
      *
      * Measured here and nowhere else. The runtime reads no clock — that is what
@@ -3818,11 +3814,13 @@ static enum spg_status eval_run_suite(const char                 *suite_path,
                     last = (struct spg_eval_case_result){
                         .outcome =
                             spg_eval_judge(&expect, &loop, rs, observation),
-                        .termination  = loop.termination,
-                        .steps_taken  = loop.steps_taken,
-                        .repairs_used = loop.repairs_used,
-                        .status       = rs,
+                        .termination     = loop.termination,
+                        .steps_taken     = loop.steps_taken,
+                        .repairs_used    = loop.repairs_used,
+                        .status          = rs,
+                        .tokens_consumed = usage.consumed.tokens,
                     };
+                    report->case_tokens[case_idx] += usage.consumed.tokens;
                     eval_tally_ladder(report, case_idx, &last);
                     if (has_diagnosis &&
                         !eval_tally_diagnosis(
@@ -3911,6 +3909,7 @@ static enum spg_status eval_run_suite(const char                 *suite_path,
                     goto done;
                 }
                 last = r;
+                report->case_tokens[case_idx] += r.tokens_consumed;
                 eval_tally_ladder(report, case_idx, &r);
                 if (has_diagnosis) {
                     const struct spg_agent_loop_result synth = {
@@ -4043,6 +4042,15 @@ static void eval_print_report(const char                   *suite_path,
          * suite's output stays byte-identical. */
         if (report->case_has_answer[i]) {
             printf(",\"answered\":%zu", report->case_answered[i]);
+        }
+        /* #126: cost. Tokens are deterministic (scripted fakes count one per
+         * tick) and always present; wall time varies run to run, so it stays
+         * behind --timing like latency_ms, under the issue's field name. */
+        printf(",\"tokens\":%llu",
+               (unsigned long long)report->case_tokens[i]);
+        if (report->report_timing) {
+            printf(",\"wall_ms\":%llu",
+                   (unsigned long long)report->case_latency_ms[i]);
         }
         /* #64: only for diagnosis cases, so every other suite's output stays
          * byte-identical to what its consumers already parse. */

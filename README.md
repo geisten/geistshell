@@ -186,8 +186,10 @@ instead — geistshell never learns JSON-RPC.
 See [docs/machine-intelligence/Devices.md](docs/machine-intelligence/Devices.md)
 for the full contract, the s-expression channel config, and the migration order.
 Current state: the channel table, range/safe/watchdog and
-`SPG_ACTION_DEVICE_WRITE` ship; the transport is still hard-wired Modbus TCP and
-the `(device-state …)` context block is not built yet.
+`SPG_ACTION_DEVICE_WRITE` ship; channels speak the POSIX exec transport,
+`spg_device_sample()` delivers sensor readings, and the actor renders the
+`(device-state …)` context block (re-sampling after a write is covered by
+`test_cli_device.sh`).
 
 ### Evaluation (`geistshell eval` / `improve`)
 

@@ -54,6 +54,16 @@ grep -q 'invalid --temperature' "$T/temp.out"
 # task <= gate <= parse.
 printf '%s\n' "$OUT" | grep -q '"name":"sim-finish".*"parsed":1,"gated":1'
 
+# #126: per-case cost. Tokens are deterministic for scripted fakes (one per
+# tick, so a 2-step case is 2) and live in the default output; wall time
+# varies, so wall_ms appears only under --timing, next to latency_ms.
+printf '%s\n' "$OUT" | grep -q '"name":"sim-finish".*"tokens":2'
+if printf '%s\n' "$OUT" | grep -q '"wall_ms":'; then
+    echo "wall_ms leaked into the default (deterministic) output" >&2
+    exit 1
+fi
+"$SPG_BIN" eval --timing examples/eval/suite.spg | grep -q '"name":"sim-finish".*"tokens":2,"wall_ms":'
+
 # a reply that never parses earns NO rung
 cat > "$T/reject.spg" <<EOF
 (eval_suite

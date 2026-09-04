@@ -55,6 +55,10 @@ struct spg_eval_case_result {
      * deny_reason when denied); otherwise the NONE/zero value. */
     enum spg_recommendation_reject_reason reject_reason;
     enum spg_policy_deny_reason           deny_reason;
+    /* Tokens the run consumed (usage.consumed.tokens), so a budget-bound run
+     * is diagnosable from the per-case verdict alone (#126). Deterministic for
+     * scripted fakes — the fake decoder counts one token per tick. */
+    uint64_t tokens_consumed;
 };
 
 [[nodiscard]] const char *spg_eval_outcome_to_string(enum spg_eval_outcome o);

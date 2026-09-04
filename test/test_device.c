@@ -222,6 +222,8 @@ static int test_exec_contract(void) {
     }
     char temp_prog[256], fail_prog[256], text_prog[256];
     char heater_prog[256], liar_prog[256], heater_file[256];
+    char low_prog[256], high_prog[256], atmin_prog[256], atmax_prog[256];
+    char wide_prog[256];
     (void)snprintf(heater_file, sizeof heater_file, "%s/heater.value", dir);
     if (write_script(dir, "temp", "echo 2350\n", temp_prog,
                      sizeof temp_prog) != 0 ||
@@ -230,7 +232,17 @@ static int test_exec_contract(void) {
         write_script(dir, "text", "echo warm\n", text_prog,
                      sizeof text_prog) != 0 ||
         write_script(dir, "liar", "echo 39\n", liar_prog,
-                     sizeof liar_prog) != 0) {
+                     sizeof liar_prog) != 0 ||
+        write_script(dir, "low", "echo -401\n", low_prog,
+                     sizeof low_prog) != 0 ||
+        write_script(dir, "high", "echo 9001\n", high_prog,
+                     sizeof high_prog) != 0 ||
+        write_script(dir, "atmin", "echo -400\n", atmin_prog,
+                     sizeof atmin_prog) != 0 ||
+        write_script(dir, "atmax", "echo 9000\n", atmax_prog,
+                     sizeof atmax_prog) != 0 ||
+        write_script(dir, "wide", "echo -9223372036854775808\n", wide_prog,
+                     sizeof wide_prog) != 0) {
         return 1;
     }
     char heater_body[512];
@@ -270,6 +282,32 @@ static int test_exec_contract(void) {
     if (spg_device_add_channel(&dev, &ch) != SPG_OK) {
         return 1;
     }
+    ch = (struct spg_device_channel){.name = "low", .min = -400, .max = 9000};
+    (void)snprintf(ch.program, sizeof ch.program, "%s", low_prog);
+    if (spg_device_add_channel(&dev, &ch) != SPG_OK) {
+        return 1;
+    }
+    ch = (struct spg_device_channel){.name = "high", .min = -400, .max = 9000};
+    (void)snprintf(ch.program, sizeof ch.program, "%s", high_prog);
+    if (spg_device_add_channel(&dev, &ch) != SPG_OK) {
+        return 1;
+    }
+    ch = (struct spg_device_channel){.name = "atmin", .min = -400, .max = 9000};
+    (void)snprintf(ch.program, sizeof ch.program, "%s", atmin_prog);
+    if (spg_device_add_channel(&dev, &ch) != SPG_OK) {
+        return 1;
+    }
+    ch = (struct spg_device_channel){.name = "atmax", .min = -400, .max = 9000};
+    (void)snprintf(ch.program, sizeof ch.program, "%s", atmax_prog);
+    if (spg_device_add_channel(&dev, &ch) != SPG_OK) {
+        return 1;
+    }
+    ch = (struct spg_device_channel){
+        .name = "wide", .min = INT64_MIN, .max = INT64_MAX};
+    (void)snprintf(ch.program, sizeof ch.program, "%s", wide_prog);
+    if (spg_device_add_channel(&dev, &ch) != SPG_OK) {
+        return 1;
+    }
 
     /* A reading is the printed number, and it counts as contact. */
     int64_t value = 0;
@@ -284,6 +322,31 @@ static int test_exec_contract(void) {
     }
     if (spg_device_read(&dev, "chatty", &value) != SPG_E_FORMAT ||
         value != 777) {
+        return 1;
+    }
+
+    /* A parsed value outside the channel range is refused, stays untouched,
+     * and does NOT count as watchdog contact (issue #120). */
+    dev.contact_pending = false;
+    if (spg_device_read(&dev, "low", &value) != SPG_E_LIMIT || value != 777 ||
+        dev.contact_pending) {
+        return 1;
+    }
+    if (spg_device_read(&dev, "high", &value) != SPG_E_LIMIT || value != 777 ||
+        dev.contact_pending) {
+        return 1;
+    }
+    /* The range is inclusive: exactly min and exactly max are readings. */
+    if (spg_device_read(&dev, "atmin", &value) != SPG_OK || value != -400) {
+        return 1;
+    }
+    if (spg_device_read(&dev, "atmax", &value) != SPG_OK || value != 9000) {
+        return 1;
+    }
+    /* INT64 extremes compare without overflow: a full-range channel accepts
+     * INT64_MIN itself. */
+    if (spg_device_read(&dev, "wide", &value) != SPG_OK ||
+        value != INT64_MIN) {
         return 1;
     }
 
@@ -312,13 +375,16 @@ static int test_exec_contract(void) {
     }
 
     /* A mixed sample: the dead sensors render unknown, the live ones their
-     * value, and the first failure is reported without blinding the rest. */
+     * value, and the first failure is reported without blinding the rest.
+     * Out-of-range channels (5, 6) are unknown like any other bad read. */
     struct spg_device_state state = {};
-    if (spg_device_sample(&dev, &state) == SPG_OK || state.n != 5u) {
+    if (spg_device_sample(&dev, &state) == SPG_OK || state.n != 10u) {
         return 1;
     }
     if (!state.readings[0].known || state.readings[0].value != 2350 ||
-        state.readings[1].known || state.readings[2].known) {
+        state.readings[1].known || state.readings[2].known ||
+        state.readings[5].known || state.readings[6].known ||
+        !state.readings[7].known || !state.readings[8].known) {
         return 1;
     }
     return 0;
