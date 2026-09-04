@@ -191,7 +191,7 @@ static int test_context_ablation_diff(void) {
     size_t                   n1 = 0u, n2 = 0u;
 
     struct spg_context_sources sources = {.machine = &machine};
-    if (spg_context_render(&sources, &view, sizeof one, one, &n1) != SPG_OK) {
+    if (spg_context_render(&sources, &view, sizeof one, one, &n1, nullptr) != SPG_OK) {
         return 1;
     }
     struct spg_machine_history off;
@@ -199,7 +199,7 @@ static int test_context_ablation_diff(void) {
     struct spg_machine_state pushed = state_for(9u);
     spg_machine_history_push(&off, 1u, &pushed); /* no-op when disabled */
     sources.machine_history = &off;
-    if (spg_context_render(&sources, &view, sizeof two, two, &n2) != SPG_OK) {
+    if (spg_context_render(&sources, &view, sizeof two, two, &n2, nullptr) != SPG_OK) {
         return 1;
     }
     if (n1 != n2 || memcmp(one, two, n1) != 0) {
@@ -209,14 +209,14 @@ static int test_context_ablation_diff(void) {
     struct spg_machine_history on;
     spg_machine_history_init(&on, 2u);
     sources.machine_history = &on;
-    if (spg_context_render(&sources, &view, sizeof two, two, &n2) != SPG_OK) {
+    if (spg_context_render(&sources, &view, sizeof two, two, &n2, nullptr) != SPG_OK) {
         return 1;
     }
     if (strstr(two, "(machine-history)") == nullptr) {
         return 1; /* enabled-but-empty is the explicit empty form */
     }
     spg_machine_history_push(&on, 1u, &pushed);
-    if (spg_context_render(&sources, &view, sizeof two, two, &n2) != SPG_OK ||
+    if (spg_context_render(&sources, &view, sizeof two, two, &n2, nullptr) != SPG_OK ||
         strstr(two, "(machine-history (t 1 ") == nullptr) {
         return 1;
     }
