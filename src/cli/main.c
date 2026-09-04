@@ -2125,6 +2125,7 @@ static int agent_command(int argc, char **argv) {
      * never widens or narrows what the executor permits (cmd_menu.h). */
     const char *menu_path    = nullptr;
     bool        command_mask = false;
+    size_t      reason_budget = 0u; /* #125: free think-tokens, 0 = off */
     for (int i = 2; i < argc; i += 1) {
         if ((strcmp(argv[i], "--config") == 0 ||
              strcmp(argv[i], "--run") == 0) &&
@@ -2174,6 +2175,14 @@ static int agent_command(int argc, char **argv) {
             /* #34: force the real model's output to begin with the
              * recommendation opening, then decode freely. */
             constrained = true;
+            continue;
+        }
+        if (strcmp(argv[i], "--reason-first") == 0 && i + 1 < argc) {
+            /* #125: N free think-tokens decoded (into a parse-safe comment)
+             * before the forced (recommend (kind …. Only takes effect with
+             * --constrained; 0 (default) is byte-identical to today. */
+            reason_budget = (size_t)strtoull(argv[i + 1], nullptr, 10);
+            i += 1;
             continue;
         }
         if (strcmp(argv[i], "--host-status") == 0) {
@@ -2462,6 +2471,7 @@ static int agent_command(int argc, char **argv) {
                   .capability_count = agent_caps_n,
                   .command_names = command_mask ? agent_menu_names : nullptr,
                   .command_name_count = command_mask ? agent_menu_n : 0u,
+                  .reason_budget      = constrained ? reason_budget : 0u,
                   .sampling         = {.max_seq_len = 4096u,
                                        .temperature = sample_temp,
                                        .top_p       = 1.0f,

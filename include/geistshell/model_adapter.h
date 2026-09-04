@@ -102,6 +102,14 @@ struct spg_model_adapter_config {
      * executor permits. */
     const char *const *command_names;
     size_t             command_name_count;
+
+    /* #125 reason-first scaffold: decode up to reason_budget free tokens
+     * BEFORE the forced prefix and emit them as one parse-safe comment line,
+     * so a small model gets its own thinking in the KV cache before the
+     * single forced (recommend (kind … decision ("reason free, constrain
+     * late"). 0 = off (default) — the constrained decode is byte-identical to
+     * before. GEIST + constrained only; ignored otherwise. */
+    size_t reason_budget;
 };
 
 struct spg_model_adapter {
@@ -124,6 +132,7 @@ struct spg_model_adapter {
     size_t                             capability_count;
     const char *const                 *command_names; /* #56 command mask */
     size_t                             command_name_count;
+    size_t                             reason_budget; /* #125 reason-first */
 
     /* REMOTE transport state: opaque CURL handle, borrowed config strings, and
      * the sampling values forwarded to the chat/completions request. */
