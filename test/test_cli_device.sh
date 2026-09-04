@@ -202,3 +202,29 @@ strings build/device-demo.sgj |
     fail "a dead actuator behind live channels never tripped the tick-level watchdog"
 
 echo "test_cli_device: PASS (tick-level watchdog)"
+
+# --- #119: a network channel is refused from TRUSTED config -----------------
+# The operator declares (network true) on the channel; the plant policy says
+# (network_default deny). The model's form always carries uses_network false —
+# the gate must derive the truth from the loaded table and refuse BEFORE any
+# fork, while a local channel (the block above) keeps working.
+cat >"$DIR/network.spg" <<EOF
+(device
+  (channel (name "heater") (program "$PWD/$DIR/heater") (range 0 100) (safe 0)
+           (network true))
+  (channel (name "temp")   (program "$PWD/$DIR/temp")   (range -400 9000)))
+EOF
+
+# Reset the plant so an (incorrectly) executed write would be visible.
+dev write heater 0 >/dev/null || fail "resetting heater failed"
+
+"$SPG_BIN" agent --config examples/device/run.spg --fake-script "$FAKE" \
+    --max-steps 2 --allow-exec --device "$DIR/network.spg" \
+    >/dev/null 2>&1 || true
+
+[ "$(dev read heater | value_of)" = "0" ] ||
+    fail "a network channel under network_default deny still moved the machine"
+strings build/device-demo.sgj | grep -q 'SPG_POLICY_DENY_NETWORK' ||
+    fail "the network denial is missing from the journal"
+
+echo "test_cli_device: PASS (network channel refused from config)"

@@ -193,6 +193,22 @@ parse_channel_node(const size_t input_n, const char input[],
                 return SPG_E_SCHEMA;
             }
             out->writable = true;
+        } else if (spg_sexpr_span_eq_cstr(input_n, input, nodes[key].span,
+                                          "network")) {
+            /* #119: operator-declared transport need. Only the two symbols —
+             * a typo here would silently change a trust decision. */
+            if (nodes[value].kind != SPG_SEXPR_NODE_SYMBOL) {
+                return SPG_E_SCHEMA;
+            }
+            if (spg_sexpr_span_eq_cstr(input_n, input, nodes[value].span,
+                                       "true")) {
+                out->network = true;
+            } else if (spg_sexpr_span_eq_cstr(input_n, input,
+                                              nodes[value].span, "false")) {
+                out->network = false;
+            } else {
+                return SPG_E_SCHEMA;
+            }
         } else {
             return SPG_E_SCHEMA; /* an unknown field is a misspelled field */
         }
