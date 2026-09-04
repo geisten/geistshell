@@ -224,6 +224,117 @@ bool spg_reflect_outcome(const char *shape_token, const char *expected_substring
     return true;
 }
 
+/* --- GEPA-lite (#27): deterministic mutation of the injected directive ---- */
+
+/* Copy at most cap-1 bytes of src into dst and NUL-terminate; returns the
+ * length written. */
+static size_t copy_bounded(char *dst, const size_t cap, const char *src,
+                           const size_t n) {
+    if (cap == 0u) {
+        return 0u;
+    }
+    const size_t w = n + 1u > cap ? cap - 1u : n;
+    memcpy(dst, src, w);
+    dst[w] = '\0';
+    return w;
+}
+
+size_t spg_gepa_mutate(const enum spg_gepa_op op, const char *seed,
+                       const char *cue, const size_t cap, char out[]) {
+    if (out == nullptr || cap == 0u) {
+        return 0u;
+    }
+    out[0] = '\0';
+    if (seed == nullptr || seed[0] == '\0') {
+        return 0u;
+    }
+    const size_t seed_n = strlen(seed);
+
+    switch (op) {
+    case SPG_GEPA_OP_IDENTITY:
+        return seed_n + 1u > cap ? 0u : copy_bounded(out, cap, seed, seed_n);
+
+    case SPG_GEPA_OP_TRUNCATE: {
+        /* Keep only the first sentence — the shortest wording that still
+         * carries the instruction. The '.' is kept; a variant equal to the
+         * seed (no interior '.') does not count as a mutation. */
+        const char *dot = strchr(seed, '.');
+        if (dot == nullptr || (size_t)(dot - seed) + 1u >= seed_n) {
+            return 0u; /* no earlier sentence boundary to cut at */
+        }
+        const size_t keep = (size_t)(dot - seed) + 1u;
+        return keep + 1u > cap ? 0u : copy_bounded(out, cap, seed, keep);
+    }
+
+    case SPG_GEPA_OP_TIGHTEN: {
+        /* Drop a trailing parenthetical aside "... (last reply rejected: x)."
+         * -> "...." The concrete cue lives elsewhere; the directive proper is
+         * the part before the parenthesis. */
+        const char *open = strchr(seed, '(');
+        if (open == nullptr || open == seed) {
+            return 0u;
+        }
+        const char *close = strrchr(seed, ')');
+        if (close == nullptr || close < open) {
+            return 0u;
+        }
+        /* text before '(' (trimmed of one trailing space) + text after ')' */
+        size_t pre = (size_t)(open - seed);
+        while (pre > 0u && seed[pre - 1u] == ' ') {
+            pre -= 1u;
+        }
+        if (pre == 0u) {
+            return 0u;
+        }
+        char tmp[SPG_MEM_DESC_MAX * 2u + 2u];
+        const size_t tail_n = strlen(close + 1u);
+        if (pre + tail_n + 1u > sizeof tmp) {
+            return 0u;
+        }
+        memcpy(tmp, seed, pre);
+        memcpy(tmp + pre, close + 1u, tail_n);
+        tmp[pre + tail_n] = '\0';
+        if (strcmp(tmp, seed) == 0) {
+            return 0u;
+        }
+        const size_t n = pre + tail_n;
+        return n + 1u > cap ? 0u : copy_bounded(out, cap, tmp, n);
+    }
+
+    case SPG_GEPA_OP_CUE_FIRST: {
+        /* Lead with the concrete cue so the one line a small model reads
+         * starts with the specific failure, not the generic instruction. */
+        if (cue == nullptr || cue[0] == '\0') {
+            return 0u;
+        }
+        char         tmp[SPG_MEM_DESC_MAX * 2u + 4u];
+        const int    n = snprintf(tmp, sizeof tmp, "%s. %s", cue, seed);
+        if (n < 0 || (size_t)n >= sizeof tmp || strcmp(tmp, seed) == 0) {
+            return 0u;
+        }
+        return (size_t)n + 1u > cap ? 0u
+                                    : copy_bounded(out, cap, tmp, (size_t)n);
+    }
+
+    case SPG_GEPA_OP_COUNT:
+    default:
+        return 0u;
+    }
+}
+
+size_t spg_gepa_select(const size_t n, const size_t scores[]) {
+    if (n == 0u || scores == nullptr) {
+        return 0u;
+    }
+    size_t best = 0u; /* the incumbent — index 0 wins ties */
+    for (size_t i = 1u; i < n; i += 1u) {
+        if (scores[i] > scores[best]) {
+            best = i;
+        }
+    }
+    return best;
+}
+
 bool spg_reflect_skill(const char *shape_token, const char *procedure_summary,
                        struct spg_lesson *out) {
     if (out == nullptr || shape_token == nullptr || shape_token[0] == '\0' ||

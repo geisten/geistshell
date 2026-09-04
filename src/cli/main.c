@@ -17,6 +17,7 @@
 #include "geistshell/guard_ring.h"
 #include "geistshell/improve.h"
 #include "geistshell/machine_fixture.h"
+#include "geistshell/cmd_executor.h"
 #include "geistshell/cmd_menu.h"
 #include "geistshell/mem_command.h"
 #include "geistshell/mem_store.h"
@@ -2839,7 +2840,46 @@ static int agent_command(int argc, char **argv) {
         printf("best_of=%zu attempts_used=%zu chosen=%zu rank=%d\n", attempts,
                used, chosen, best_rank);
     }
-    if (have_expect) {
+    /* #13: world-state post-check. Some tasks produce a file, not stdout —
+     * their success is invisible to the (expect ...) substring. The command
+     * runs ONCE, after the run (terminal verdict step only), bounded like any
+     * governed shell action, and its exit 0 ANDs into the verdict. Model-free,
+     * zero tokens: a shell probe, not inference. */
+    const bool have_post_check = run.has_post_check;
+    if (have_post_check) {
+        char cmd[512];
+        bool post_ok = false;
+        if (run.post_check.length < sizeof cmd) {
+            memcpy(cmd, run_text.data + run.post_check.offset,
+                   run.post_check.length);
+            cmd[run.post_check.length] = '\0';
+            const char  *post_argv[SPG_CMD_MAX_ARGS];
+            const size_t post_argc =
+                spg_cmd_split_ws(cmd, SPG_CMD_MAX_ARGS, post_argv);
+            char post_out[256];
+            char post_err[256];
+            const struct spg_cmd_request request = {
+                .argc       = post_argc,
+                .argv       = post_argv,
+                .timeout_ms = 5000u,
+                .limits     = SPG_CMD_DEFAULT_LIMITS,
+                .stdout_cap = sizeof post_out,
+                .stdout_buf = post_out,
+                .stderr_cap = sizeof post_err,
+                .stderr_buf = post_err,
+            };
+            struct spg_cmd_result result = {};
+            post_ok = post_argc > 0u &&
+                      spg_cmd_executor_run(1u, &request, &result) == SPG_OK &&
+                      result.status == SPG_OK && result.started &&
+                      result.exited && result.exit_code == 0;
+        }
+        printf("post_check=%s\n", post_ok ? "pass" : "fail");
+        if (!post_ok && verdict == SPG_EVAL_PASS) {
+            verdict = SPG_EVAL_FAIL_OBSERVATION; /* the world says no */
+        }
+    }
+    if (have_expect || have_post_check) {
         printf("verdict=%s\n", spg_eval_outcome_to_string(verdict));
         /* a FAIL exits non-zero so a caller (and a future miner) can act on it */
         if (verdict != SPG_EVAL_PASS && rc == 0) {
@@ -4572,6 +4612,68 @@ static int audit_command(int argc, char **argv) {
     return 0;
 }
 
+/* #27 GEPA-lite: extract the concrete cue a description carries in its trailing
+ * parenthetical (e.g. "(last reply rejected: ... parse)") so a mutation can
+ * lead with it. Writes the inner text into cue[0..cap); empty when absent. */
+static void gepa_cue_of(const char *description, char *cue, const size_t cap) {
+    cue[0]            = '\0';
+    const char *open  = strchr(description, '(');
+    const char *close = open != nullptr ? strrchr(description, ')') : nullptr;
+    if (open == nullptr || close == nullptr || close <= open + 1) {
+        return;
+    }
+    const size_t inner = (size_t)(close - open - 1);
+    const size_t w     = inner + 1u > cap ? cap - 1u : inner;
+    memcpy(cue, open + 1, w);
+    cue[w] = '\0';
+}
+
+/* #27: search the deterministic mutation population for a description that
+ * scores strictly higher through the gate than the seed. Runs the suite once
+ * per applicable variant (offline — the point of GEPA-lite), keeps the fittest
+ * within the P6 budget, and writes it back into lesson->description. Returns
+ * the winning operator and its pass count for the report; the store is left
+ * holding the chosen description. */
+static enum spg_gepa_op gepa_evolve(struct spg_mem_store         *store,
+                                    const char                   *gate_path,
+                                    const struct eval_run_opts   *opts,
+                                    struct spg_lesson            *lesson,
+                                    size_t                       *out_score) {
+    char cue[SPG_MEM_DESC_MAX + 1u];
+    gepa_cue_of(lesson->description, cue, sizeof cue);
+
+    char   variants[SPG_GEPA_OP_COUNT][SPG_MEM_DESC_MAX + 1u];
+    size_t scores[SPG_GEPA_OP_COUNT] = {0};
+    /* index 0 is always the seed (IDENTITY); it is the incumbent the selector
+     * only unseats on a strict win. */
+    (void)snprintf(variants[0], sizeof variants[0], "%s", lesson->description);
+    for (size_t op = 1u; op < SPG_GEPA_OP_COUNT; op += 1u) {
+        variants[op][0] = '\0';
+        (void)spg_gepa_mutate((enum spg_gepa_op)op, lesson->description, cue,
+                              sizeof variants[op], variants[op]);
+    }
+
+    for (size_t op = 0u; op < SPG_GEPA_OP_COUNT; op += 1u) {
+        if (op > 0u && variants[op][0] == '\0') {
+            continue; /* operator did not apply / over budget */
+        }
+        (void)spg_mem_save(store, lesson->slug, variants[op], lesson->body);
+        struct eval_run_report trial;
+        if (eval_run_suite(gate_path, store, opts, &trial) != SPG_OK) {
+            scores[op] = 0u;
+            continue;
+        }
+        scores[op] = trial.passed;
+    }
+
+    const size_t best = spg_gepa_select(SPG_GEPA_OP_COUNT, scores);
+    (void)snprintf(lesson->description, sizeof lesson->description, "%s",
+                   variants[best]);
+    (void)spg_mem_save(store, lesson->slug, lesson->description, lesson->body);
+    *out_score = scores[best];
+    return (enum spg_gepa_op)best;
+}
+
 /* Self-improvement: run the suite, distill a lesson for each failing case,
  * persist each tentatively into the mind-palace, re-run, and keep it only if
  * the pass count did not drop (else revert). Emits a JSONL report. */
@@ -4583,11 +4685,19 @@ static int improve_command(int argc, char **argv) {
     const char           *validate_path = nullptr;
     size_t                samples       = 1u;
     bool                  constrained   = false;
+    bool                  evolve        = false;
     bool                  prove_benefit = false;
     float                 temperature   = 0.0f;
     struct spg_guard_ring guards;
     spg_guard_ring_init(&guards);
     for (int i = 2; i < argc; i += 1) {
+        /* #27 GEPA-lite: before gating each candidate, search the
+         * deterministic mutation population for a wording that flips more
+         * cases. Off by default — output byte-identical to today. */
+        if (strcmp(argv[i], "--evolve") == 0) {
+            evolve = true;
+            continue;
+        }
         if (strcmp(argv[i], "--memory-dir") == 0 && i + 1 < argc) {
             memory_dir = argv[++i];
             continue;
@@ -4650,7 +4760,7 @@ static int improve_command(int argc, char **argv) {
         fprintf(
             stderr,
             "usage: %s improve <suite.spg> [--validate <holdout.spg>] "
-            "[--guard <run.spg>]... [--prove-benefit] "
+            "[--guard <run.spg>]... [--evolve] [--prove-benefit] "
             "[--memory-dir <d>] [--remote-url <url>] [--remote-model <name>] "
             "[--samples <N>] [--constrained] [--temperature <t>]\n",
             argv[0]);
@@ -4721,9 +4831,19 @@ static int improve_command(int argc, char **argv) {
     const size_t orig_passed = cur_passed;
     size_t       kept        = 0u;
     for (size_t k = 0u; k < ncand; k += 1u) {
-        const struct spg_lesson *lesson = &candidates[k];
+        struct spg_lesson *lesson = &candidates[k];
         (void)spg_mem_save(&store, lesson->slug, lesson->description,
                            lesson->body); /* tentative */
+        /* #27: evolve the directive text against the gate before scoring it.
+         * The search leaves the fittest variant in lesson->description and in
+         * the store, so the trial below scores exactly what will be kept. */
+        enum spg_gepa_op evolved_op = SPG_GEPA_OP_IDENTITY;
+        if (evolve) {
+            size_t evolved_score = 0u;
+            evolved_op = gepa_evolve(&store, gate_path, &opts, lesson,
+                                     &evolved_score);
+            (void)evolved_score;
+        }
         static struct eval_run_report trial;
         if (eval_run_suite(gate_path, &store, &opts, &trial) != SPG_OK) {
             fprintf(stderr, "improve: trial run failed\n");
@@ -4769,6 +4889,13 @@ static int improve_command(int argc, char **argv) {
             spg_improve_gate(suite_ok, guards_ok, prove_benefit, proven);
         bool was_kept = false;
         (void)spg_improve_commit(&store, lesson, accepted, &was_kept);
+        char evolved_field[32] = "";
+        if (evolve) {
+            static const char *const op_name[SPG_GEPA_OP_COUNT] = {
+                "identity", "truncate", "tighten", "cue_first"};
+            (void)snprintf(evolved_field, sizeof evolved_field,
+                           ",\"evolved\":\"%s\"", op_name[evolved_op]);
+        }
         char proven_field[32] = "";
         if (prove_benefit) {
             (void)snprintf(proven_field, sizeof proven_field,
@@ -4777,14 +4904,14 @@ static int improve_command(int argc, char **argv) {
         }
         if (validate_path != nullptr) {
             printf("{\"lesson\":\"%s\",\"accepted\":%s,\"held_out_passed\":%zu,"
-                   "\"trial_passed\":%zu%s}\n",
+                   "\"trial_passed\":%zu%s%s}\n",
                    lesson->slug, accepted ? "true" : "false", cur_passed,
-                   trial.passed, proven_field);
+                   trial.passed, evolved_field, proven_field);
         } else {
             printf("{\"lesson\":\"%s\",\"accepted\":%s,\"baseline_passed\":%zu,"
-                   "\"trial_passed\":%zu%s}\n",
+                   "\"trial_passed\":%zu%s%s}\n",
                    lesson->slug, accepted ? "true" : "false", cur_passed,
-                   trial.passed, proven_field);
+                   trial.passed, evolved_field, proven_field);
         }
         if (was_kept) {
             cur_passed = trial.passed;

@@ -313,13 +313,8 @@ Each step is separately measurable or trivial.
 | 5 | Model profile as s-expression, incl. the `finish_on_no_progress` axis *(done — `--model-profile`)* | Now the diagnosed fix, not a hypothesis: see the postscript. |
 | 6 | Verifier ladder replaces the `have_expect` oracle | Makes `--best-of` honest. |
 | 7 | Command menu → prompt + `command` mask (with the three consequences above) | Second hypothesis. |
-<<<<<<< HEAD
-| 8 | PMI calibration in `decode_choice_slot` | Third hypothesis — **deprioritised**: it presumes a parseable action, which BitNet does not produce (postscript). |
-| 9 | `pin_prefix` for the constant prefix *(built, off by default — `--pin-prefix`)* | Pure speed, changes no numbers — hence last. The framing split (decision 3 / #54) is not on `main`, so instead of a system-turn boundary the pin uses a **runtime token-alignment guard**: it pins only when the constant prefix is a clean token-prefix of the whole prompt, else full prefill. Byte-identical by construction; the wall-clock win is the GGUF-host measurement. |
-=======
 | 8 | PMI calibration in `decode_choice_slot` *(built, off by default — `--pmi-calibrate`)* | Third hypothesis — still **deprioritised**: it presumes a parseable action, which BitNet does not produce (postscript). Mechanism is in place; the task-rate acceptance is a Gemma-class measurement. |
-| 9 | `pin_prefix` for the constant prefix | Pure speed, changes no numbers — hence last. |
->>>>>>> origin/main
+| 9 | `pin_prefix` for the constant prefix *(built, off by default — `--pin-prefix`)* | Pure speed, changes no numbers — hence last. The framing split (decision 3 / #54) is not on `main`, so instead of a system-turn boundary the pin uses a **runtime token-alignment guard**: it pins only when the constant prefix is a clean token-prefix of the whole prompt, else full prefill. Byte-identical by construction; the wall-clock win is the GGUF-host measurement. |
 
 Steps 0–3 are instrument-building with no insight of their own. That is the
 price of every number from step 4 onward meaning something.
@@ -501,7 +496,6 @@ without validating *this suite*. The hold-out split, and with it the
 generalisation claim behind the learning gate, remains untested on a real
 model — which was its state before this document was written.
 
-<<<<<<< HEAD
 ### pin_prefix (#58) — built, off by default, unmeasured
 
 The agent throws away the KV cache and re-prefills the whole context every
@@ -523,8 +517,7 @@ whether pinned or not, and off (the default) is the original path (the frozen
 baseline is untouched). The acceptance — wall-clock per step drops on a
 multi-step case with byte-identical journals and unchanged ladder rates — is a
 GGUF-host measurement; if any rate moves, the pin is wrong.
-=======
-<<<<<<< HEAD
+
 ### PMI calibration (#124/#57) — built, off by default, unmeasured
 
 `decode_choice_slot` picks the masked candidate with the highest raw logit,
@@ -545,7 +538,6 @@ gate-rate and task-rate move while parse-rate stays flat, on the step-4 v2
 baseline — is a Gemma-class measurement (BitNet fails the parse rung, so this
 step stays deprioritised for it), and per the #124/#125 interaction note it
 must not share a measurement window with the reason-first scaffold.
-=======
 ### Reason-first scaffold (#125) — built, off by default, unmeasured
 
 The "reason free, constrain late" line of work (Constraint Tax, CRANE) holds
@@ -565,5 +557,3 @@ model-free (unit-tested in `test_grammar_mask.c`). The acceptance itself —
 task-rate up with parse-rate unchanged, vs the v2 baseline (2026-08-29) — is a
 number a GGUF host produces. Per the interaction note in #124/#125, it must
 not be measured in the same window as PMI calibration.
->>>>>>> origin/main
->>>>>>> origin/main
