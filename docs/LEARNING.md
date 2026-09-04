@@ -108,9 +108,13 @@ is the honest place to build "learns from use."
 
 - **Sequence over set (decision 6):** the finer shape key, if too many distinct
   scripts share one capability set and a guard misses regressions.
-- **Post-check command (decision 2):** a last-step shell probe (`exit 0 =
-  success`) verifying world state, for tasks that produce files rather than
-  stdout.
+- **Post-check command (decision 2): SHIPPED (#13).** An optional
+  `(post_check "<cmd>")` in the run config: after the run, the command
+  executes once through `cmd_executor` under the same bounds as any governed
+  shell action, and its exit 0 ANDs into the verdict alongside `(expect ...)`
+  — both must hold for `verdict=pass`. Terminal step only, model-free, zero
+  tokens. Whitespace-split argv, no shell interpretation (`test -f out.pdf`,
+  not pipelines). Absent, behaviour is byte-identical to before.
 
 ## Constrained decoding, forced-prefix first cut (geistshell#34, 2026-08-02)
 
