@@ -2959,6 +2959,14 @@ struct eval_run_report {
      * action", and those want opposite fixes. */
     size_t case_parsed[EVAL_MAX_CASES];
     size_t case_gated[EVAL_MAX_CASES];
+    /* #128: samples whose final RAW reply contained the case's expected
+     * observation substring — scored against the reply text itself, not
+     * against a parsed action's observation. Orthogonal to the ladder: high
+     * answered + low parsed means the model solves the question but not the
+     * interface; answered on a tool-requiring case is a fabrication detector.
+     * Only reported for cases that declare (expect (observation ...)). */
+    size_t case_answered[EVAL_MAX_CASES];
+    bool   case_has_answer[EVAL_MAX_CASES];
     /* #126: tokens consumed per case, summed over samples. Deterministic for
      * scripted fakes (one token per tick), so it can live in the default
      * output — unlike wall time, which stays behind --timing. */
@@ -3645,6 +3653,9 @@ static enum spg_status eval_run_suite(const char                 *suite_path,
         static struct eval_sandbox sandbox_state;
         const char *const          sandbox = sandbox_state.dir;
 
+        /* #128: the answered column exists only where an answer is declared. */
+        report->case_has_answer[case_idx] = expect.observation != nullptr;
+
         const struct spg_agent_run_config rcfg = {
             .max_steps           = (size_t)max_steps,
             .max_repairs         = (size_t)max_repairs,
@@ -3791,8 +3802,15 @@ static enum spg_status eval_run_suite(const char                 *suite_path,
                     }
                     struct spg_policy_usage      usage = {};
                     struct spg_agent_loop_result loop  = {};
-                    const enum spg_status        rs =
+                    /* #128: the buffer is static and outlives cases — a stale
+                     * reply from the previous sample must never score. */
+                    model_output[0]       = '\0';
+                    const enum spg_status rs =
                         spg_agent_run(&gin, &rcfg, &ws, &usage, &loop);
+                    if (expect.observation != nullptr &&
+                        strstr(model_output, expect.observation) != nullptr) {
+                        report->case_answered[case_idx] += 1u;
+                    }
                     last = (struct spg_eval_case_result){
                         .outcome =
                             spg_eval_judge(&expect, &loop, rs, observation),
@@ -3877,9 +3895,14 @@ static enum spg_status eval_run_suite(const char                 *suite_path,
                     cin.store = &sandbox_state.store;
                 }
                 struct spg_eval_case_result r = {};
-                const enum spg_status       cs =
+                model_output[0]               = '\0'; /* #128: no stale reply */
+                const enum spg_status cs =
                     spg_eval_run_case(script, script_n, gate_marker, &cin,
                                       &rcfg, &ws, &expect, &r);
+                if (expect.observation != nullptr &&
+                    strstr(model_output, expect.observation) != nullptr) {
+                    report->case_answered[case_idx] += 1u;
+                }
                 if (cs != SPG_OK) {
                     free_file_buffer(&script_text);
                     rc = cs;
@@ -4013,6 +4036,13 @@ static void eval_print_report(const char                   *suite_path,
         /* #53: the ladder, appended so existing consumers keep matching. */
         printf(",\"parsed\":%zu,\"gated\":%zu", report->case_parsed[i],
                report->case_gated[i]);
+        /* #128: answer-judged, orthogonal to the ladder — the same substring
+         * the task rung uses, scored against the final RAW reply text. Only
+         * for cases that declare an expected observation, so every other
+         * suite's output stays byte-identical. */
+        if (report->case_has_answer[i]) {
+            printf(",\"answered\":%zu", report->case_answered[i]);
+        }
         /* #126: cost. Tokens are deterministic (scripted fakes count one per
          * tick) and always present; wall time varies run to run, so it stays
          * behind --timing like latency_ms, under the issue's field name. */
