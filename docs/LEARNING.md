@@ -541,6 +541,38 @@ accumulation + injection, not lift. Open follow-ups on #26: model-driven
 distillation, shape-triggered single-skill injection (vs the whole index), and
 a gate on skill acceptance.
 
+## GEPA-lite: evolving the directive against the gate (geistshell#27)
+
+A lesson's DESCRIPTION is the one line a small model sees per tick, and today
+it is minted once and never refined — the first wording written is the wording
+that ships. GEPA-lite searches, OFFLINE, for a wording that flips more cases
+through the SAME acceptance gate (P5). `improve --evolve` runs, per candidate
+slug, a `mutate -> gate -> select` step over a fixed population of
+**deterministic** mutation operators:
+
+- `truncate` — keep only the first sentence;
+- `tighten` — drop a trailing parenthetical aside;
+- `cue_first` — lead with the concrete reject/observation cue, then the seed.
+
+Each variant is scored by re-running the suite (and the guard ring); the seed
+is the incumbent at index 0 and `spg_gepa_select` unseats it only on a
+**strict** win, so evolution never trades a proven wording for an equal guess.
+
+Two properties keep it small-model-safe, both enforced in code:
+
+- **Runtime is untouched.** The model still sees ONE budgeted directive; GEPA
+  only changes WHICH description text is stored. `--evolve` off ⇒ output
+  byte-identical to before.
+- **The P6 budget is a hard fitness constraint.** `spg_gepa_mutate` returns 0
+  (disqualified) for any variant over `SPG_MEM_DESC_MAX`, so a mutation can
+  never bloat the injected line.
+
+`test_cli_improve.sh` proves the loop *works*, not just runs: a suite whose
+gate marker only the `cue_first` wording produces cannot be opened by the seed
+directive, so `--evolve` must adopt the mutation (`"evolved":"cue_first"`,
+`trial_passed` 0→1) to pass it. Model-driven paraphrase stays out (an optional
+offline upgrade); a real-model lift measurement is the #25 numerator, on a
+model-completable corpus.
 ## User-profile memory (geistshell#28)
 
 Task lessons and skills are about the WORLD (a failure the world proved, a
