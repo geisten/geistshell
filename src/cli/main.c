@@ -2110,6 +2110,7 @@ static int agent_command(int argc, char **argv) {
      * Two means the machine may miss one decision's worth of contact before
      * it is driven to its safe state. */
     uint64_t device_watchdog_steps = 2u;
+    bool     no_skill_inject       = false; /* #26 */
     size_t   machine_history_window = 0u; /* #79: off by default */
     /* One tick's readings. Lives here rather than inside spg_device so the
      * port stays free of loop state and the block can be parsed back out of
@@ -2250,6 +2251,12 @@ static int agent_command(int argc, char **argv) {
                 return 2;
             }
             i += 1;
+            continue;
+        }
+        /* #26 B: the skill-injection off-switch. With it the run is
+         * byte-identical to one without the feature. */
+        if (strcmp(argv[i], "--no-skill-inject") == 0) {
+            no_skill_inject = true;
             continue;
         }
         /* #79: bounded history window over machine snapshots. 0 (default)
@@ -2784,6 +2791,7 @@ static int agent_command(int argc, char **argv) {
                 ? model_profile.finish_on_no_progress
                 : true,
         .directive_slug        = directive_slug,
+        .skill_injection_off   = no_skill_inject,
         .profile_off           = no_profile,
         .execution_enabled     = allow_exec,
         .exec_timeout_ms       = 5000u,
@@ -2907,6 +2915,24 @@ static int agent_command(int argc, char **argv) {
         /* a FAIL exits non-zero so a caller (and a future miner) can act on it */
         if (verdict != SPG_EVAL_PASS && rc == 0) {
             rc = 1;
+        }
+        /* #26: the verdict goes into the journal, not only onto stdout. The
+         * skill mint (distill) must read pass/fail from the journal itself —
+         * a verdict passed on a command line is a model of the run, not a
+         * record of it. RESULT event, terminal, after the last tick. */
+        if (journal_open) {
+            char      vrec[128];
+            const int vn =
+                snprintf(vrec, sizeof vrec, "(run_verdict (verdict %s))",
+                         spg_eval_outcome_to_string(verdict));
+            uint64_t vseq = 0u;
+            if (vn > 0 && (size_t)vn < sizeof vrec) {
+                (void)spg_journal_writer_append(
+                    &journal, (uint64_t)loop_result.steps_taken + 1u, 0u,
+                    SPG_JOURNAL_EVENT_RESULT,
+                    verdict == SPG_EVAL_PASS ? SPG_OK : SPG_E_INVALID_STATE,
+                    (size_t)vn, (const uint8_t *)vrec, &vseq);
+            }
         }
     }
 
@@ -4489,11 +4515,23 @@ static bool guard_run(void *vctx, const char *config_path, bool with_lesson) {
  * saved skill is injected on later runs via the mind-palace index the agent
  * already renders into context. */
 static int distill_command(int argc, char **argv) {
-    const char *journal    = nullptr;
-    const char *memory_dir = nullptr;
+    const char           *journal    = nullptr;
+    const char           *memory_dir = nullptr;
+    const char           *suite_path = nullptr;
+    struct spg_guard_ring guards;
+    spg_guard_ring_init(&guards);
     for (int i = 2; i < argc; i += 1) {
         if (strcmp(argv[i], "--memory-dir") == 0 && i + 1 < argc) {
             memory_dir = argv[++i];
+            continue;
+        }
+        if (strcmp(argv[i], "--suite") == 0 && i + 1 < argc) {
+            suite_path = argv[++i];
+            continue;
+        }
+        if (strcmp(argv[i], "--guard") == 0 && i + 1 < argc) {
+            spg_guard_ring_record(&guards, argv[i + 1], argv[i + 1]);
+            i += 1;
             continue;
         }
         if (argv[i][0] != '-' && journal == nullptr) {
@@ -4503,10 +4541,42 @@ static int distill_command(int argc, char **argv) {
         fprintf(stderr, "distill: unexpected argument: %s\n", argv[i]);
         return 2;
     }
-    if (journal == nullptr) {
-        fprintf(stderr, "usage: %s distill <journal.sgj> [--memory-dir <d>]\n",
+    if (journal == nullptr || suite_path == nullptr) {
+        /* #26: the gate is not optional. A skill is the closest thing this
+         * runtime has to a self-created rule, and the acceptance gate is the
+         * difference between a rule the world proved and a model writing its
+         * own permission slip. */
+        fprintf(stderr,
+                "usage: %s distill <journal.sgj> --suite <suite.spg> "
+                "[--guard <run.spg>]... [--memory-dir <d>]\n",
                 argv[0]);
         return 2;
+    }
+
+    /* #26 A: the trigger is a PASSING run, and the run's own journal is the
+     * witness — not a command-line claim. */
+    enum spg_journal_verdict verdict = SPG_JOURNAL_VERDICT_NONE;
+    const enum spg_status    vs      = spg_journal_verdict(journal, &verdict);
+    if (vs != SPG_OK) {
+        fprintf(stderr, "distill: cannot read %s: %s\n", journal,
+                spg_status_to_string(vs));
+        return 1;
+    }
+    if (verdict == SPG_JOURNAL_VERDICT_NONE) {
+        /* Its own status: unjudged is NOT silently a pass. */
+        fprintf(stderr,
+                "distill: %s carries no terminal verdict — a run without a "
+                "criterion cannot prove itself; declare (expect ...) on the "
+                "run\n",
+                journal);
+        return 3;
+    }
+    if (verdict == SPG_JOURNAL_VERDICT_FAIL) {
+        fprintf(stderr,
+                "distill: %s did not pass its criterion; a failed trajectory "
+                "mints nothing\n",
+                journal);
+        return 1;
     }
 
     static struct spg_fake_response responses[AGENT_MAX_SCRIPT];
@@ -4559,13 +4629,45 @@ static int distill_command(int argc, char **argv) {
         fprintf(stderr, "distill: cannot open memory dir\n");
         return 1;
     }
+
+    /* #26 A: the same acceptance path as a lesson — baseline, tentative
+     * save, trial, guard ring, commit-or-revert. A skill that regresses the
+     * suite or breaks a guard is DELETED, and the store ends byte-identical
+     * to before the mint. */
+    const struct eval_run_opts    opts = {0};
+    static struct eval_run_report baseline;
+    if (eval_run_suite(suite_path, &store, &opts, &baseline) != SPG_OK) {
+        fprintf(stderr, "distill: baseline suite run failed\n");
+        return 1;
+    }
     if (spg_mem_save(&store, skill.slug, skill.description, skill.body) !=
         SPG_OK) {
         fprintf(stderr, "distill: cannot save %s\n", skill.slug);
         return 1;
     }
-    printf("{\"skill\":\"%s\",\"shape\":\"%s\",\"procedure\":\"%s\"}\n",
-           skill.slug, shape, procedure);
+    static struct eval_run_report trial;
+    if (eval_run_suite(suite_path, &store, &opts, &trial) != SPG_OK) {
+        fprintf(stderr, "distill: trial suite run failed\n");
+        return 1;
+    }
+    bool accepted = spg_improve_accept(baseline.passed, trial.passed);
+    if (accepted) {
+        struct spg_lesson as_lesson = skill;
+        struct guard_ctx  gctx      = {
+                  .store = &store, .opts = &opts, .lesson = &as_lesson};
+        if (!spg_guard_ring_gate(&guards, guard_run, &gctx)) {
+            accepted = false;
+        }
+        /* the guard runs toggled the skill; leave it saved so the commit
+         * decides keep/revert from a known state */
+        (void)spg_mem_save(&store, skill.slug, skill.description, skill.body);
+    }
+    bool kept = false;
+    (void)spg_improve_commit(&store, &skill, accepted, &kept);
+    printf("{\"skill\":\"%s\",\"shape\":\"%s\",\"procedure\":\"%s\","
+           "\"kept\":%s,\"baseline_passed\":%zu,\"trial_passed\":%zu}\n",
+           skill.slug, shape, procedure, kept ? "true" : "false",
+           baseline.passed, trial.passed);
     return 0;
 }
 
@@ -4688,6 +4790,109 @@ static int audit_command(int argc, char **argv) {
                    "\"after\":{\"runs\":%zu,\"hits\":%zu},\"verdict\":\"%s\"}\n",
                    audit_slugs[k], before_runs, before, after_runs, after,
                    verdict);
+        }
+    }
+
+    /* #26 C: the POSITIVE counter — per-shape success rate, tallied from the
+     * journals' own (run_verdict ...) records, model-free. Unjudged runs are
+     * excluded rather than counted as failures. When a skill-<shape> memory
+     * exists, its mtime splits the tally the same way the lesson audit
+     * splits slug recurrence; a shape whose success rate did not rise since
+     * the skill was kept is flagged "review" — a removal CANDIDATE, never an
+     * automatic removal. */
+    {
+        static char   shape_of[EVAL_MAX_CASES][256];
+        static bool   judged[EVAL_MAX_CASES];
+        static bool   passed_of[EVAL_MAX_CASES];
+        static struct spg_fake_response responses[AGENT_MAX_SCRIPT];
+        static char                     text[CLI_MODEL_OUTPUT_BYTES];
+        for (size_t i = 0u; i < njournals; i += 1u) {
+            shape_of[i][0] = '\0';
+            judged[i]      = false;
+            enum spg_journal_verdict v = SPG_JOURNAL_VERDICT_NONE;
+            size_t                   n = 0u;
+            if (spg_journal_verdict(journals[i], &v) != SPG_OK ||
+                v == SPG_JOURNAL_VERDICT_NONE) {
+                continue;
+            }
+            if (spg_eval_script_from_journal(journals[i], AGENT_MAX_SCRIPT,
+                                             responses, sizeof text, text,
+                                             &n) != SPG_OK ||
+                n == 0u) {
+                continue;
+            }
+            size_t shape_n = 0u;
+            if (spg_shape_from_script(responses, n, sizeof shape_of[0],
+                                      shape_of[i], &shape_n) != SPG_OK ||
+                shape_n == 0u) {
+                shape_of[i][0] = '\0';
+                continue;
+            }
+            judged[i]    = true;
+            passed_of[i] = v == SPG_JOURNAL_VERDICT_PASS;
+        }
+        struct spg_mem_store skill_store;
+        const bool           have_store =
+            memory_dir != nullptr &&
+            spg_mem_store_open(&skill_store,
+                               spg_mem_resolve_dir(memory_dir)) == SPG_OK;
+        for (size_t i = 0u; i < njournals; i += 1u) {
+            if (!judged[i]) {
+                continue;
+            }
+            bool seen = false;
+            for (size_t j = 0u; j < i; j += 1u) {
+                if (judged[j] &&
+                    strcmp(shape_of[j], shape_of[i]) == 0) {
+                    seen = true;
+                    break;
+                }
+            }
+            if (seen) {
+                continue;
+            }
+            size_t runs = 0u, ok = 0u;
+            for (size_t j = 0u; j < njournals; j += 1u) {
+                if (judged[j] && strcmp(shape_of[j], shape_of[i]) == 0) {
+                    runs += 1u;
+                    ok += passed_of[j] ? 1u : 0u;
+                }
+            }
+            printf("{\"shape\":\"%s\",\"runs\":%zu,\"passed\":%zu",
+                   shape_of[i], runs, ok);
+            struct spg_lesson probe;
+            char              desc[SPG_MEM_DESC_MAX + 1u];
+            time_t            minted = 0;
+            char              path[SPG_MEM_PATH_MAX];
+            if (have_store && spg_reflect_skill(shape_of[i], "-", &probe) &&
+                spg_mem_directive(&skill_store, probe.slug, 0u, sizeof desc,
+                                  desc) > 0u &&
+                ((void)snprintf(path, sizeof path, "%s/%s.md",
+                                skill_store.dir, probe.slug),
+                 file_mtime(path, &minted))) {
+                size_t br = 0u, bo = 0u, ar = 0u, ao = 0u;
+                for (size_t j = 0u; j < njournals; j += 1u) {
+                    if (!judged[j] ||
+                        strcmp(shape_of[j], shape_of[i]) != 0) {
+                        continue;
+                    }
+                    if (finished[j] > minted) {
+                        ar += 1u;
+                        ao += passed_of[j] ? 1u : 0u;
+                    } else {
+                        br += 1u;
+                        bo += passed_of[j] ? 1u : 0u;
+                    }
+                }
+                const char *sv = ar == 0u ? "pending"
+                                 : ao * br > bo * ar ? "improving"
+                                                     : "review";
+                printf(",\"skill\":\"%s\",\"before\":{\"runs\":%zu,"
+                       "\"passed\":%zu},\"after\":{\"runs\":%zu,"
+                       "\"passed\":%zu},\"verdict\":\"%s\"",
+                       probe.slug, br, bo, ar, ao, sv);
+            }
+            printf("}\n");
         }
     }
     return 0;

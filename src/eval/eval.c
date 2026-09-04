@@ -297,6 +297,135 @@ enum spg_status spg_shape_from_script_mode(
     return SPG_OK;
 }
 
+enum spg_status spg_journal_verdict(const char              *journal_path,
+                                    enum spg_journal_verdict *out) {
+    if (journal_path == nullptr || out == nullptr) {
+        return SPG_E_INVALID_ARG;
+    }
+    *out = SPG_JOURNAL_VERDICT_NONE;
+    struct spg_journal_reader reader;
+    if (spg_journal_reader_open(&reader, journal_path) != SPG_OK) {
+        return SPG_OK; /* no journal -> no verdict, and NONE is not a pass */
+    }
+    char scratch[8192];
+    for (;;) {
+        struct spg_journal_record record = {};
+        const enum spg_status     rs     = spg_journal_reader_next(
+            &reader, sizeof scratch, (uint8_t *)scratch, &record);
+        if (rs == SPG_E_NOT_FOUND) {
+            break;
+        }
+        if (rs == SPG_E_LIMIT) {
+            continue; /* an oversized payload is never the tiny verdict form */
+        }
+        if (rs != SPG_OK) {
+            (void)spg_journal_reader_close(&reader);
+            return rs;
+        }
+        const size_t n = record.payload_used < sizeof scratch
+                             ? record.payload_used
+                             : sizeof scratch - 1u;
+        scratch[n] = '\0';
+        if (record.header.event_kind != SPG_JOURNAL_EVENT_RESULT ||
+            strstr(scratch, "(run_verdict ") == nullptr) {
+            continue;
+        }
+        *out = strstr(scratch, "(verdict pass)") != nullptr
+                   ? SPG_JOURNAL_VERDICT_PASS
+                   : SPG_JOURNAL_VERDICT_FAIL;
+    }
+    (void)spg_journal_reader_close(&reader);
+    return SPG_OK;
+}
+
+/* The documented capability-kind -> primary-action-kind mapping (#26). */
+static const char *
+primary_action_kind(const enum spg_policy_capability_kind kind) {
+    switch (kind) {
+    case SPG_POLICY_CAP_LOCAL_SHELL:
+        return "local_shell";
+    case SPG_POLICY_CAP_SSH_AUTH_PROBE:
+        return "ssh_auth_probe";
+    case SPG_POLICY_CAP_SIMULATOR:
+        return "simulator";
+    case SPG_POLICY_CAP_MEMORY:
+        return "memory_save";
+    case SPG_POLICY_CAP_MACHINE_PROCESS:
+        return "machine_pause_process";
+    case SPG_POLICY_CAP_DEVICE:
+        return "device_write";
+    }
+    return "unknown";
+}
+
+enum spg_status spg_shape_from_policy(const size_t policy_text_n,
+                                      const char   policy_text[],
+                                      const struct spg_policy_config *policy,
+                                      const size_t cap, char out[],
+                                      size_t *len) {
+    if (policy == nullptr || out == nullptr || len == nullptr || cap == 0u ||
+        (policy_text_n > 0u && policy_text == nullptr)) {
+        return SPG_E_INVALID_ARG;
+    }
+    *len   = 0u;
+    out[0] = '\0';
+
+    char   tokens[SPG_SHAPE_MAX_TOKENS][SPG_SHAPE_TOKEN_MAX + 1u];
+    size_t token_count = 0u;
+    for (size_t i = 0u; i < policy->capability_count; i += 1u) {
+        const struct spg_policy_capability *c = &policy->capabilities[i];
+        if (!c->enabled ||
+            !spg_sexpr_span_valid(policy_text_n, c->name)) {
+            continue;
+        }
+        char token[SPG_SHAPE_TOKEN_MAX + 1u];
+        (void)snprintf(token, sizeof token, "%s:%.*s",
+                       primary_action_kind(c->kind), (int)c->name.length,
+                       policy_text + c->name.offset);
+        /* sorted-set insert, duplicates skipped — same shape language as
+         * spg_shape_from_script */
+        size_t pos = 0u;
+        bool   dup = false;
+        while (pos < token_count) {
+            const int cmp = strcmp(tokens[pos], token);
+            if (cmp == 0) {
+                dup = true;
+                break;
+            }
+            if (cmp > 0) {
+                break;
+            }
+            pos++;
+        }
+        if (dup || token_count == SPG_SHAPE_MAX_TOKENS) {
+            continue;
+        }
+        for (size_t j = token_count; j > pos; j--) {
+            memcpy(tokens[j], tokens[j - 1u], sizeof tokens[0]);
+        }
+        (void)snprintf(tokens[pos], sizeof tokens[0], "%s", token);
+        token_count++;
+    }
+
+    size_t w = 0u;
+    for (size_t i = 0u; i < token_count; i++) {
+        const size_t tn  = strlen(tokens[i]);
+        const size_t sep = (i > 0u) ? 1u : 0u;
+        if (w + sep + tn + 1u > cap) {
+            out[w] = '\0';
+            return SPG_E_LIMIT;
+        }
+        if (sep) {
+            out[w++] = '+';
+        }
+        memcpy(out + w, tokens[i], tn);
+        w += tn;
+    }
+    out[w] = '\0';
+    *len   = w;
+    return SPG_OK;
+}
+
 enum spg_status spg_journal_recurrence(const char *journal_path,
                                        struct spg_recurrence *out) {
     if (journal_path == nullptr || out == nullptr) {

@@ -111,6 +111,16 @@ struct spg_agent_run_config {
      * final one — see agent_loop.h. Set it to the (expect ...) substring the
      * run is judged against. Null = not watched. */
     const char *observation_marker;
+    /* #26 B: shape-triggered skill injection off-switch. By default a run
+     * derives its task shape from the policy's enabled capabilities BEFORE
+     * the first tick (spg_shape_from_policy) and, when a skill-<shape>
+     * memory exists for EXACTLY that shape, injects its budgeted description
+     * as the single (directive ...) line — one line whether the store holds
+     * 1 or 100 skills. An explicit directive_slug always wins (the
+     * operator's steering channel outranks an auto-match — documented,
+     * deterministic precedence). With this set, or with no matching skill,
+     * the run is byte-identical to one without the feature. */
+    bool skill_injection_off;
 };
 
 /* Caller-owned scratch. All buffers must be non-null with non-zero capacity

@@ -181,6 +181,52 @@ struct spg_recurrence {
 [[nodiscard]] enum spg_status spg_journal_recurrence(
     const char *journal_path, struct spg_recurrence *out);
 
+/* #26: the terminal verdict of a journaled run — the (run_verdict ...) RESULT
+ * event the agent appends after judging its (expect)/(post_check) criterion.
+ * Model-free: reads the journal only. This is what lets `distill` refuse a
+ * trajectory that did not PROVABLY pass, from the run's own record rather
+ * than a caller's claim.
+ *
+ *   SPG_JOURNAL_VERDICT_PASS    the run passed its criterion
+ *   SPG_JOURNAL_VERDICT_FAIL    it was judged and failed
+ *   SPG_JOURNAL_VERDICT_NONE    no terminal verdict was recorded at all —
+ *                               NOT silently a pass; callers refuse it with
+ *                               its own message.
+ *
+ * The LAST verdict record wins (there is normally exactly one). Returns
+ * SPG_E_INVALID_ARG on null args, a read error otherwise; a missing/short
+ * journal yields NONE and SPG_OK. */
+enum spg_journal_verdict {
+    SPG_JOURNAL_VERDICT_NONE = 0,
+    SPG_JOURNAL_VERDICT_PASS,
+    SPG_JOURNAL_VERDICT_FAIL,
+};
+
+[[nodiscard]] enum spg_status
+spg_journal_verdict(const char *journal_path, enum spg_journal_verdict *out);
+
+/* #26: the trajectory-independent task shape a run WILL have, derived before
+ * the first tick from the policy's enabled capabilities: the sorted set of
+ * "<primary-action-kind>:<capability-name>" tokens, '+'-joined — the same
+ * key language spg_shape_from_script speaks, so a skill minted from a
+ * passing trajectory is found by a later run granted the same capabilities.
+ *
+ * The primary action kind per capability kind is a documented, deterministic
+ * mapping (local_shell->local_shell, simulator->simulator,
+ * memory->memory_save, machine_process->machine_pause_process,
+ * device->device_write, ssh_auth_probe->ssh_auth_probe).
+ * ponytail: capabilities whose kind spans several action kinds (memory,
+ * machine_process) only match trajectories that used the primary one —
+ * exact match or nothing, a fuzzy matcher is a later ticket.
+ *
+ * Writes a NUL-terminated key into out[0..cap); *len receives its length.
+ * Returns SPG_E_INVALID_ARG on null args, SPG_E_LIMIT if the key exceeds
+ * cap; an empty policy yields an empty key and *len == 0. */
+[[nodiscard]] enum spg_status spg_shape_from_policy(
+    size_t policy_text_n, const char policy_text[],
+    const struct spg_policy_config *policy, size_t cap, char out[],
+    size_t *len);
+
 #ifdef __cplusplus
 }
 #endif
