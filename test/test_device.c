@@ -369,6 +369,87 @@ static int test_watchdog(void) {
     return 0;
 }
 
+/* #118: a live sensor must not keep a silent actuator looking alive — the
+ * deadline is judged per writable channel, fed only by that channel's own
+ * transactions. Simulated with the flags the transport sets. */
+static int test_watchdog_per_channel(void) {
+    struct spg_device dev = {};
+    spg_device_init(&dev);
+    struct spg_device_channel heater = {.name     = "heater",
+                                        .program  = "/nonexistent/heater",
+                                        .min      = 0,
+                                        .max      = 100,
+                                        .writable = true,
+                                        .safe     = 0};
+    struct spg_device_channel valve  = {.name     = "valve",
+                                        .program  = "/nonexistent/valve",
+                                        .min      = 0,
+                                        .max      = 1,
+                                        .writable = true,
+                                        .safe     = 0};
+    struct spg_device_channel temp   = {.name    = "temp",
+                                        .program = "/nonexistent/temp",
+                                        .min     = -400,
+                                        .max     = 9000};
+    if (spg_device_add_channel(&dev, &heater) != SPG_OK ||
+        spg_device_add_channel(&dev, &valve) != SPG_OK ||
+        spg_device_add_channel(&dev, &temp) != SPG_OK) {
+        return 1;
+    }
+    spg_device_arm_watchdog(&dev, 10u, 0u);
+
+    /* Everything answers: fine. */
+    dev.contact_pending             = true;
+    dev.channels[0].contact_pending = true;
+    dev.channels[1].contact_pending = true;
+    dev.channels[2].contact_pending = true;
+    if (spg_device_watchdog_check(&dev, 5u) != SPG_WATCHDOG_OK) {
+        return 1;
+    }
+
+    /* From now on only the SENSOR answers. The global stamp stays fresh, but
+     * the actuators' writes stopped landing — expired, not masked. */
+    dev.contact_pending             = true;
+    dev.channels[2].contact_pending = true;
+    if (spg_device_watchdog_check(&dev, 10u) != SPG_WATCHDOG_OK) {
+        return 1; /* actuators fed at 5, deadline 10: 10-5 is not past it */
+    }
+    dev.contact_pending             = true;
+    dev.channels[2].contact_pending = true;
+    if (spg_device_watchdog_check(&dev, 16u) != SPG_WATCHDOG_EXPIRED) {
+        return 1;
+    }
+
+    /* Contact on actuator A must not cover actuator B. */
+    spg_device_arm_watchdog(&dev, 10u, 100u);
+    dev.contact_pending             = true;
+    dev.channels[0].contact_pending = true; /* heater answers */
+    if (spg_device_watchdog_check(&dev, 120u) != SPG_WATCHDOG_EXPIRED) {
+        return 1; /* valve last fed at arm time 100; 120-100 > 10 */
+    }
+
+    /* Re-arming stamps every channel: nothing is instantly overdue. */
+    spg_device_arm_watchdog(&dev, 10u, 1000u);
+    if (spg_device_watchdog_check(&dev, 1005u) != SPG_WATCHDOG_OK) {
+        return 1;
+    }
+
+    /* A read-only table still rides on the global deadline alone. */
+    struct spg_device sensors = {};
+    spg_device_init(&sensors);
+    if (spg_device_add_channel(&sensors, &temp) != SPG_OK) {
+        return 1;
+    }
+    spg_device_arm_watchdog(&sensors, 10u, 0u);
+    sensors.contact_pending             = true;
+    sensors.channels[0].contact_pending = true;
+    if (spg_device_watchdog_check(&sensors, 8u) != SPG_WATCHDOG_OK ||
+        spg_device_watchdog_check(&sensors, 30u) != SPG_WATCHDOG_EXPIRED) {
+        return 1;
+    }
+    return 0;
+}
+
 static int test_safe_state(void) {
     char dir[] = "/tmp/spg_device_XXXXXX";
     if (mkdtemp(dir) == nullptr) {
@@ -528,6 +609,7 @@ int main(void) {
         {"write_refusals", test_write_refusals},
         {"exec_contract", test_exec_contract},
         {"watchdog", test_watchdog},
+        {"watchdog_per_channel", test_watchdog_per_channel},
         {"safe_state", test_safe_state},
         {"state_render", test_state_render},
         {"sample_unreachable", test_sample_unreachable},

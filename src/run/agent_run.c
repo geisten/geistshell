@@ -1,5 +1,6 @@
 #include "geistshell/agent_run.h"
 
+#include "geistshell/device_executor.h" /* #118: watchdog check at run end */
 #include "geistshell/graph.h"
 #include "geistshell/mem_store.h" /* #40 follow-up: strong directive channel */
 #include "geistshell/memory.h"
@@ -139,5 +140,22 @@ enum spg_status spg_agent_run(const struct spg_agent_run_inputs *inputs,
         .journal_headers         = workspace->trajectory,
     };
 
-    return spg_agent_loop_run(&state, &loop_config, &ow, usage, result);
+    const enum spg_status loop_status =
+        spg_agent_loop_run(&state, &loop_config, &ow, usage, result);
+
+    /* #118: a run must not END with an unnoticed contact loss — the loop
+     * checks before each tick, so an expiry between the last tick and the
+     * terminal state would otherwise slip out unhandled. One more service
+     * pass at the clock value the next tick would have carried. */
+    if (inputs->device != nullptr && loop_status == SPG_OK) {
+        const struct spg_device_executor_config wd_cfg = {
+            .actor_id      = 1u,
+            .timestamp_ns  = (uint64_t)result->steps_taken + 1u,
+            .write_journal = inputs->journal != nullptr,
+        };
+        uint64_t wd_seq = 0u;
+        (void)spg_device_watchdog_service(inputs->device, inputs->journal,
+                                          &wd_cfg, nullptr, &wd_seq);
+    }
+    return loop_status;
 }

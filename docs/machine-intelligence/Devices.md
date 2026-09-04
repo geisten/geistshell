@@ -322,6 +322,23 @@ Zeit aussieht und keine ist. Deshalb heißt das Flag `--device-watchdog-steps`.
 Mit `exec` bekommt der Watchdog eine Aufgabe mehr: ein Programm, das dauerhaft
 mit Timeout stirbt, ist Kontaktverlust — genauso wie ein stummer Socket.
 
+**Pro Kanal, pro Tick (#118).** Kontakt wird pro Kanal geführt: eine
+erfolgreiche Transaktion füttert genau den Kanal, über den sie lief, und
+zusätzlich den globalen Stempel. Abgelaufen ist der Watchdog, sobald der
+globale Stempel **oder irgendein schreibbarer Kanal** eine volle Frist ohne
+Kontakt ist — ein Sensor, der weiter antwortet, kann einen verstummten Aktor
+nicht mehr verdecken. (Reine Sensor-Tabellen laufen wie zuvor über den
+globalen Stempel: Lesen ist dort der einzige Kontakt, den es gibt.)
+
+Geprüft wird nicht mehr nur vor einem `device_write`:
+`spg_device_watchdog_service` läuft in jedem Agenten-Tick — auch in Ticks, die
+nur beobachten, Memory schreiben oder `finish` wählen — und noch einmal vor dem
+regulären Run-Ende. Beim Ablauf fährt er alle schreibbaren Kanäle best-effort
+auf ihren sicheren Wert und journaliert
+`(device_watchdog (outcome expired) (safe_state ok|failed))`. Ein anhaltender
+Ablauf wird **einmal** behandelt (Latch), nicht jeden Tick erneut;
+wiederkehrender Kontakt spannt den Latch neu.
+
 ## Die Aktion
 
 `SPG_ACTION_DEVICE_WRITE` — die erste **nicht umkehrbare** Aktion im
