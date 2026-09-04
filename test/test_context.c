@@ -242,7 +242,7 @@ static int test_render_and_limit(void) {
     }
     char   small[16];
     size_t required = 0u;
-    if (spg_context_render(&sources, &view, sizeof small, small, &required) !=
+    if (spg_context_render(&sources, &view, sizeof small, small, &required, nullptr) !=
         SPG_E_LIMIT) {
         return 1;
     }
@@ -250,7 +250,7 @@ static int test_render_and_limit(void) {
         return 1;
     }
     char large[2048];
-    if (spg_context_render(&sources, &view, sizeof large, large, &required) !=
+    if (spg_context_render(&sources, &view, sizeof large, large, &required, nullptr) !=
         SPG_OK) {
         return 1;
     }
@@ -286,7 +286,7 @@ static int test_render_memory_index(void) {
     }
     char   buf[2048];
     size_t required = 0u;
-    if (spg_context_render(&with, &view, sizeof buf, buf, &required) !=
+    if (spg_context_render(&with, &view, sizeof buf, buf, &required, nullptr) !=
         SPG_OK) {
         return 1;
     }
@@ -299,7 +299,7 @@ static int test_render_memory_index(void) {
 
     /* Without an index, the block is omitted. */
     const struct spg_context_sources without = {.memory_index = nullptr};
-    if (spg_context_render(&without, &view, sizeof buf, buf, &required) !=
+    if (spg_context_render(&without, &view, sizeof buf, buf, &required, nullptr) !=
         SPG_OK) {
         return 1;
     }
@@ -356,7 +356,7 @@ static int test_exemplars_render(void) {
     }
     char   buf[4096];
     size_t req = 0u;
-    if (spg_context_render(&sources, &view, sizeof buf, buf, &req) != SPG_OK) {
+    if (spg_context_render(&sources, &view, sizeof buf, buf, &req, nullptr) != SPG_OK) {
         return 1;
     }
     if (strstr(buf, "(examples") == nullptr ||
@@ -370,7 +370,7 @@ static int test_exemplars_render(void) {
     }
     /* absent -> no examples section */
     sources.exemplars = nullptr;
-    (void)spg_context_render(&sources, &view, sizeof buf, buf, &req);
+    (void)spg_context_render(&sources, &view, sizeof buf, buf, &req, nullptr);
     if (strstr(buf, "(examples") != nullptr) {
         return 1;
     }
@@ -398,7 +398,7 @@ static int test_goal_render(void) {
     }
     char   buf[4096];
     size_t req = 0u;
-    if (spg_context_render(&sources, &view, sizeof buf, buf, &req) != SPG_OK) {
+    if (spg_context_render(&sources, &view, sizeof buf, buf, &req, nullptr) != SPG_OK) {
         return 1;
     }
     if (strstr(buf, "(goal ") == nullptr ||
@@ -410,7 +410,7 @@ static int test_goal_render(void) {
         return 1; /* goal follows the contract */
     }
     sources.goal = nullptr; /* absent -> no goal line */
-    (void)spg_context_render(&sources, &view, sizeof buf, buf, &req);
+    (void)spg_context_render(&sources, &view, sizeof buf, buf, &req, nullptr);
     if (strstr(buf, "(goal ") != nullptr) {
         return 1;
     }
@@ -418,13 +418,13 @@ static int test_goal_render(void) {
     /* A standing directive renders prominently as (directive "...") every step.
      */
     sources.directive = "emit finish once the goal output is produced";
-    if (spg_context_render(&sources, &view, sizeof buf, buf, &req) != SPG_OK ||
+    if (spg_context_render(&sources, &view, sizeof buf, buf, &req, nullptr) != SPG_OK ||
         strstr(buf, "(directive ") == nullptr ||
         strstr(buf, "emit finish once") == nullptr) {
         return 1;
     }
     sources.directive = nullptr;
-    (void)spg_context_render(&sources, &view, sizeof buf, buf, &req);
+    (void)spg_context_render(&sources, &view, sizeof buf, buf, &req, nullptr);
     if (strstr(buf, "(directive ") != nullptr) {
         return 1;
     }
@@ -482,7 +482,7 @@ static int test_machine_render(void) {
     }
     char   buf[8192];
     size_t req = 0u;
-    if (spg_context_render(&sources, &view, sizeof buf, buf, &req) != SPG_OK) {
+    if (spg_context_render(&sources, &view, sizeof buf, buf, &req, nullptr) != SPG_OK) {
         return 1;
     }
     if (strstr(buf, "(machine-state ") == nullptr ||
@@ -505,7 +505,7 @@ static int test_machine_render(void) {
     /* Byte-identical for the same snapshot. */
     char   again[8192];
     size_t req2 = 0u;
-    if (spg_context_render(&sources, &view, sizeof again, again, &req2) !=
+    if (spg_context_render(&sources, &view, sizeof again, again, &req2, nullptr) !=
             SPG_OK ||
         req != req2 || memcmp(buf, again, req) != 0) {
         return 1;
@@ -514,7 +514,7 @@ static int test_machine_render(void) {
     /* Absent by default: without a snapshot the context is what it always was,
      * which is what keeps the phase-0 journal freeze valid. */
     sources.machine = nullptr;
-    if (spg_context_render(&sources, &view, sizeof again, again, &req2) !=
+    if (spg_context_render(&sources, &view, sizeof again, again, &req2, nullptr) !=
         SPG_OK) {
         return 1;
     }
@@ -549,7 +549,7 @@ static int test_device_state_block(void) {
     }
     char   buf[8192];
     size_t req = 0u;
-    if (spg_context_render(&sources, &view, sizeof buf, buf, &req) != SPG_OK) {
+    if (spg_context_render(&sources, &view, sizeof buf, buf, &req, nullptr) != SPG_OK) {
         return 1;
     }
     const char *device = strstr(buf, "(device-state ");
@@ -572,7 +572,7 @@ static int test_device_state_block(void) {
      * as part of the model input, so a replay depends on it. */
     char   again[8192];
     size_t req2 = 0u;
-    if (spg_context_render(&sources, &view, sizeof again, again, &req2) !=
+    if (spg_context_render(&sources, &view, sizeof again, again, &req2, nullptr) !=
             SPG_OK ||
         req != req2 || memcmp(buf, again, req) != 0) {
         return 1;
@@ -581,14 +581,14 @@ static int test_device_state_block(void) {
     /* Absent by default, and an empty table counts as absent: a run without a
      * plant renders exactly what it rendered before this existed. */
     sources.device_state = nullptr;
-    if (spg_context_render(&sources, &view, sizeof again, again, &req2) !=
+    if (spg_context_render(&sources, &view, sizeof again, again, &req2, nullptr) !=
             SPG_OK ||
         strstr(again, "device-state") != nullptr) {
         return 1;
     }
     const struct spg_device_state empty = {};
     sources.device_state               = &empty;
-    if (spg_context_render(&sources, &view, sizeof again, again, &req2) !=
+    if (spg_context_render(&sources, &view, sizeof again, again, &req2, nullptr) !=
             SPG_OK ||
         strstr(again, "device-state") != nullptr) {
         return 1;
@@ -628,7 +628,7 @@ static int test_machine_unknown_and_locale(void) {
     }
     char   buf[8192];
     size_t req = 0u;
-    if (spg_context_render(&sources, &view, sizeof buf, buf, &req) != SPG_OK) {
+    if (spg_context_render(&sources, &view, sizeof buf, buf, &req, nullptr) != SPG_OK) {
         return 1;
     }
     if (strstr(buf, "(cpu-load-bp unknown)") == nullptr ||
@@ -642,7 +642,7 @@ static int test_machine_unknown_and_locale(void) {
     memcpy(first, buf, req);
     (void)setlocale(LC_ALL, "de_DE.UTF-8");
     size_t req2 = 0u;
-    if (spg_context_render(&sources, &view, sizeof buf, buf, &req2) != SPG_OK) {
+    if (spg_context_render(&sources, &view, sizeof buf, buf, &req2, nullptr) != SPG_OK) {
         return 1;
     }
     (void)setlocale(LC_ALL, "C");

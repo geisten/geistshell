@@ -102,6 +102,12 @@ struct spg_model_adapter_config {
      * executor permits. */
     const char *const *command_names;
     size_t             command_name_count;
+
+    /* #58: pin the constant prompt prefix into the KV cache across ticks
+     * instead of re-prefilling it every step. Pure speed; a runtime
+     * token-alignment guard keeps output byte-identical and falls back to a
+     * full prefill when the boundary is not a clean token split. GEIST only. */
+    bool pin_prefix_enabled;
 };
 
 struct spg_model_adapter {
@@ -125,6 +131,12 @@ struct spg_model_adapter {
     const char *const                 *command_names; /* #56 command mask */
     size_t                             command_name_count;
 
+    /* #58: the currently pinned constant prefix (token ids), empty when
+     * nothing is pinned. Capped; a longer prefix simply is not pinned. */
+    bool          pin_prefix_enabled;
+    size_t        pinned_n;
+    int32_t       pinned[2048]; /* geist_token_t; header avoids geist.h */
+
     /* REMOTE transport state: opaque CURL handle, borrowed config strings, and
      * the sampling values forwarded to the chat/completions request. */
     void       *http;
@@ -147,6 +159,13 @@ struct spg_model_generate_request {
     const char *prompt;
     bool        reset_session;
     size_t      max_decode_tokens;
+    /* #58: byte length of the CONSTANT prompt prefix (0 = none / disabled).
+     * When the adapter was built with pin_prefix and the prefix tokenizes as a
+     * clean token-prefix of the whole prompt, those tokens are pinned in the
+     * KV cache and only the varying suffix is re-prefilled each tick — pure
+     * speed, byte-identical output. Any misalignment falls back to a full
+     * prefill, so a wrong boundary can never corrupt inference. */
+    size_t      prefix_n;
 };
 
 struct spg_model_generate_result {

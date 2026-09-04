@@ -247,6 +247,33 @@ int main(void) {
         return 1;
     }
 
+    /* #58 KV-pin safety guard: pinning is byte-identical only when the
+     * constant prefix, tokenized alone, is an exact token prefix of the whole
+     * prompt's tokenization. A boundary merge (the prefix's last token would
+     * fuse with the suffix's first) must be caught so the pin never corrupts
+     * the KV. */
+    {
+        const int32_t full[5] = {10, 11, 12, 13, 14};
+        const int32_t pfx3[3] = {10, 11, 12};
+        const int32_t merged[3] = {10, 11, 99}; /* 12 fused into 99 */
+        const int32_t whole[5]  = {10, 11, 12, 13, 14};
+        if (!spg_tokens_are_prefix(5u, full, 3u, pfx3)) {
+            return fail("a clean token prefix must be accepted");
+        }
+        if (spg_tokens_are_prefix(5u, full, 3u, merged)) {
+            return fail("a boundary-merged prefix must be rejected");
+        }
+        if (!spg_tokens_are_prefix(5u, full, 5u, whole)) {
+            return fail("the whole sequence is its own prefix");
+        }
+        /* n=0, over-length, and null are all rejected (no pin). */
+        if (spg_tokens_are_prefix(5u, full, 0u, pfx3) ||
+            spg_tokens_are_prefix(3u, full, 5u, whole) ||
+            spg_tokens_are_prefix(5u, nullptr, 3u, pfx3)) {
+            return fail("degenerate inputs must not authorise a pin");
+        }
+    }
+
     printf("test_grammar_mask ok\n");
     return 0;
 }

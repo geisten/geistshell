@@ -154,10 +154,16 @@ spg_context_build(const struct spg_context_sources *sources,
                   const struct spg_context_limits  *limits,
                   struct spg_context_view          *view);
 
+/* out_prefix_len (nullable, #58) receives the byte length of the CONSTANT
+ * prefix — contract + directive + goal + tools + examples, everything before
+ * the first per-tick block — so a caller can pin exactly that many prompt
+ * tokens into the KV cache across a run. It is a byte offset into dst; a pin
+ * layer must still verify token alignment (bytes are not tokens). */
 [[nodiscard]] enum spg_status
 spg_context_render(const struct spg_context_sources *sources,
                    const struct spg_context_view *view, size_t dst_capacity,
-                   char dst[static dst_capacity], size_t *out_required);
+                   char dst[static dst_capacity], size_t *out_required,
+                   size_t *out_prefix_len);
 
 #ifdef __cplusplus
 }

@@ -168,9 +168,10 @@ enum spg_status spg_actor_step(struct spg_actor_state                *state,
     result->context_memory_truncated  = context_view.memory_truncated;
     result->context_journal_truncated = context_view.journal_truncated;
 
+    size_t prefix_len = 0u;
     status = spg_context_render(&context_sources, &context_view,
                                 workspace->context_capacity, workspace->context,
-                                &result->context_required);
+                                &result->context_required, &prefix_len);
     if (status != SPG_OK) {
         return status;
     }
@@ -222,6 +223,10 @@ enum spg_status spg_actor_step(struct spg_actor_state                *state,
         .prompt            = prompt,
         .reset_session     = config->reset_model_session,
         .max_decode_tokens = config->max_decode_tokens,
+        /* #58: the constant-prefix boundary is a byte offset into the BARE
+         * context; when a chat template reframed the prompt it no longer
+         * maps, so pass 0 and the adapter does a full prefill. */
+        .prefix_n          = prompt == workspace->context ? prefix_len : 0u,
     };
     status = spg_model_generate(state->model, &model_request, &model_result);
     result->model_output_n         = model_result.output_used;
