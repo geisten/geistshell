@@ -134,6 +134,16 @@ size_t spg_model_capabilities_from_policy(
  * the lowest index (deterministic). Returns 0 when n == 0. */
 [[nodiscard]] size_t spg_pmi_pick(size_t n, const float logits[],
                                   const float baseline[]);
+/* #125 reason-first scaffold: wrap a bounded free-reasoning string as ONE
+ * parse-safe s-expression comment line — "; <text>\n" — so a "reason free,
+ * constrain late" decode can prepend the model's own thinking before the
+ * forced (recommend (kind … prefix without corrupting the form the parser
+ * then reads. A newline inside the reasoning would END the comment and expose
+ * the rest to the parser, so every CR/LF in `raw` is replaced with a space;
+ * the output is capped to cap-1 bytes (the budget is a hard bound). Writes a
+ * NUL-terminated line into out[0..cap) and returns its length (0 when raw is
+ * empty or cap is too small for even "; \n"). Pure and deterministic. */
+size_t spg_reason_comment(const char *raw, size_t cap, char out[]);
 
 #ifdef __cplusplus
 }

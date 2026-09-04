@@ -291,6 +291,9 @@ spg_orchestrator_tick(struct spg_orchestrator_state           *state,
          * it needs the profile and the snapshot the decision is about. */
         .profile               = state->profile,
         .machine               = state->machine,
+        /* #119: the trusted channel table — the gate derives a device_write's
+         * network need from the target channel's config, not model text. */
+        .device                = state->device,
     };
     const struct spg_policy_gate_config policy_config = {
         .actor_id                = config->actor_id,

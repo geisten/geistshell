@@ -45,6 +45,95 @@ static int test_shape_key(void) {
     return 0;
 }
 
+/* #12 (decision 6): the sequence mode. Two trajectories that COLLIDE under
+ * the set key (same capabilities, different order) get distinct sequence
+ * keys — so a guard minted for one no longer silently stands in for the
+ * other. The set mode stays the default and is untouched. */
+static int test_shape_sequence_mode(void) {
+    const char r0[] =
+        "(recommend (kind local_shell) (capability \"proc.exec\") (cost 1) "
+        "(uses_network false) (confidence_bp 6000) (reason \"a\") "
+        "(command \"echo a\"))";
+    const char r1[] =
+        "(recommend (kind local_shell) (capability \"fs.write\") (cost 1) "
+        "(uses_network false) (confidence_bp 6000) (reason \"b\") "
+        "(command \"tee f\"))";
+    const char r2[] = "(recommend (kind finish) (reason \"done\"))";
+    struct spg_fake_response exec_then_write[] = {
+        {sizeof r0 - 1u, r0}, {sizeof r1 - 1u, r1}, {sizeof r2 - 1u, r2}};
+    struct spg_fake_response write_then_exec[] = {
+        {sizeof r1 - 1u, r1}, {sizeof r0 - 1u, r0}, {sizeof r2 - 1u, r2}};
+
+    /* the collision, demonstrated: identical SET keys */
+    char   set_a[256], set_b[256];
+    size_t len = 0u;
+    if (spg_shape_from_script(exec_then_write, 3u, sizeof set_a, set_a,
+                              &len) != SPG_OK ||
+        spg_shape_from_script(write_then_exec, 3u, sizeof set_b, set_b,
+                              &len) != SPG_OK ||
+        strcmp(set_a, set_b) != 0) {
+        return 1;
+    }
+
+    /* the resolution: distinct SEQUENCE keys, ordered, '>'-joined */
+    char seq_a[256], seq_b[256];
+    if (spg_shape_from_script_mode(exec_then_write, 3u,
+                                   SPG_SHAPE_MODE_SEQUENCE, sizeof seq_a,
+                                   seq_a, &len) != SPG_OK ||
+        spg_shape_from_script_mode(write_then_exec, 3u,
+                                   SPG_SHAPE_MODE_SEQUENCE, sizeof seq_b,
+                                   seq_b, &len) != SPG_OK) {
+        return 1;
+    }
+    if (strcmp(seq_a, "local_shell:proc.exec>local_shell:fs.write") != 0 ||
+        strcmp(seq_b, "local_shell:fs.write>local_shell:proc.exec") != 0) {
+        fprintf(stderr, "seq_a=%s seq_b=%s\n", seq_a, seq_b);
+        return 1;
+    }
+
+    /* consecutive duplicates collapse (a retried step is the same step),
+     * but a capability revisited LATER stays a distinct trajectory */
+    struct spg_fake_response retried[] = {
+        {sizeof r0 - 1u, r0}, {sizeof r0 - 1u, r0}, {sizeof r1 - 1u, r1}};
+    char seq_r[256];
+    if (spg_shape_from_script_mode(retried, 3u, SPG_SHAPE_MODE_SEQUENCE,
+                                   sizeof seq_r, seq_r, &len) != SPG_OK ||
+        strcmp(seq_r, seq_a) != 0) {
+        return 1;
+    }
+    struct spg_fake_response revisit[] = {
+        {sizeof r0 - 1u, r0}, {sizeof r1 - 1u, r1}, {sizeof r0 - 1u, r0}};
+    char seq_v[256];
+    if (spg_shape_from_script_mode(revisit, 3u, SPG_SHAPE_MODE_SEQUENCE,
+                                   sizeof seq_v, seq_v, &len) != SPG_OK ||
+        strcmp(seq_v, seq_a) == 0) {
+        return 1;
+    }
+
+    /* SET mode via the mode entry point is byte-identical to the default */
+    char via_mode[256];
+    if (spg_shape_from_script_mode(exec_then_write, 3u, SPG_SHAPE_MODE_SET,
+                                   sizeof via_mode, via_mode,
+                                   &len) != SPG_OK ||
+        strcmp(via_mode, set_a) != 0) {
+        return 1;
+    }
+
+    /* the guard ring dedups by the finer key: both order-variants now hold a
+     * guard, still bounded by distinct shapes (LRU-capped as ever) */
+    struct spg_guard_ring ring;
+    spg_guard_ring_init(&ring);
+    spg_guard_ring_record(&ring, seq_a, "/cfg/a.spg");
+    spg_guard_ring_record(&ring, seq_b, "/cfg/b.spg");
+    spg_guard_ring_record(&ring, seq_a, "/cfg/a.spg"); /* dedup, no growth */
+    if (spg_guard_ring_count(&ring) != 2u ||
+        spg_guard_ring_find(&ring, seq_a) == nullptr ||
+        spg_guard_ring_find(&ring, seq_b) == nullptr) {
+        return 1;
+    }
+    return 0;
+}
+
 static int test_ring_dedup_and_lru(void) {
     struct spg_guard_ring ring;
     spg_guard_ring_init(&ring);
@@ -160,6 +249,10 @@ static int test_guard_gate(void) {
 int main(void) {
     if (test_shape_key() != 0) {
         fprintf(stderr, "test_shape_key failed\n");
+        return 1;
+    }
+    if (test_shape_sequence_mode() != 0) {
+        fprintf(stderr, "test_shape_sequence_mode failed\n");
         return 1;
     }
     if (test_ring_dedup_and_lru() != 0) {

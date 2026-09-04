@@ -85,7 +85,7 @@ das sie verfehlte.
 
 Konsequenz für Messungen: jeder `--constrained`-Lauf vor #110, dessen
 richtige Antwort ein Maschinen- oder Anlagen-Verb gewesen wäre, hat ein
-verkürztes Menü gemessen. Die Diagnose-Zahlen (Phase 12, Go/No-Go) bleiben
+verkürztes Menü gemessen. Die Diagnose-Zahlen (Phase 12) bleiben
 gültig — Diagnose endet in `finish`, das immer tippbar war.
 
 ### Der Parameter im String

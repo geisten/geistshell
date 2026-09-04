@@ -267,6 +267,46 @@ int main(void) {
         }
     }
 
+    /* #125 reason-first: the free reasoning is wrapped as ONE s-expr comment
+     * line so the form the parser then reads is untouched. Prove it survives
+     * an adversarial reasoning string (newlines that would end the comment,
+     * quotes and parens that would corrupt a form). */
+    {
+        char comment[256];
+        const size_t cn = spg_reason_comment(
+            "heater is 78C\nand (rising); shut it \"down\"", sizeof comment,
+            comment);
+        if (cn == 0u || comment[0] != ';' || comment[1] != ' ') {
+            return fail("reason comment must start with '; '");
+        }
+        /* exactly one newline, and it is the terminator — no interior newline
+         * could split the comment and expose the form. */
+        if (comment[cn - 1u] != '\n' ||
+            strchr(comment, '\n') != comment + cn - 1u) {
+            return fail("reason comment must be exactly one line");
+        }
+        /* comment line + a real form must parse to that form, unchanged. */
+        char form[512];
+        (void) snprintf(form, sizeof form, "%s%s", comment,
+                        "(recommend (kind finish) (reason \"done\"))");
+        struct spg_sexpr_token          toks[128];
+        struct spg_sexpr_node           nodes[128];
+        struct spg_recommendation       rec;
+        struct spg_recommendation_error err;
+        if (spg_recommendation_parse(strlen(form), form, 128u, toks, 128u,
+                                     nodes, &rec, &err) != SPG_OK ||
+            rec.state != SPG_RECOMMENDATION_VALID ||
+            rec.action_kind != SPG_ACTION_FINISH) {
+            return fail("a reason comment must not disturb the following form");
+        }
+        /* empty reasoning and a too-small buffer produce nothing, never a
+         * half-comment that would swallow the form's first line. */
+        if (spg_reason_comment("", sizeof comment, comment) != 0u ||
+            spg_reason_comment("x", 3u, comment) != 0u || comment[0] != '\0') {
+            return fail("empty / over-budget reasoning yields no comment");
+        }
+    }
+
     printf("test_grammar_mask ok\n");
     return 0;
 }

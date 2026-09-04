@@ -1,6 +1,7 @@
 #ifndef GEISTSHELL_POLICY_GATE_H
 #define GEISTSHELL_POLICY_GATE_H
 
+#include "geistshell/device.h"
 #include "geistshell/graph.h"
 #include "geistshell/journal.h"
 #include "geistshell/process_profile.h"
@@ -37,6 +38,15 @@ struct spg_policy_gate_state {
      * configured a profile. */
     const struct spg_process_profile *profile;
     const struct spg_machine_state   *machine;
+
+    /* #119: the loaded channel table. For a device_write the gate derives the
+     * request's network need from the TARGET CHANNEL's operator-declared
+     * (network ...) field — never from model text (the recommendation form
+     * requires uses_network false, and the parser rejects anything else). So
+     * under (network_default deny) a network channel is refused before any
+     * fork, while local channels keep working. Null = no device on this run;
+     * the executor reports NO_DEVICE downstream and nothing forks. */
+    const struct spg_device *device;
 };
 
 struct spg_policy_gate_config {

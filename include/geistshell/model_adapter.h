@@ -109,6 +109,13 @@ struct spg_model_adapter_config {
      * request-driven signal rather than the pretraining prior. false (default)
      * = raw argmax, byte-identical to before. GEIST + constrained only. */
     bool pmi_calibrate;
+    /* #125 reason-first scaffold: decode up to reason_budget free tokens
+     * BEFORE the forced prefix and emit them as one parse-safe comment line,
+     * so a small model gets its own thinking in the KV cache before the
+     * single forced (recommend (kind … decision ("reason free, constrain
+     * late"). 0 = off (default) — the constrained decode is byte-identical to
+     * before. GEIST + constrained only; ignored otherwise. */
+    size_t reason_budget;
 };
 
 struct spg_model_adapter {
@@ -131,6 +138,7 @@ struct spg_model_adapter {
     size_t                             capability_count;
     const char *const                 *command_names; /* #56 command mask */
     size_t                             command_name_count;
+    size_t                             reason_budget; /* #125 reason-first */
 
     /* #124 PMI calibration: a bounded map of candidate first-token -> its
      * request-free baseline logit, measured once at init. 0 entries (or

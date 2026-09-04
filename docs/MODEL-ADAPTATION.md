@@ -496,6 +496,7 @@ without validating *this suite*. The hold-out split, and with it the
 generalisation claim behind the learning gate, remains untested on a real
 model — which was its state before this document was written.
 
+<<<<<<< HEAD
 ### PMI calibration (#124/#57) — built, off by default, unmeasured
 
 `decode_choice_slot` picks the masked candidate with the highest raw logit,
@@ -516,3 +517,24 @@ gate-rate and task-rate move while parse-rate stays flat, on the step-4 v2
 baseline — is a Gemma-class measurement (BitNet fails the parse rung, so this
 step stays deprioritised for it), and per the #124/#125 interaction note it
 must not share a measurement window with the reason-first scaffold.
+=======
+### Reason-first scaffold (#125) — built, off by default, unmeasured
+
+The "reason free, constrain late" line of work (Constraint Tax, CRANE) holds
+that hard-constraining from token 1 lowers task accuracy on small models while
+keeping validity at 100% — and the v2 data shows the same signature here
+(gemma4-e2b parses 17/21 but passes 3/21). The mechanism is now in the
+constrained decoder: with `agent --constrained --reason-first N`, the model
+decodes up to N free think-tokens **before** the forced `(recommend (kind …`
+prefix; those tokens condition the KV cache for the one real decision, and are
+emitted as a single parse-safe `;` comment line (`spg_reason_comment`), so the
+form the parser reads is unchanged. `N = 0` (the default) is byte-identical to
+the original constrained path — the shipped scripted-fake suites and the
+frozen baseline are untouched.
+
+Only the **budget → 0 no-op** and the **comment parse-safety** are verifiable
+model-free (unit-tested in `test_grammar_mask.c`). The acceptance itself —
+task-rate up with parse-rate unchanged, vs the v2 baseline (2026-08-29) — is a
+number a GGUF host produces. Per the interaction note in #124/#125, it must
+not be measured in the same window as PMI calibration.
+>>>>>>> origin/main
