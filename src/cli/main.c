@@ -2228,6 +2228,21 @@ static int agent_command(int argc, char **argv) {
             i += 1;
             continue;
         }
+        if (strcmp(argv[i], "--device-sample-ms") == 0 && i + 1 < argc) {
+            /* #121: the sampling round's total deadline (all channel programs
+             * run concurrently, so per-program == per-round). An operator
+             * with a tight (wall_ms ...) budget sets this below it. */
+            char      *end = nullptr;
+            const long ms  = strtol(argv[i + 1], &end, 10);
+            if (end == argv[i + 1] || *end != '\0' || ms <= 0) {
+                fprintf(stderr, "agent: bad --device-sample-ms: %s\n",
+                        argv[i + 1]);
+                return 2;
+            }
+            device.sample_timeout_ms = (uint64_t)ms;
+            i += 1;
+            continue;
+        }
         if (strcmp(argv[i], "--device-watchdog-steps") == 0 && i + 1 < argc) {
             char      *end = nullptr;
             const long ms  = strtol(argv[i + 1], &end, 10);
