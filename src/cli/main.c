@@ -2959,6 +2959,10 @@ struct eval_run_report {
      * action", and those want opposite fixes. */
     size_t case_parsed[EVAL_MAX_CASES];
     size_t case_gated[EVAL_MAX_CASES];
+    /* #126: tokens consumed per case, summed over samples. Deterministic for
+     * scripted fakes (one token per tick), so it can live in the default
+     * output — unlike wall time, which stays behind --timing. */
+    uint64_t case_tokens[EVAL_MAX_CASES];
     /* Phase 10 (#70): wall time per case and peak RSS for the whole suite.
      *
      * Measured here and nowhere else. The runtime reads no clock — that is what
@@ -3792,11 +3796,13 @@ static enum spg_status eval_run_suite(const char                 *suite_path,
                     last = (struct spg_eval_case_result){
                         .outcome =
                             spg_eval_judge(&expect, &loop, rs, observation),
-                        .termination  = loop.termination,
-                        .steps_taken  = loop.steps_taken,
-                        .repairs_used = loop.repairs_used,
-                        .status       = rs,
+                        .termination     = loop.termination,
+                        .steps_taken     = loop.steps_taken,
+                        .repairs_used    = loop.repairs_used,
+                        .status          = rs,
+                        .tokens_consumed = usage.consumed.tokens,
                     };
+                    report->case_tokens[case_idx] += usage.consumed.tokens;
                     eval_tally_ladder(report, case_idx, &last);
                     if (has_diagnosis &&
                         !eval_tally_diagnosis(
@@ -3880,6 +3886,7 @@ static enum spg_status eval_run_suite(const char                 *suite_path,
                     goto done;
                 }
                 last = r;
+                report->case_tokens[case_idx] += r.tokens_consumed;
                 eval_tally_ladder(report, case_idx, &r);
                 if (has_diagnosis) {
                     const struct spg_agent_loop_result synth = {
@@ -4006,6 +4013,15 @@ static void eval_print_report(const char                   *suite_path,
         /* #53: the ladder, appended so existing consumers keep matching. */
         printf(",\"parsed\":%zu,\"gated\":%zu", report->case_parsed[i],
                report->case_gated[i]);
+        /* #126: cost. Tokens are deterministic (scripted fakes count one per
+         * tick) and always present; wall time varies run to run, so it stays
+         * behind --timing like latency_ms, under the issue's field name. */
+        printf(",\"tokens\":%llu",
+               (unsigned long long)report->case_tokens[i]);
+        if (report->report_timing) {
+            printf(",\"wall_ms\":%llu",
+                   (unsigned long long)report->case_latency_ms[i]);
+        }
         /* #64: only for diagnosis cases, so every other suite's output stays
          * byte-identical to what its consumers already parse. */
         if (report->case_expected[i][0] != '\0') {
