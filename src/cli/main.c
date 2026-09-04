@@ -2120,6 +2120,7 @@ static int agent_command(int argc, char **argv) {
      * never widens or narrows what the executor permits (cmd_menu.h). */
     const char *menu_path    = nullptr;
     bool        command_mask = false;
+    bool        pin_prefix    = false; /* #58 */
     bool        pmi_calibrate = false; /* #124/#57 */
     size_t      reason_budget = 0u; /* #125: free think-tokens, 0 = off */
     for (int i = 2; i < argc; i += 1) {
@@ -2171,6 +2172,12 @@ static int agent_command(int argc, char **argv) {
             /* #34: force the real model's output to begin with the
              * recommendation opening, then decode freely. */
             constrained = true;
+            continue;
+        }
+        if (strcmp(argv[i], "--pin-prefix") == 0) {
+            /* #58: pin the constant prompt prefix across ticks (pure speed,
+             * byte-identical; falls back safely when not token-aligned). */
+            pin_prefix = true;
             continue;
         }
         if (strcmp(argv[i], "--pmi-calibrate") == 0) {
@@ -2510,6 +2517,7 @@ static int agent_command(int argc, char **argv) {
                   .capability_count = agent_caps_n,
                   .command_names = command_mask ? agent_menu_names : nullptr,
                   .command_name_count = command_mask ? agent_menu_n : 0u,
+                  .pin_prefix_enabled = pin_prefix,
                   .pmi_calibrate      = constrained && pmi_calibrate,
                   .reason_budget      = constrained ? reason_budget : 0u,
                   .sampling         = {.max_seq_len = 4096u,

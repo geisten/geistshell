@@ -7,6 +7,7 @@
 
 #include <stdbool.h>
 #include <stddef.h>
+#include <stdint.h>
 
 #ifdef __cplusplus
 extern "C" {
@@ -120,6 +121,15 @@ size_t spg_model_capabilities_from_policy(
  * expands three-fold. */
 #define SPG_MODEL_CAPABILITY_MAX (SPG_POLICY_MAX_CAPABILITIES * 3u)
 
+/* #58 KV-prefix pinning safety: is `pfx[0..pfx_n)` an exact token prefix of
+ * `full[0..full_n)`? Pinning is only byte-identical-safe when the constant
+ * prefix, tokenized on its own, is a clean prefix of the whole prompt's
+ * tokenization — otherwise a boundary merge would make the pinned tokens
+ * disagree with the full prompt and corrupt the KV. This pure check is the
+ * guard: true → pin, false → full prefill. Tokens are int32_t so the pure
+ * layer needs no engine header. */
+[[nodiscard]] bool spg_tokens_are_prefix(size_t full_n, const int32_t full[],
+                                         size_t pfx_n, const int32_t pfx[]);
 /* #124/#57 PMI calibration of a masked choice slot. Naive token masking picks
  * the candidate with the highest raw logit, which for a not-tool-trained model
  * is dominated by how common the name's tokens are in pretraining, not by fit

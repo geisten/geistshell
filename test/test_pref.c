@@ -120,8 +120,8 @@ static int test_context_is_framing_only(void) {
     static char                a[16384];
     static char                b[16384];
     size_t                     na = 0u, nb = 0u;
-    if (spg_context_render(&without, &view, sizeof a, a, &na) != SPG_OK ||
-        spg_context_render(&with, &view, sizeof b, b, &nb) != SPG_OK) {
+    if (spg_context_render(&without, &view, sizeof a, a, &na, nullptr) != SPG_OK ||
+        spg_context_render(&with, &view, sizeof b, b, &nb, nullptr) != SPG_OK) {
         return 1;
     }
     /* the profile line is present with, absent without */

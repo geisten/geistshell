@@ -756,7 +756,8 @@ enum spg_status spg_context_render(const struct spg_context_sources *sources,
                                    const struct spg_context_view    *view,
                                    const size_t dst_capacity,
                                    char         dst[static dst_capacity],
-                                   size_t      *out_required) {
+                                   size_t      *out_required,
+                                   size_t      *out_prefix_len) {
     if (sources == nullptr || view == nullptr || dst == nullptr ||
         out_required == nullptr || dst_capacity == 0u ||
         view->graph_ref_count > view->graph_ref_capacity ||
@@ -797,6 +798,12 @@ enum spg_status spg_context_render(const struct spg_context_sources *sources,
         append_cstr(&state, "(examples\n");
         append_cstr(&state, sources->exemplars);
         append_cstr(&state, ")\n");
+    }
+    /* #58: the constant/varying boundary. Everything above (contract,
+     * directive, goal, tools, examples) is fixed for a whole run; everything
+     * below varies per tick. A caller pins the prefix here. */
+    if (out_prefix_len != nullptr) {
+        *out_prefix_len = state.used;
     }
     render_budgets(&state, &view->budgets);
     /* Beside the budgets on purpose: both answer "what have I got left to

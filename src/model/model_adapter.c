@@ -483,20 +483,115 @@ static enum spg_status decode_command_slot(
     return decode_string_slot(adapter, result);
 }
 
-static enum spg_status generate_geist(
-    struct spg_model_adapter *adapter,
-    const struct spg_model_generate_request *request,
-    struct spg_model_generate_result *result) {
+/* #58: prefill the prompt, reusing a pinned constant prefix when it is
+ * token-aligned. Byte-identical to a full prefill by construction — the KV
+ * always ends holding exactly the whole prompt's tokens; pinning only skips
+ * re-feeding the prefix.
+ *
+ * Two paths only, no ambiguous middle:
+ *   - never pinned yet -> either establish a pin (aligned, in-cap) or take
+ *     today's exact reset+set_prompt path; and
+ *   - already pinned -> the constant prefix is INVARIANT within a run, so the
+ *     new prefix must match; reset (truncates the KV to the pin) and prefill
+ *     only the varying suffix.
+ * The impossible case (an established pin, a changed prefix) is a loud error,
+ * never a silent re-pin that could corrupt the KV. Anything that prevents a
+ * safe pin — misalignment, over-cap, a too-long prompt, an arch without
+ * pin_prefix — falls back to the full path before any pin exists. */
+static enum geist_status
+geist_prefill(struct spg_model_adapter                *adapter,
+              const struct spg_model_generate_request *request) {
+    static geist_token_t full[16384];
+    static char          prefix_buf[16384];
+    geist_token_t        pfx[2048];
+    const size_t         pin_cap = sizeof pfx / sizeof pfx[0];
+
+    const bool want_pin = adapter->pin_prefix_enabled &&
+                          request->prefix_n > 0u &&
+                          request->prefix_n < request->prompt_n;
+
+    /* Already pinned: serve the invariant-prefix fast path. */
+    if (adapter->pinned_n > 0u) {
+        size_t            full_n = 0u;
+        enum geist_status ts     = geist_session_tokenize(
+            adapter->session, request->prompt, sizeof full / sizeof full[0],
+            full, &full_n);
+        if (ts != GEIST_OK) {
+            return ts;
+        }
+        if (adapter->pinned_n > full_n ||
+            memcmp(adapter->pinned, full,
+                   adapter->pinned_n * sizeof full[0]) != 0) {
+            /* The constant prefix changed under an established pin — cannot
+             * happen for a run whose contract/goal/tools/examples are fixed.
+             * Refuse rather than risk a corrupt KV. */
+            return GEIST_E_INVALID_STATE;
+        }
+        const enum geist_status s = geist_session_reset(adapter->session);
+        if (s != GEIST_OK) {
+            return s;
+        }
+        return geist_session_prefill_tokens(adapter->session,
+                                            full_n - adapter->pinned_n,
+                                            full + adapter->pinned_n);
+    }
+
+    /* Not pinned yet: try to establish a pin this tick. */
+    if (want_pin) {
+        size_t            full_n = 0u;
+        size_t            pfx_n  = 0u;
+        enum geist_status ts     = geist_session_tokenize(
+            adapter->session, request->prompt, sizeof full / sizeof full[0],
+            full, &full_n);
+        if (ts == GEIST_OK && full_n > 0u &&
+            request->prefix_n < sizeof prefix_buf) {
+            memcpy(prefix_buf, request->prompt, request->prefix_n);
+            prefix_buf[request->prefix_n] = '\0';
+            ts = geist_session_tokenize(adapter->session, prefix_buf, pin_cap,
+                                        pfx, &pfx_n);
+        } else {
+            ts = GEIST_E_INVALID_ARG;
+        }
+        if (ts == GEIST_OK && pfx_n > 0u && pfx_n <= pin_cap &&
+            spg_tokens_are_prefix(full_n, (const int32_t *)full, pfx_n,
+                                  (const int32_t *)pfx)) {
+            enum geist_status s = geist_session_reset(adapter->session);
+            if (s == GEIST_OK) {
+                s = geist_session_prefill_tokens(adapter->session, full_n,
+                                                 full);
+            }
+            if (s != GEIST_OK) {
+                return s;
+            }
+            s = geist_session_pin_prefix(adapter->session, pfx_n, full);
+            if (s == GEIST_OK) {
+                adapter->pinned_n = pfx_n;
+                memcpy(adapter->pinned, full, pfx_n * sizeof full[0]);
+                return GEIST_OK; /* KV holds the full prompt, prefix pinned */
+            }
+            /* pin unsupported / failed: the full prompt is already prefilled
+             * and correct — stop trying to pin for this adapter. */
+            adapter->pin_prefix_enabled = false;
+            return GEIST_OK;
+        }
+        /* misaligned / over cap / tokenize failed: full path, no pin. */
+    }
+
     if (request->reset_session) {
         const enum geist_status reset_status =
             geist_session_reset(adapter->session);
         if (reset_status != GEIST_OK) {
-            return map_geist_status(reset_status);
+            return reset_status;
         }
     }
+    return geist_session_set_prompt(adapter->session, request->prompt);
+}
 
-    enum geist_status status =
-        geist_session_set_prompt(adapter->session, request->prompt);
+static enum spg_status generate_geist(
+    struct spg_model_adapter *adapter,
+    const struct spg_model_generate_request *request,
+    struct spg_model_generate_result *result) {
+    enum geist_status status = geist_prefill(adapter, request);
     if (status != GEIST_OK) {
         return map_geist_status(status);
     }
@@ -683,6 +778,7 @@ spg_model_adapter_init(struct spg_model_adapter *adapter,
         .capability_count = config->capability_count,
         .command_names      = config->command_names,
         .command_name_count = config->command_name_count,
+        .pin_prefix_enabled = config->pin_prefix_enabled,
         .reason_budget      = config->reason_budget,
     };
 

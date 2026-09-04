@@ -314,7 +314,7 @@ Each step is separately measurable or trivial.
 | 6 | Verifier ladder replaces the `have_expect` oracle | Makes `--best-of` honest. |
 | 7 | Command menu → prompt + `command` mask (with the three consequences above) | Second hypothesis. |
 | 8 | PMI calibration in `decode_choice_slot` *(built, off by default — `--pmi-calibrate`)* | Third hypothesis — still **deprioritised**: it presumes a parseable action, which BitNet does not produce (postscript). Mechanism is in place; the task-rate acceptance is a Gemma-class measurement. |
-| 9 | `pin_prefix` for the constant prefix | Pure speed, changes no numbers — hence last. |
+| 9 | `pin_prefix` for the constant prefix *(built, off by default — `--pin-prefix`)* | Pure speed, changes no numbers — hence last. The framing split (decision 3 / #54) is not on `main`, so instead of a system-turn boundary the pin uses a **runtime token-alignment guard**: it pins only when the constant prefix is a clean token-prefix of the whole prompt, else full prefill. Byte-identical by construction; the wall-clock win is the GGUF-host measurement. |
 
 Steps 0–3 are instrument-building with no insight of their own. That is the
 price of every number from step 4 onward meaning something.
@@ -495,6 +495,28 @@ machine scenarios instead. The numbers above therefore settle the *hypothesis*
 without validating *this suite*. The hold-out split, and with it the
 generalisation claim behind the learning gate, remains untested on a real
 model — which was its state before this document was written.
+
+### pin_prefix (#58) — built, off by default, unmeasured
+
+The agent throws away the KV cache and re-prefills the whole context every
+tick (~350 constant contract tokens x every step). `agent --constrained
+--pin-prefix` pins the constant prefix (contract + directive + goal + tools +
+examples — the block `spg_context_render` now reports the byte length of) and,
+on later ticks, resets the cache back to the pin and re-prefills only the
+varying suffix.
+
+Decision 3's system-turn framing (#54) — which would give a clean pin boundary
+— is not on `main`, so the pin cannot assume the boundary falls on a token
+split. Instead a **runtime guard** makes it safe by construction: the adapter
+tokenizes the whole prompt and the prefix separately and pins only when the
+prefix is an exact token-prefix of the whole (`spg_tokens_are_prefix`,
+unit-tested) — a boundary merge, an over-cap prefix, a reframed prompt, or an
+arch without `pin_prefix` all fall back to the full prefill. The KV therefore
+always ends holding exactly the whole prompt's tokens: output is byte-identical
+whether pinned or not, and off (the default) is the original path (the frozen
+baseline is untouched). The acceptance — wall-clock per step drops on a
+multi-step case with byte-identical journals and unchanged ladder rates — is a
+GGUF-host measurement; if any rate moves, the pin is wrong.
 
 ### PMI calibration (#124/#57) — built, off by default, unmeasured
 

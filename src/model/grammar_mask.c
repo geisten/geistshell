@@ -303,6 +303,19 @@ size_t spg_scaffold_for_kind(enum spg_action_kind            kind,
     return 0u;
 }
 
+bool spg_tokens_are_prefix(const size_t full_n, const int32_t full[],
+                           const size_t pfx_n, const int32_t pfx[]) {
+    if (pfx_n == 0u || pfx_n > full_n || full == nullptr || pfx == nullptr) {
+        return false;
+    }
+    for (size_t i = 0u; i < pfx_n; i += 1u) {
+        if (full[i] != pfx[i]) {
+            return false;
+        }
+    }
+    return true;
+}
+
 size_t spg_pmi_pick(const size_t n, const float logits[],
                     const float baseline[]) {
     if (n == 0u || logits == nullptr) {
