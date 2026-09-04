@@ -174,6 +174,18 @@ nachträglich geprüft. Der Preis ist benannt: ein `(safe …)` an einem Sensor
 macht ihn still schreibbar. Der Bereich begrenzt ihn weiterhin, und ein Sensor
 mit einem sicheren Wert ist ein Tippfehler, den ein Review sieht.
 
+**`(network true)` deklariert den Transportbedarf (#119).** Ein Kanal, dessen
+Programm über das Netz spricht — MQTT, HTTP, Modbus TCP, eine MCP-Bridge —
+trägt das Feld in seiner Form. Es ist **Operator-Trust**: der Policy-Gate
+leitet die Netzwerkentscheidung eines `device_write` aus diesem Feld der
+geladenen Tabelle ab, niemals aus Modelltext (die Recommendation-Form muss
+`uses_network false` sagen, sonst scheitert der Parse). Unter
+`(network_default deny)` wird ein Netzwerk-Kanal vor jedem Fork verweigert
+und journalisiert; lokale Kanäle bleiben nutzbar. Fehlt das Feld, gilt lokal;
+alles außer den Symbolen `true`/`false` ist ein Schemafehler. geistshell kann
+nicht prüfen, was ein Programm zur Laufzeit tut — die wahrheitsgemäße Angabe
+ist Verantwortung des Betreibers (siehe SECURITY.md).
+
 `--device-channel` bleibt für Einzeiler und Tests bestehen — es nimmt
 dieselbe `(channel …)`-Form als ein Argument, kein zweites Format.
 

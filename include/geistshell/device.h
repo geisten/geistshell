@@ -60,6 +60,13 @@ struct spg_device_channel {
      * declared safe value is a channel nobody has decided about, and the
      * decision would then be made by whatever the machine was last told. */
     int64_t safe;
+    /* #119: whether this channel's PROGRAM needs the network (MQTT, HTTP,
+     * Modbus, an MCP bridge). Operator-declared in the channel form —
+     * `(network true)` — and therefore TRUSTED: the policy gate reads it from
+     * here, never from anything the model emitted. Default false = local.
+     * Declaring it truthfully is the operator's responsibility; geistshell
+     * cannot verify what a program does once it runs. */
+    bool network;
 };
 
 struct spg_device {
@@ -99,7 +106,14 @@ spg_device_add_channel(struct spg_device               *dev,
  * declare a safe value" becomes structurally unbreakable instead of checked
  * after the fact. The named price: a (safe ...) on a sensor makes it quietly
  * writable — the range still bounds it, and a sensor with a safe value is a
- * typo a review sees. */
+ * typo a review sees.
+ *
+ * Optional `(network true)` / `(network false)` declares that the program
+ * speaks over the network (#119). This is operator trust: the policy gate
+ * derives its network decision from this field of the LOADED config, so under
+ * (network_default deny) a network channel is refused before any fork while
+ * local channels keep working. Anything but the symbols true/false is a
+ * schema error, and absence means local. */
 [[nodiscard]] enum spg_status
 spg_device_parse_channel(size_t text_n, const char text[],
                          struct spg_device_channel *out);

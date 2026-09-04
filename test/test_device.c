@@ -56,7 +56,30 @@ static int test_parse_channel(void) {
             LIT("(channel (name \"temp\") (program \"/opt/p/temp\") "
                 "(range -400 9000))"),
             &channel) != SPG_OK ||
-        channel.min != -400 || channel.writable) {
+        channel.min != -400 || channel.writable || channel.network) {
+        return 1; /* absence of (network ...) means local */
+    }
+
+    /* #119: (network true) is operator trust, parsed only as the two
+     * symbols — a typo must not silently change a trust decision. */
+    if (spg_device_parse_channel(
+            LIT("(channel (name \"mq\") (program \"/opt/p/mq\") "
+                "(range 0 100) (safe 0) (network true))"),
+            &channel) != SPG_OK ||
+        !channel.network || !channel.writable) {
+        return 1;
+    }
+    if (spg_device_parse_channel(
+            LIT("(channel (name \"mq\") (program \"/opt/p/mq\") "
+                "(range 0 100) (network false))"),
+            &channel) != SPG_OK ||
+        channel.network) {
+        return 1;
+    }
+    if (spg_device_parse_channel(
+            LIT("(channel (name \"mq\") (program \"/opt/p/mq\") "
+                "(range 0 100) (network yes))"),
+            &channel) != SPG_E_SCHEMA) {
         return 1;
     }
 

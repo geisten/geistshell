@@ -43,6 +43,27 @@ resolve_capability_span(const struct spg_policy_gate_state *state,
     return false;
 }
 
+/* #119: whether the device_write's target channel is operator-declared as a
+ * network channel. Read from the LOADED table only — the recommendation form
+ * carries uses_network false by construction (the parser refuses anything
+ * else), so the model cannot influence this bit in either direction. An
+ * unknown channel counts as local: the executor refuses it before any fork. */
+static bool device_target_uses_network(const struct spg_policy_gate_state *state,
+                                       const struct spg_recommendation *rec) {
+    if (state->device == nullptr || !rec->has_target ||
+        !spg_sexpr_span_valid(state->recommendation_text_n, rec->target) ||
+        rec->target.length + 1u > SPG_DEVICE_NAME_CAP) {
+        return false;
+    }
+    char name[SPG_DEVICE_NAME_CAP];
+    memcpy(name, state->recommendation_text + rec->target.offset,
+           rec->target.length);
+    name[rec->target.length] = '\0';
+    const struct spg_device_channel *channel =
+        spg_device_find(state->device, name);
+    return channel != nullptr && channel->network;
+}
+
 static const char *
 decision_kind_name(const enum spg_policy_decision_kind kind) {
     switch (kind) {
@@ -282,7 +303,13 @@ spg_policy_gate_step(const struct spg_policy_gate_state     *state,
     *result               = (struct spg_policy_gate_result){};
     workspace->payload[0] = '\0';
 
-    struct spg_action_request         request = recommendation->action;
+    struct spg_action_request request = recommendation->action;
+    if (recommendation->action_kind == SPG_ACTION_DEVICE_WRITE &&
+        device_target_uses_network(state, recommendation)) {
+        /* #119: trusted operator config, not model text, decides the network
+         * need — spg_policy_decide then applies network_default to it. */
+        request.uses_network = true;
+    }
     const enum spg_policy_deny_reason machine_reason =
         machine_denial(state, recommendation);
     if (machine_reason != SPG_POLICY_DENY_NONE) {
