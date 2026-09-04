@@ -143,6 +143,7 @@ SPG_SOURCES := \
     src/memory/mem_executor.c \
     src/memory/mem_store.c \
     src/memory/memory.c \
+    src/memory/pref.c \
     src/machine/diagnose.c \
     src/machine/machine_fixture.c \
     src/machine/machine_goal.c \

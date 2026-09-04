@@ -5,6 +5,7 @@
 #include "geistshell/mem_store.h" /* #40 follow-up: strong directive channel */
 #include "geistshell/memory.h"
 #include "geistshell/orchestrator.h"
+#include "geistshell/pref.h" /* #28: user-profile line */
 
 static bool workspace_valid(const struct spg_agent_run_workspace *w) {
     return w != nullptr && w->context != nullptr && w->model_output != nullptr &&
@@ -43,6 +44,17 @@ enum spg_status spg_agent_run(const struct spg_agent_run_inputs *inputs,
         spg_mem_directive(inputs->store, config->directive_slug, 0u,
                           sizeof directive_buf, directive_buf) > 0u) {
         directive = directive_buf;
+    }
+
+    /* #28: the user profile — one budgeted (profile "...") line from the
+     * store's pref-* memories. Framing/defaults only; nothing downstream of
+     * the policy gate reads it. Off-switch or an empty store -> no line. */
+    char        profile_buf[SPG_MEM_DESC_MAX + 32u];
+    const char *user_profile = nullptr;
+    if (!config->profile_off && inputs->store != nullptr &&
+        spg_pref_render(inputs->store, 0u, sizeof profile_buf, profile_buf) >
+            0u) {
+        user_profile = profile_buf;
     }
 
     const struct spg_orchestrator_workspace ow = {
@@ -95,6 +107,7 @@ enum spg_status spg_agent_run(const struct spg_agent_run_inputs *inputs,
         .goal          = inputs->goal,
         .tools         = inputs->tools,
         .directive     = directive,
+        .user_profile  = user_profile,
         .machine       = inputs->machine,
         .machine_after = inputs->machine_after,
         .machine_goal  = inputs->machine_goal,

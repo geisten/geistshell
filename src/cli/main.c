@@ -2082,6 +2082,7 @@ static int agent_command(int argc, char **argv) {
     const char *exemplars_path = nullptr;
     const char *memory_dir     = getenv("GEISTSHELL_MEMORY_DIR");
     const char *directive_slug = nullptr;
+    bool        no_profile      = false; /* #28 */
     size_t      max_steps      = 8u;
     size_t      max_repairs    = 2u;
     bool        allow_exec     = false;
@@ -2188,6 +2189,12 @@ static int agent_command(int argc, char **argv) {
              */
             directive_slug = argv[i + 1];
             i += 1;
+            continue;
+        }
+        /* #28: disable user-profile injection. Byte-identical to a run with no
+         * preferences recorded. */
+        if (strcmp(argv[i], "--no-profile") == 0) {
+            no_profile = true;
             continue;
         }
         if (strcmp(argv[i], "--temperature") == 0 && i + 1 < argc) {
@@ -2737,6 +2744,7 @@ static int agent_command(int argc, char **argv) {
                 ? model_profile.finish_on_no_progress
                 : true,
         .directive_slug        = directive_slug,
+        .profile_off           = no_profile,
         .execution_enabled     = allow_exec,
         .exec_timeout_ms       = 5000u,
         .exec_stdout_cap       = sizeof shell_stdout,

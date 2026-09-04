@@ -541,6 +541,39 @@ accumulation + injection, not lift. Open follow-ups on #26: model-driven
 distillation, shape-triggered single-skill injection (vs the whole index), and
 a gate on skill acceptance.
 
+## User-profile memory (geistshell#28)
+
+Task lessons and skills are about the WORLD (a failure the world proved, a
+procedure that worked). A **preference** is about the USER — how they want
+choices made — and is a distinct memory KIND, stored under a `pref-<key>` slug
+namespace alongside `lesson-*`/`skill-*` but never overloading them.
+
+Two boundaries are enforced in code, not just documented (`src/memory/pref.c`,
+`test/test_pref.c`):
+
+- **Write-on-evidence, never model self-assertion.** `spg_pref_should_write`
+  is the single gate: a repeated choice writes only at the second observation,
+  a user correction is authoritative on the first, and a model self-assertion
+  (`SPG_PREF_EVIDENCE_ASSERTED`) writes *nothing*, whatever the count. The same
+  anti-delusion stance as eval-gated learning — a preference is recorded when
+  the world shows it, not when the model guesses it. The CLI surface is
+  `geistshell memory pref <key> <value> --evidence … --count …`.
+
+- **Capability-invariance.** A preference shapes FRAMING and DEFAULTS only — it
+  is rendered as one `(profile "…")` context line and there is no code path
+  from a preference to the policy gate. `test_cli_pref.sh` proves it: a
+  `pref-allow_shell` naming shell access is injected into a plant run's
+  context, yet the plant policy (device capability only) still denies a
+  `local_shell` action. Personalization changes how a choice is elicited,
+  never what is permitted.
+
+The profile is one budgeted line however many preferences accumulate
+(`spg_pref_render`, capped at `SPG_MEM_DESC_MAX`) — the same
+context-invariance property as the P6 lesson directive, so a filling profile
+never grows the small model's window. Off-switch: `agent --no-profile` (or an
+empty store) leaves the context byte-identical. Orthogonal to #26/#27:
+personalization, not skill.
+
 ## Context-cost benchmark (2026-08-02, model-free)
 
 `eval/bench_context.sh` measures the load-bearing half of the small-seq-len

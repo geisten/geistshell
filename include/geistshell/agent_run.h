@@ -98,6 +98,11 @@ struct spg_agent_run_config {
      * (directive "...") — the strong steering channel (vs the mind-palace
      * index). Null/absent or missing in the store -> no directive line. */
     const char *directive_slug;
+    /* #28: disable user-profile injection. By default a run renders the
+     * store's pref-* memories as one budgeted (profile "...") line; with this
+     * set the profile is never injected and the context is byte-identical to
+     * a run without any preferences. */
+    bool profile_off;
     /* Success marker watched across every step's observation, not just the
      * final one — see agent_loop.h. Set it to the (expect ...) substring the
      * run is judged against. Null = not watched. */
