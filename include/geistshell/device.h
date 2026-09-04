@@ -60,6 +60,12 @@ struct spg_device_channel {
      * declared safe value is a channel nobody has decided about, and the
      * decision would then be made by whatever the machine was last told. */
     int64_t safe;
+    /* Per-channel watchdog bookkeeping (#118). A successful transaction on
+     * THIS channel is what feeds it — a sensor that answers must not keep an
+     * actuator that has gone silent looking alive. Same injected clock unit
+     * as the device-level fields. */
+    uint64_t last_contact;
+    bool     contact_pending;
 };
 
 struct spg_device {
@@ -75,7 +81,11 @@ struct spg_device {
     uint64_t watchdog_timeout; /* 0 disables it */
     uint64_t last_contact;
     bool     contact_pending; /* a transaction succeeded since the last check */
-    size_t   n_channels;
+    /* #118: the tick-level watchdog service latches after driving the safe
+     * state so an expiry that persists does not re-drive (and re-journal) it
+     * every tick; any successful contact re-arms the latch. */
+    bool   watchdog_tripped;
+    size_t n_channels;
     struct spg_device_channel channels[SPG_DEVICE_MAX_CHANNELS];
 };
 
@@ -199,12 +209,20 @@ void spg_device_arm_watchdog(struct spg_device *dev, uint64_t timeout,
                              uint64_t now);
 
 /* Fold in any successful transaction since the last call and report whether
- * the deadline has passed. Checking is what consumes the contact flag, so a
+ * the deadline has passed. Checking is what consumes the contact flags, so a
  * caller cannot succeed at keeping the machine alive while forgetting to
  * check — the two are the same call.
  *
  * EXPIRED is sticky until the next successful transaction: a machine that
- * answers once and goes quiet again must not look healthy in between. */
+ * answers once and goes quiet again must not look healthy in between.
+ *
+ * #118: the deadline is judged PER WRITABLE CHANNEL as well as globally. A
+ * writable channel is fed only by a successful write to it (arming stamps a
+ * baseline), so a sensor that keeps answering cannot mask an actuator whose
+ * writes stopped landing — EXPIRED as soon as ANY writable channel has gone
+ * a full timeout without contact. Read-only channels ride on the global
+ * deadline as before: for a plant of sensors, reads are the only contact
+ * there is. */
 [[nodiscard]] enum spg_device_watchdog
 spg_device_watchdog_check(struct spg_device *dev, uint64_t now);
 

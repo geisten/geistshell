@@ -62,8 +62,23 @@ spg_device_add_channel(struct spg_device               *dev,
         return SPG_E_LIMIT;
     }
     dev->channels[dev->n_channels] = *channel;
+    /* A channel added after arming inherits the device baseline instead of a
+     * zero stamp — otherwise it would look a whole epoch overdue at once. */
+    dev->channels[dev->n_channels].last_contact    = dev->last_contact;
+    dev->channels[dev->n_channels].contact_pending = false;
     dev->n_channels += 1u;
     return SPG_OK;
+}
+
+/* The mutable twin of spg_device_find, for the contact bookkeeping. */
+static struct spg_device_channel *find_mut(struct spg_device *dev,
+                                           const char        *name) {
+    for (size_t i = 0u; i < dev->n_channels; i += 1u) {
+        if (strcmp(dev->channels[i].name, name) == 0) {
+            return &dev->channels[i];
+        }
+    }
+    return nullptr;
 }
 
 const struct spg_device_channel *spg_device_find(const struct spg_device *dev,
@@ -317,10 +332,10 @@ static bool parse_output(const char text[], int64_t *out) {
 
 enum spg_status spg_device_read(struct spg_device *dev, const char *name,
                                 int64_t *out) {
-    if (dev == nullptr || out == nullptr) {
+    if (dev == nullptr || out == nullptr || name == nullptr) {
         return SPG_E_INVALID_ARG;
     }
-    const struct spg_device_channel *channel = spg_device_find(dev, name);
+    struct spg_device_channel *channel = find_mut(dev, name);
     if (channel == nullptr) {
         return SPG_E_NOT_FOUND;
     }
@@ -343,8 +358,10 @@ enum spg_status spg_device_read(struct spg_device *dev, const char *name,
     }
     *out = value;
     /* Contact is contact: a successful read keeps the watchdog fed, so a run
-     * that only observes does not look like a machine gone silent. */
-    dev->contact_pending = true;
+     * that only observes does not look like a machine gone silent. Feeds this
+     * CHANNEL and the device — never another channel (#118). */
+    dev->contact_pending     = true;
+    channel->contact_pending = true;
     return SPG_OK;
 }
 
@@ -356,7 +373,10 @@ enum spg_status spg_device_write(struct spg_device *dev, const char *name,
     /* Every refusal is decided BEFORE the fork, so all of it can be tested
      * without a program that exists. A safety check reachable only once a
      * machine is plugged in is a safety check nobody runs. */
-    const struct spg_device_channel *channel = spg_device_find(dev, name);
+    if (name == nullptr) {
+        return SPG_E_INVALID_ARG;
+    }
+    struct spg_device_channel *channel = find_mut(dev, name);
     if (channel == nullptr) {
         return SPG_E_NOT_FOUND;
     }
@@ -381,7 +401,8 @@ enum spg_status spg_device_write(struct spg_device *dev, const char *name,
          * next decision on a number the machine never accepted. */
         return SPG_E_IO;
     }
-    dev->contact_pending = true;
+    dev->contact_pending     = true;
+    channel->contact_pending = true;
     return SPG_OK;
 }
 
@@ -395,6 +416,13 @@ void spg_device_arm_watchdog(struct spg_device *dev, const uint64_t timeout,
     dev->watchdog_timeout = timeout;
     dev->last_contact     = now;
     dev->contact_pending  = false;
+    dev->watchdog_tripped = false;
+    for (size_t i = 0u; i < dev->n_channels; i += 1u) {
+        /* Arming is the baseline stamp: an armed watchdog must not fire on a
+         * channel that has simply not been spoken to yet. */
+        dev->channels[i].last_contact    = now;
+        dev->channels[i].contact_pending = false;
+    }
 }
 
 enum spg_device_watchdog spg_device_watchdog_check(struct spg_device *dev,
@@ -406,6 +434,12 @@ enum spg_device_watchdog spg_device_watchdog_check(struct spg_device *dev,
         dev->contact_pending = false;
         dev->last_contact    = now;
     }
+    for (size_t i = 0u; i < dev->n_channels; i += 1u) {
+        if (dev->channels[i].contact_pending) {
+            dev->channels[i].contact_pending = false;
+            dev->channels[i].last_contact    = now;
+        }
+    }
     if (dev->watchdog_timeout == 0u) {
         return SPG_WATCHDOG_DISABLED;
     }
@@ -416,9 +450,20 @@ enum spg_device_watchdog spg_device_watchdog_check(struct spg_device *dev,
          * expensive of the two wrong answers. */
         return SPG_WATCHDOG_OK;
     }
-    return (now - dev->last_contact) > dev->watchdog_timeout
-               ? SPG_WATCHDOG_EXPIRED
-               : SPG_WATCHDOG_OK;
+    if ((now - dev->last_contact) > dev->watchdog_timeout) {
+        return SPG_WATCHDOG_EXPIRED;
+    }
+    /* #118: every writable channel must have been fed within the deadline —
+     * a live sensor (which feeds the global stamp above) must not mask an
+     * actuator whose writes stopped landing. */
+    for (size_t i = 0u; i < dev->n_channels; i += 1u) {
+        const struct spg_device_channel *ch = &dev->channels[i];
+        if (ch->writable && now >= ch->last_contact &&
+            (now - ch->last_contact) > dev->watchdog_timeout) {
+            return SPG_WATCHDOG_EXPIRED;
+        }
+    }
+    return SPG_WATCHDOG_OK;
 }
 
 enum spg_status spg_device_safe_state(struct spg_device *dev) {
