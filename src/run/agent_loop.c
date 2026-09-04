@@ -6,6 +6,7 @@
 
 #include <time.h>
 
+#include "geistshell/device_executor.h" /* #118: tick-level watchdog service */
 #include "geistshell/mem_store.h" /* P6: slug-triggered directive injection */
 
 #include <stdio.h>
@@ -155,6 +156,26 @@ spg_agent_loop_run(struct spg_orchestrator_state           *state,
             result->termination = SPG_AGENT_LOOP_BUDGET;
             return SPG_OK;
         }
+        /* #118: the watchdog is a property of the governed machine, not of
+         * the model's willingness to emit another device_write. Checked
+         * before EVERY tick — including ticks whose action is observation,
+         * memory or finish — with the same injected clock the executors use,
+         * so a replay reaches the same verdict. */
+        if (state->device != nullptr) {
+            const struct spg_device_executor_config wd_cfg = {
+                .actor_id        = config->base.actor_id,
+                .timestamp_ns    = (uint64_t)step + 1u,
+                .parent_sequence = parent_sequence,
+                .write_journal   = config->base.write_journal,
+            };
+            uint64_t wd_seq = 0u;
+            (void)spg_device_watchdog_service(state->device, state->journal,
+                                              &wd_cfg, nullptr, &wd_seq);
+            if (wd_seq != 0u) {
+                parent_sequence = wd_seq;
+            }
+        }
+
         /* Expose every event logged so far (steps 1..step-1) to this step. */
         if (feedback) {
             state->journal_header_count = state->journal->header_log_count;

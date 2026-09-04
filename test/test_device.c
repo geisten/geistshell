@@ -18,6 +18,7 @@
 #include <stdlib.h>
 #include <string.h>
 #include <sys/stat.h>
+#include <time.h>
 #include <unistd.h>
 
 #define LIT(s) (sizeof(s) - 1u), (s)
@@ -56,7 +57,30 @@ static int test_parse_channel(void) {
             LIT("(channel (name \"temp\") (program \"/opt/p/temp\") "
                 "(range -400 9000))"),
             &channel) != SPG_OK ||
-        channel.min != -400 || channel.writable) {
+        channel.min != -400 || channel.writable || channel.network) {
+        return 1; /* absence of (network ...) means local */
+    }
+
+    /* #119: (network true) is operator trust, parsed only as the two
+     * symbols — a typo must not silently change a trust decision. */
+    if (spg_device_parse_channel(
+            LIT("(channel (name \"mq\") (program \"/opt/p/mq\") "
+                "(range 0 100) (safe 0) (network true))"),
+            &channel) != SPG_OK ||
+        !channel.network || !channel.writable) {
+        return 1;
+    }
+    if (spg_device_parse_channel(
+            LIT("(channel (name \"mq\") (program \"/opt/p/mq\") "
+                "(range 0 100) (network false))"),
+            &channel) != SPG_OK ||
+        channel.network) {
+        return 1;
+    }
+    if (spg_device_parse_channel(
+            LIT("(channel (name \"mq\") (program \"/opt/p/mq\") "
+                "(range 0 100) (network yes))"),
+            &channel) != SPG_E_SCHEMA) {
         return 1;
     }
 
@@ -222,6 +246,8 @@ static int test_exec_contract(void) {
     }
     char temp_prog[256], fail_prog[256], text_prog[256];
     char heater_prog[256], liar_prog[256], heater_file[256];
+    char low_prog[256], high_prog[256], atmin_prog[256], atmax_prog[256];
+    char wide_prog[256];
     (void)snprintf(heater_file, sizeof heater_file, "%s/heater.value", dir);
     if (write_script(dir, "temp", "echo 2350\n", temp_prog,
                      sizeof temp_prog) != 0 ||
@@ -230,7 +256,17 @@ static int test_exec_contract(void) {
         write_script(dir, "text", "echo warm\n", text_prog,
                      sizeof text_prog) != 0 ||
         write_script(dir, "liar", "echo 39\n", liar_prog,
-                     sizeof liar_prog) != 0) {
+                     sizeof liar_prog) != 0 ||
+        write_script(dir, "low", "echo -401\n", low_prog,
+                     sizeof low_prog) != 0 ||
+        write_script(dir, "high", "echo 9001\n", high_prog,
+                     sizeof high_prog) != 0 ||
+        write_script(dir, "atmin", "echo -400\n", atmin_prog,
+                     sizeof atmin_prog) != 0 ||
+        write_script(dir, "atmax", "echo 9000\n", atmax_prog,
+                     sizeof atmax_prog) != 0 ||
+        write_script(dir, "wide", "echo -9223372036854775808\n", wide_prog,
+                     sizeof wide_prog) != 0) {
         return 1;
     }
     char heater_body[512];
@@ -270,6 +306,32 @@ static int test_exec_contract(void) {
     if (spg_device_add_channel(&dev, &ch) != SPG_OK) {
         return 1;
     }
+    ch = (struct spg_device_channel){.name = "low", .min = -400, .max = 9000};
+    (void)snprintf(ch.program, sizeof ch.program, "%s", low_prog);
+    if (spg_device_add_channel(&dev, &ch) != SPG_OK) {
+        return 1;
+    }
+    ch = (struct spg_device_channel){.name = "high", .min = -400, .max = 9000};
+    (void)snprintf(ch.program, sizeof ch.program, "%s", high_prog);
+    if (spg_device_add_channel(&dev, &ch) != SPG_OK) {
+        return 1;
+    }
+    ch = (struct spg_device_channel){.name = "atmin", .min = -400, .max = 9000};
+    (void)snprintf(ch.program, sizeof ch.program, "%s", atmin_prog);
+    if (spg_device_add_channel(&dev, &ch) != SPG_OK) {
+        return 1;
+    }
+    ch = (struct spg_device_channel){.name = "atmax", .min = -400, .max = 9000};
+    (void)snprintf(ch.program, sizeof ch.program, "%s", atmax_prog);
+    if (spg_device_add_channel(&dev, &ch) != SPG_OK) {
+        return 1;
+    }
+    ch = (struct spg_device_channel){
+        .name = "wide", .min = INT64_MIN, .max = INT64_MAX};
+    (void)snprintf(ch.program, sizeof ch.program, "%s", wide_prog);
+    if (spg_device_add_channel(&dev, &ch) != SPG_OK) {
+        return 1;
+    }
 
     /* A reading is the printed number, and it counts as contact. */
     int64_t value = 0;
@@ -284,6 +346,31 @@ static int test_exec_contract(void) {
     }
     if (spg_device_read(&dev, "chatty", &value) != SPG_E_FORMAT ||
         value != 777) {
+        return 1;
+    }
+
+    /* A parsed value outside the channel range is refused, stays untouched,
+     * and does NOT count as watchdog contact (issue #120). */
+    dev.contact_pending = false;
+    if (spg_device_read(&dev, "low", &value) != SPG_E_LIMIT || value != 777 ||
+        dev.contact_pending) {
+        return 1;
+    }
+    if (spg_device_read(&dev, "high", &value) != SPG_E_LIMIT || value != 777 ||
+        dev.contact_pending) {
+        return 1;
+    }
+    /* The range is inclusive: exactly min and exactly max are readings. */
+    if (spg_device_read(&dev, "atmin", &value) != SPG_OK || value != -400) {
+        return 1;
+    }
+    if (spg_device_read(&dev, "atmax", &value) != SPG_OK || value != 9000) {
+        return 1;
+    }
+    /* INT64 extremes compare without overflow: a full-range channel accepts
+     * INT64_MIN itself. */
+    if (spg_device_read(&dev, "wide", &value) != SPG_OK ||
+        value != INT64_MIN) {
         return 1;
     }
 
@@ -312,13 +399,89 @@ static int test_exec_contract(void) {
     }
 
     /* A mixed sample: the dead sensors render unknown, the live ones their
-     * value, and the first failure is reported without blinding the rest. */
+     * value, and the first failure is reported without blinding the rest.
+     * Out-of-range channels (5, 6) are unknown like any other bad read. */
     struct spg_device_state state = {};
-    if (spg_device_sample(&dev, &state) == SPG_OK || state.n != 5u) {
+    if (spg_device_sample(&dev, &state) == SPG_OK || state.n != 10u) {
         return 1;
     }
     if (!state.readings[0].known || state.readings[0].value != 2350 ||
-        state.readings[1].known || state.readings[2].known) {
+        state.readings[1].known || state.readings[2].known ||
+        state.readings[5].known || state.readings[6].known ||
+        !state.readings[7].known || !state.readings[8].known) {
+        return 1;
+    }
+    return 0;
+}
+
+static uint64_t now_ms(void) {
+    struct timespec ts = {};
+    (void)clock_gettime(CLOCK_MONOTONIC, &ts);
+    return (uint64_t)ts.tv_sec * 1000u + (uint64_t)ts.tv_nsec / 1000000u;
+}
+
+/* #121: a sampling round has ONE deadline, not one per channel. Eight hung
+ * programs at a 300 ms timeout would serially block >= 2.4 s; the concurrent
+ * batch finishes the whole round in roughly one timeout. The fast channel is
+ * LAST in the table, so its known value also proves that completion order
+ * does not reorder the result, and that stragglers cost nobody else their
+ * reading. */
+static int test_sample_deadline(void) {
+    char dir[] = "/tmp/spg_device_XXXXXX";
+    if (mkdtemp(dir) == nullptr) {
+        return 1;
+    }
+    char slow_prog[256], fast_prog[256];
+    if (write_script(dir, "slow", "sleep 30\n", slow_prog,
+                     sizeof slow_prog) != 0 ||
+        write_script(dir, "fast", "echo 7\n", fast_prog,
+                     sizeof fast_prog) != 0) {
+        return 1;
+    }
+    struct spg_device dev = {};
+    spg_device_init(&dev);
+    dev.sample_timeout_ms = 1000u;
+    for (size_t i = 0u; i < 4u; i += 1u) {
+        struct spg_device_channel ch = {.min = 0, .max = 100};
+        (void)snprintf(ch.name, sizeof ch.name, "hung%zu", i);
+        (void)snprintf(ch.program, sizeof ch.program, "%s", slow_prog);
+        if (spg_device_add_channel(&dev, &ch) != SPG_OK) {
+            return 1;
+        }
+    }
+    struct spg_device_channel fast = {.name = "fast", .min = 0, .max = 100};
+    (void)snprintf(fast.program, sizeof fast.program, "%s", fast_prog);
+    if (spg_device_add_channel(&dev, &fast) != SPG_OK) {
+        return 1;
+    }
+
+    struct spg_device_state state   = {};
+    const uint64_t          started = now_ms();
+    const enum spg_status   status  = spg_device_sample(&dev, &state);
+    const uint64_t          elapsed = now_ms() - started;
+
+    if (status == SPG_OK || state.n != 5u) {
+        return 1; /* the hung channels are a reported failure */
+    }
+    for (size_t i = 0u; i < 4u; i += 1u) {
+        if (state.readings[i].known) {
+            return 1;
+        }
+    }
+    if (!state.readings[4].known || state.readings[4].value != 7 ||
+        strcmp(state.readings[4].name, "fast") != 0) {
+        return 1; /* the fast value survives the stragglers, in table order */
+    }
+    if (!dev.contact_pending) {
+        return 1; /* the one answer still counts as contact */
+    }
+    /* 4 hung channels at a 1 s deadline would take ~4 s serially; the
+     * concurrent batch is one deadline (~1 s) plus the spawn/kill overhead of
+     * only five processes. A 2.5 s bound separates the two with wide margin on
+     * both sides, so it is not wall-clock-flaky even under load. */
+    if (elapsed >= 2500u) {
+        (void)fprintf(stderr, "  round took %llu ms — serial, not batched\n",
+                      (unsigned long long)elapsed);
         return 1;
     }
     return 0;
@@ -364,6 +527,87 @@ static int test_watchdog(void) {
     dev.contact_pending = true;
     if (spg_device_watchdog_check(&dev, 5000u) != SPG_WATCHDOG_OK ||
         spg_device_watchdog_check(&dev, 4000u) != SPG_WATCHDOG_OK) {
+        return 1;
+    }
+    return 0;
+}
+
+/* #118: a live sensor must not keep a silent actuator looking alive — the
+ * deadline is judged per writable channel, fed only by that channel's own
+ * transactions. Simulated with the flags the transport sets. */
+static int test_watchdog_per_channel(void) {
+    struct spg_device dev = {};
+    spg_device_init(&dev);
+    struct spg_device_channel heater = {.name     = "heater",
+                                        .program  = "/nonexistent/heater",
+                                        .min      = 0,
+                                        .max      = 100,
+                                        .writable = true,
+                                        .safe     = 0};
+    struct spg_device_channel valve  = {.name     = "valve",
+                                        .program  = "/nonexistent/valve",
+                                        .min      = 0,
+                                        .max      = 1,
+                                        .writable = true,
+                                        .safe     = 0};
+    struct spg_device_channel temp   = {.name    = "temp",
+                                        .program = "/nonexistent/temp",
+                                        .min     = -400,
+                                        .max     = 9000};
+    if (spg_device_add_channel(&dev, &heater) != SPG_OK ||
+        spg_device_add_channel(&dev, &valve) != SPG_OK ||
+        spg_device_add_channel(&dev, &temp) != SPG_OK) {
+        return 1;
+    }
+    spg_device_arm_watchdog(&dev, 10u, 0u);
+
+    /* Everything answers: fine. */
+    dev.contact_pending             = true;
+    dev.channels[0].contact_pending = true;
+    dev.channels[1].contact_pending = true;
+    dev.channels[2].contact_pending = true;
+    if (spg_device_watchdog_check(&dev, 5u) != SPG_WATCHDOG_OK) {
+        return 1;
+    }
+
+    /* From now on only the SENSOR answers. The global stamp stays fresh, but
+     * the actuators' writes stopped landing — expired, not masked. */
+    dev.contact_pending             = true;
+    dev.channels[2].contact_pending = true;
+    if (spg_device_watchdog_check(&dev, 10u) != SPG_WATCHDOG_OK) {
+        return 1; /* actuators fed at 5, deadline 10: 10-5 is not past it */
+    }
+    dev.contact_pending             = true;
+    dev.channels[2].contact_pending = true;
+    if (spg_device_watchdog_check(&dev, 16u) != SPG_WATCHDOG_EXPIRED) {
+        return 1;
+    }
+
+    /* Contact on actuator A must not cover actuator B. */
+    spg_device_arm_watchdog(&dev, 10u, 100u);
+    dev.contact_pending             = true;
+    dev.channels[0].contact_pending = true; /* heater answers */
+    if (spg_device_watchdog_check(&dev, 120u) != SPG_WATCHDOG_EXPIRED) {
+        return 1; /* valve last fed at arm time 100; 120-100 > 10 */
+    }
+
+    /* Re-arming stamps every channel: nothing is instantly overdue. */
+    spg_device_arm_watchdog(&dev, 10u, 1000u);
+    if (spg_device_watchdog_check(&dev, 1005u) != SPG_WATCHDOG_OK) {
+        return 1;
+    }
+
+    /* A read-only table still rides on the global deadline alone. */
+    struct spg_device sensors = {};
+    spg_device_init(&sensors);
+    if (spg_device_add_channel(&sensors, &temp) != SPG_OK) {
+        return 1;
+    }
+    spg_device_arm_watchdog(&sensors, 10u, 0u);
+    sensors.contact_pending             = true;
+    sensors.channels[0].contact_pending = true;
+    if (spg_device_watchdog_check(&sensors, 8u) != SPG_WATCHDOG_OK ||
+        spg_device_watchdog_check(&sensors, 30u) != SPG_WATCHDOG_EXPIRED) {
         return 1;
     }
     return 0;
@@ -527,7 +771,9 @@ int main(void) {
         {"table", test_table},
         {"write_refusals", test_write_refusals},
         {"exec_contract", test_exec_contract},
+        {"sample_deadline", test_sample_deadline},
         {"watchdog", test_watchdog},
+        {"watchdog_per_channel", test_watchdog_per_channel},
         {"safe_state", test_safe_state},
         {"state_render", test_state_render},
         {"sample_unreachable", test_sample_unreachable},

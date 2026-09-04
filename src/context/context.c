@@ -777,6 +777,12 @@ enum spg_status spg_context_render(const struct spg_context_sources *sources,
         append_quoted_cstr(&state, sources->directive);
         append_cstr(&state, ")\n");
     }
+    /* #28: the user profile, one budgeted line. Framing/defaults only — the
+     * policy gate never reads it. Pre-rendered, so it goes in verbatim. */
+    if (sources->user_profile != nullptr && sources->user_profile[0] != '\0') {
+        append_cstr(&state, sources->user_profile);
+        append_char(&state, '\n');
+    }
     if (sources->goal != nullptr && sources->goal[0] != '\0') {
         append_cstr(&state, "(goal ");
         append_quoted_cstr(&state, sources->goal);
