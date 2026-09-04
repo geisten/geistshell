@@ -46,6 +46,10 @@ struct spg_orchestrator_state {
      * the tick after an action observes its effect rather than the state the
      * decision was made on. Still one snapshot, not a second loop. */
     struct spg_machine_state         *machine;
+    /* #79: bounded history ring over past snapshots (nullable). The loop
+     * pushes each tick's decided-on state; the context renders the window
+     * before the current snapshot. Lives in the run driver, constant size. */
+    struct spg_machine_history       *machine_history;
     const struct spg_process_profile *profile;
     /* Optional attached machine for device_write. Null means no machine is
      * reachable from this run, which is a normal outcome and not an error:

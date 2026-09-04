@@ -48,6 +48,11 @@ struct spg_context_sources {
     /* Optional free-text task, rendered near the top as (goal "..."). Null =
      * none: the scenario graph is the whole task. */
     const char *goal;
+    /* #79: bounded history window, rendered as (machine-history ...) right
+     * before the current snapshot — the trend, then the now. Null or a
+     * disabled (window 0) history renders nothing, byte-identical to a
+     * context without the feature. */
+    const struct spg_machine_history *machine_history;
     /* Optional machine telemetry snapshot, rendered as (machine-state ...).
      * Null = none, which is the default and keeps the context byte-identical
      * to before this existed — the phase-0 journal freeze depends on that. */

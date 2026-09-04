@@ -704,6 +704,20 @@ static void render_machine(const struct spg_context_sources *sources,
             append_cstr(state, "\n");
         }
     }
+    /* #79: the window before the snapshot — the model reads the trend, then
+     * the now. Rendered by the module that owns the format; an enabled-but-
+     * empty history is the explicit (machine-history) form, a disabled one
+     * writes nothing at all. */
+    if (sources->machine_history != nullptr) {
+        char   trend[SPG_MACHINE_HISTORY_RENDER_CAP];
+        size_t trend_required = 0u;
+        if (spg_machine_history_render(sources->machine_history, sizeof trend,
+                                       trend, &trend_required) == SPG_OK &&
+            trend_required > 0u) {
+            append_cstr(state, trend);
+            append_cstr(state, "\n");
+        }
+    }
     /* Not an early return: a plant run needs no host telemetry at all, and
      * skipping the block below with it would leave that agent blind. */
     if (sources->machine != nullptr) {

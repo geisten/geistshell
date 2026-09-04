@@ -178,6 +178,15 @@ spg_agent_loop_run(struct spg_orchestrator_state           *state,
         accumulate_usage(usage, &step_result);
         parent_sequence = step_sequence(&step_result, parent_sequence);
 
+        /* #79: historise the snapshot THIS tick decided on, before any
+         * refresh — the next tick then reads the trend up to and including
+         * the state it is following, and the current-state block carries the
+         * refreshed now. One push per tick, constant memory, no allocation. */
+        if (state->machine_history != nullptr && state->machine != nullptr) {
+            spg_machine_history_push(state->machine_history,
+                                     (uint64_t)step + 1u, state->machine);
+        }
+
         /* Latch the success marker while this step's observation is still the
          * current one — the next step overwrites the buffer. */
         if (config->observation_marker != nullptr && !result->observation_seen &&
