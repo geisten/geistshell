@@ -43,7 +43,7 @@ run_pass() { # $1 = memory dir, $2 = distill|none ; prints table, returns via ec
         [ "$inj" = yes ] && inj_total=$((inj_total+1))
         out=$("$SPG" agent --config "$T/run.spg" --fake-script "$T/s.txt" --memory-dir "$MEM" --allow-exec --max-steps 4 2>&1 || true)
         echo "$out" | grep -q "verdict=pass" && { s=pass; pass=$((pass+1)); } || s=FAIL
-        [ "$MODE" = distill ] && [ "$s" = pass ] && "$SPG" distill "$J" --memory-dir "$MEM" >/dev/null 2>&1 || true
+        [ "$MODE" = distill ] && [ "$s" = pass ] && "$SPG" distill "$J" --suite examples/eval/suite.spg --memory-dir "$MEM" >/dev/null 2>&1 || true
         printf '  %2d  %-22s %-6s skill_injected=%s\n' "$k" "$goal" "$s" "$inj"
     done
     printf '  => %d/%d solved, skill injected into %d/%d tasks\n' "$pass" "$N" "$inj_total" "$N"

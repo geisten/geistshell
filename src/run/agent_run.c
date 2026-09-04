@@ -1,5 +1,8 @@
 #include "geistshell/agent_run.h"
 
+#include "geistshell/eval.h"    /* #26: spg_shape_from_policy */
+#include "geistshell/improve.h" /* #26: the skill slug template */
+
 #include "geistshell/graph.h"
 #include "geistshell/mem_store.h" /* #40 follow-up: strong directive channel */
 #include "geistshell/memory.h"
@@ -42,6 +45,28 @@ enum spg_status spg_agent_run(const struct spg_agent_run_inputs *inputs,
         spg_mem_directive(inputs->store, config->directive_slug, 0u,
                           sizeof directive_buf, directive_buf) > 0u) {
         directive = directive_buf;
+    }
+
+    /* #26 B: shape-triggered skill injection, decided BEFORE the first tick.
+     * The task shape comes deterministically from the policy's enabled
+     * capabilities; an EXACT-match skill-<shape> memory contributes its
+     * budgeted description as the one directive line. Precedence is fixed:
+     * an explicit directive_slug (above) wins — the operator's steering
+     * channel outranks an auto-match. No match, no store, or the off-switch:
+     * the context is byte-identical to a run without the feature. */
+    if (directive == nullptr && !config->skill_injection_off &&
+        inputs->store != nullptr) {
+        char              shape[256];
+        size_t            shape_n = 0u;
+        struct spg_lesson probe;
+        if (spg_shape_from_policy(inputs->policy_text_n, inputs->policy_text,
+                                  inputs->policy, sizeof shape, shape,
+                                  &shape_n) == SPG_OK &&
+            shape_n > 0u && spg_reflect_skill(shape, "-", &probe) &&
+            spg_mem_directive(inputs->store, probe.slug, 0u,
+                              sizeof directive_buf, directive_buf) > 0u) {
+            directive = directive_buf;
+        }
     }
 
     const struct spg_orchestrator_workspace ow = {

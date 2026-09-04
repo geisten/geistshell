@@ -530,9 +530,48 @@ share one shape:
 Task-success is identical across before/after because a *fake* model ignores
 the injected skill — whether the skill LIFTS success needs a real model
 reacting to it (the #25 numerator, on a model-completable corpus). This proves
-accumulation + injection, not lift. Open follow-ups on #26: model-driven
-distillation, shape-triggered single-skill injection (vs the whole index), and
-a gate on skill acceptance.
+accumulation + injection, not lift. Open follow-up on #26: model-driven
+distillation (offline, its own ticket).
+
+### The rest of #26: gate + shape-triggered injection (SHIPPED)
+
+**A — mint only from a proven run, only through the gate.** The agent now
+journals its terminal verdict (`(run_verdict (verdict ...))`, a RESULT
+event), and `distill` reads pass/fail from the journal itself
+(`spg_journal_verdict`) — never from a command-line claim. A failed
+trajectory exits non-zero and writes nothing; a journal with *no* verdict is
+refused with its own status (exit 3) — unjudged is not silently a pass. The
+mint then walks the SAME acceptance path as a lesson: baseline suite run,
+tentative save, trial run, `spg_improve_accept`, `spg_guard_ring_gate`,
+`spg_improve_commit`. `--suite` is mandatory; a skill that regresses is
+deleted and reported as `{"skill":...,"kept":false,...}`, leaving the store
+byte-identical. Minting stays offline: no loop code path writes `skill-*`
+(asserted in `test_cli_distill.sh`).
+
+**B — shape-triggered injection of exactly one skill.** The run derives its
+task shape BEFORE the first tick with `spg_shape_from_policy`: the sorted set
+of `<primary-action-kind>:<capability-name>` tokens over the policy's
+ENABLED capabilities — chosen because it is operator-controlled, available
+before any inference, and speaks the same key language as the trajectory
+shape, so a run granted exactly the capabilities a passing run used finds
+that run's skill by EXACT match. (Capabilities whose kind spans several
+action kinds — memory, machine_process — map to a documented primary kind
+and only match trajectories that used it; a fuzzy matcher is deliberately
+later.) On a match, the skill's description is injected via the existing
+`spg_mem_directive` path as the single budgeted `(directive ...)` line —
+one line whether the store holds 1 or 100 skills, the same
+context-invariance property (and 72 B cost) the table below measures for
+lessons. **Precedence is fixed and documented:** an explicit
+`--directive-slug` (the operator's steering channel) outranks the
+auto-matched skill. Off-switch: `--no-skill-inject` (or no match, or no
+store) leaves the run byte-identical.
+
+**C — did it help?** `audit` now tallies the positive counter: per-shape
+success rates from the journals' own verdict records (unjudged runs are
+excluded, not counted as failures), split at the skill file's mtime exactly
+like the lesson recurrence audit. A shape whose success rate has not risen
+since its skill was kept is flagged `review` — a removal candidate; nothing
+is removed automatically.
 
 ## Context-cost benchmark (2026-08-02, model-free)
 
