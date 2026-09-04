@@ -165,3 +165,66 @@ strings build/device-demo.sgj | grep -q '(device-state (heater 40)' ||
     fail "the context was not re-sampled after the write"
 
 echo "test_cli_device: PASS (agent action)"
+
+# --- #118: the watchdog fires without a device_write to the dead channel ----
+# A dead actuator (its program always fails) while OTHER channels keep
+# answering: before #118 the shared contact flag let any live channel mask the
+# loss, and the check only ran when a device_write reached the executor. Now
+# the deadline is per writable channel and serviced every tick, so the run
+# journals the expiry and drives the safe state even though the model never
+# addressed the dead channel again.
+cat >"$DIR/deadheater" <<'EOS'
+#!/bin/sh
+exit 1
+EOS
+chmod 0755 "$DIR/deadheater"
+
+cat >"$DIR/watchdog.spg" <<EOF
+(device
+  (channel (name "heater") (program "$PWD/$DIR/deadheater") (range 0 100) (safe 0))
+  (channel (name "reset")  (program "$PWD/$DIR/reset")      (range 0 1) (safe 0))
+  (channel (name "temp")   (program "$PWD/$DIR/temp")       (range -400 9000)))
+EOF
+
+WFAKE=build/test-cli-device-watchdog-fake.txt
+printf '%s\n%s\n%s\n%s\n' \
+    '(recommend (kind device_write) (capability "device") (cost 1) (uses_network false) (confidence_bp 9000) (target "reset") (value 0) (reason "tick 1"))' \
+    '(recommend (kind device_write) (capability "device") (cost 1) (uses_network false) (confidence_bp 9000) (target "reset") (value 0) (reason "tick 2"))' \
+    '(recommend (kind device_write) (capability "device") (cost 1) (uses_network false) (confidence_bp 9000) (target "reset") (value 0) (reason "tick 3"))' \
+    '(recommend (kind finish) (reason "done"))' >"$WFAKE"
+
+"$SPG_BIN" agent --config examples/device/run.spg --fake-script "$WFAKE" \
+    --max-steps 6 --allow-exec --device "$DIR/watchdog.spg" \
+    --device-watchdog-steps 1 >/dev/null || fail "watchdog agent run failed"
+
+strings build/device-demo.sgj |
+    grep -q '(device_watchdog (outcome expired) (safe_state failed))' ||
+    fail "a dead actuator behind live channels never tripped the tick-level watchdog"
+
+echo "test_cli_device: PASS (tick-level watchdog)"
+
+# --- #119: a network channel is refused from TRUSTED config -----------------
+# The operator declares (network true) on the channel; the plant policy says
+# (network_default deny). The model's form always carries uses_network false —
+# the gate must derive the truth from the loaded table and refuse BEFORE any
+# fork, while a local channel (the block above) keeps working.
+cat >"$DIR/network.spg" <<EOF
+(device
+  (channel (name "heater") (program "$PWD/$DIR/heater") (range 0 100) (safe 0)
+           (network true))
+  (channel (name "temp")   (program "$PWD/$DIR/temp")   (range -400 9000)))
+EOF
+
+# Reset the plant so an (incorrectly) executed write would be visible.
+dev write heater 0 >/dev/null || fail "resetting heater failed"
+
+"$SPG_BIN" agent --config examples/device/run.spg --fake-script "$FAKE" \
+    --max-steps 2 --allow-exec --device "$DIR/network.spg" \
+    >/dev/null 2>&1 || true
+
+[ "$(dev read heater | value_of)" = "0" ] ||
+    fail "a network channel under network_default deny still moved the machine"
+strings build/device-demo.sgj | grep -q 'SPG_POLICY_DENY_NETWORK' ||
+    fail "the network denial is missing from the journal"
+
+echo "test_cli_device: PASS (network channel refused from config)"

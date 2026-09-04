@@ -210,6 +210,31 @@ static int test_accept_gate(void) {
     return 0;
 }
 
+/* #11 (LEARNING.md decision 3): the full composition. Without the flag the
+ * gate is the historical regression-only one, whatever case_now_passes says;
+ * with it, the proof can only make the gate stricter — a lesson that does not
+ * flip its own failing case is rejected even when nothing regressed. */
+static int test_prove_benefit_gate(void) {
+    /* flag off: case outcome ignored, historical behaviour */
+    if (!spg_improve_gate(true, true, false, false) ||
+        !spg_improve_gate(true, true, false, true)) {
+        return 1;
+    }
+    /* flag on: the proof is required on top */
+    if (!spg_improve_gate(true, true, true, true) ||
+        spg_improve_gate(true, true, true, false)) {
+        return 1;
+    }
+    /* the proof can never rescue a suite regression or a guard veto */
+    if (spg_improve_gate(false, true, true, true) ||
+        spg_improve_gate(true, false, true, true) ||
+        spg_improve_gate(false, true, false, false) ||
+        spg_improve_gate(true, false, false, false)) {
+        return 1;
+    }
+    return 0;
+}
+
 static int test_reflect_null_args(void) {
     struct spg_lesson lesson = {};
     const struct spg_eval_case_result result = {.outcome =
@@ -218,6 +243,84 @@ static int test_reflect_null_args(void) {
             spg_reflect_case(&result, nullptr))
                ? 1
                : 0;
+}
+
+/* #27 GEPA-lite: the deterministic mutation operators over a directive. */
+static int test_gepa_mutate(void) {
+    const char seed[] = "Emit one valid form (last reply rejected: bad).";
+    const char cue[]  = "last reply rejected: bad";
+    char       out[SPG_MEM_DESC_MAX + 1u];
+
+    /* IDENTITY reproduces the seed exactly. */
+    if (spg_gepa_mutate(SPG_GEPA_OP_IDENTITY, seed, cue, sizeof out, out) == 0u ||
+        strcmp(out, seed) != 0) {
+        return 1;
+    }
+
+    /* TRUNCATE keeps only the first sentence (an interior '.'); a seed with no
+     * earlier boundary yields nothing. */
+    const char two[] = "Do this. Then that (aside).";
+    if (spg_gepa_mutate(SPG_GEPA_OP_TRUNCATE, two, cue, sizeof out, out) == 0u ||
+        strcmp(out, "Do this.") != 0) {
+        return 1;
+    }
+    if (spg_gepa_mutate(SPG_GEPA_OP_TRUNCATE, "no interior period here", cue,
+                        sizeof out, out) != 0u) {
+        return 1; /* nothing to truncate to */
+    }
+
+    /* TIGHTEN drops the trailing parenthetical aside. */
+    if (spg_gepa_mutate(SPG_GEPA_OP_TIGHTEN, seed, cue, sizeof out, out) == 0u ||
+        strcmp(out, "Emit one valid form.") != 0) {
+        return 1;
+    }
+    if (spg_gepa_mutate(SPG_GEPA_OP_TIGHTEN, "no parens at all.", cue,
+                        sizeof out, out) != 0u) {
+        return 1;
+    }
+
+    /* CUE_FIRST leads with the concrete cue; without a cue it does not apply. */
+    if (spg_gepa_mutate(SPG_GEPA_OP_CUE_FIRST, seed, cue, sizeof out, out) ==
+            0u ||
+        strncmp(out, cue, strlen(cue)) != 0 ||
+        strstr(out, seed) == nullptr) {
+        return 1;
+    }
+    if (spg_gepa_mutate(SPG_GEPA_OP_CUE_FIRST, seed, "", sizeof out, out) !=
+            0u ||
+        spg_gepa_mutate(SPG_GEPA_OP_CUE_FIRST, seed, nullptr, sizeof out,
+                        out) != 0u) {
+        return 1;
+    }
+
+    /* The budget is a hard constraint: a variant that would not fit returns 0
+     * and leaves an empty string, never a truncated directive. */
+    if (spg_gepa_mutate(SPG_GEPA_OP_CUE_FIRST, seed, cue, 8u, out) != 0u ||
+        out[0] != '\0') {
+        return 1;
+    }
+
+    /* Determinism: identical inputs, identical bytes. */
+    char a[SPG_MEM_DESC_MAX + 1u], b[SPG_MEM_DESC_MAX + 1u];
+    if (spg_gepa_mutate(SPG_GEPA_OP_CUE_FIRST, seed, cue, sizeof a, a) == 0u ||
+        spg_gepa_mutate(SPG_GEPA_OP_CUE_FIRST, seed, cue, sizeof b, b) == 0u ||
+        strcmp(a, b) != 0) {
+        return 1;
+    }
+    return 0;
+}
+
+/* #27: selection keeps the incumbent (index 0) on a tie, unseats it only on a
+ * strict win — evolution never trades a proven wording for an equal guess. */
+static int test_gepa_select(void) {
+    const size_t tie[]     = {3u, 3u, 3u};
+    const size_t win[]     = {3u, 3u, 5u};
+    const size_t first[]   = {5u, 3u, 5u}; /* incumbent already best-equal */
+    if (spg_gepa_select(3u, tie) != 0u || spg_gepa_select(3u, win) != 2u ||
+        spg_gepa_select(3u, first) != 0u || spg_gepa_select(0u, tie) != 0u) {
+        return 1;
+    }
+    return 0;
 }
 
 /* commit keeps an accepted lesson and deletes (reverts) a rejected one. */
@@ -289,6 +392,18 @@ int main(void) {
     }
     if (test_accept_gate() != 0) {
         fprintf(stderr, "test_accept_gate failed\n");
+        return 1;
+    }
+    if (test_gepa_mutate() != 0) {
+        fprintf(stderr, "test_gepa_mutate failed\n");
+        return 1;
+    }
+    if (test_gepa_select() != 0) {
+        fprintf(stderr, "test_gepa_select failed\n");
+        return 1;
+    }
+    if (test_prove_benefit_gate() != 0) {
+        fprintf(stderr, "test_prove_benefit_gate failed\n");
         return 1;
     }
     if (test_reflect_null_args() != 0) {

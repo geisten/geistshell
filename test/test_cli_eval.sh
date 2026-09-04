@@ -54,6 +54,16 @@ grep -q 'invalid --temperature' "$T/temp.out"
 # task <= gate <= parse.
 printf '%s\n' "$OUT" | grep -q '"name":"sim-finish".*"parsed":1,"gated":1'
 
+# #126: per-case cost. Tokens are deterministic for scripted fakes (one per
+# tick, so a 2-step case is 2) and live in the default output; wall time
+# varies, so wall_ms appears only under --timing, next to latency_ms.
+printf '%s\n' "$OUT" | grep -q '"name":"sim-finish".*"tokens":2'
+if printf '%s\n' "$OUT" | grep -q '"wall_ms":'; then
+    echo "wall_ms leaked into the default (deterministic) output" >&2
+    exit 1
+fi
+"$SPG_BIN" eval --timing examples/eval/suite.spg | grep -q '"name":"sim-finish".*"tokens":2,"wall_ms":'
+
 # a reply that never parses earns NO rung
 cat > "$T/reject.spg" <<EOF
 (eval_suite
@@ -99,5 +109,40 @@ grep -q '"parsed":1,"gated":0' "$T/denied.out" || {
     cat "$T/denied.out" >&2
     exit 1
 }
+
+# #128: the answer-judged column, orthogonal to the ladder. A model that KNOWS
+# the answer but says it in prose scores parse 0 — before this column that was
+# indistinguishable from not knowing the answer at all.
+#
+# Free-arm signature: the raw reply contains the expected substring, the form
+# never parses -> answered:1, parsed:0.
+cat > "$T/prose.txt" <<'EOS'
+The count is sandbox_result_7, no action needed.
+EOS
+cat > "$T/prose.spg" <<EOF
+(eval_suite
+ (config "examples/run.spg")
+ (case (name "knows-prose") (script "$T/prose.txt") (max_steps 2)
+       (expect (observation "sandbox_result_7"))))
+EOF
+"$SPG_BIN" eval "$T/prose.spg" > "$T/prose.out" 2>&1 || true
+grep -q '"name":"knows-prose".*"parsed":0.*"answered":1' "$T/prose.out" || {
+    echo "FAIL: a prose reply containing the answer must score answered without parse" >&2
+    cat "$T/prose.out" >&2
+    exit 1
+}
+
+# Action-path control: exec-finish passes through a parsed action whose
+# OBSERVATION carries the marker; the raw reply itself does not -> answered:0.
+printf '%s\n' "$OUT" | grep -q '"name":"exec-finish".*"answered":0' || {
+    echo "FAIL: answered must judge the raw reply, not the action observation" >&2
+    exit 1
+}
+
+# A case with no (expect (observation ...)) must not grow the column at all.
+if printf '%s\n' "$OUT" | grep -q '"name":"sim-finish".*"answered"'; then
+    echo "FAIL: answered leaked into a case with no declared answer" >&2
+    exit 1
+fi
 
 echo "test_cli_eval: PASS"

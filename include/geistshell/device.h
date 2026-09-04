@@ -46,7 +46,13 @@ constexpr size_t SPG_DEVICE_MAX_CHANNELS = 32u;
 /* Milliseconds before a silent program is killed (whole process group). A
  * device that does not answer must never be able to stall the loop that
  * governs it — an agent blocked on a read is an agent that cannot react to
- * anything else. */
+ * anything else.
+ *
+ * #121: this is also the WHOLE sampling round's deadline. spg_device_sample
+ * runs every channel program concurrently in one batch, so the worst-case
+ * latency of a round is one timeout (plus spawn overhead), not one timeout
+ * per channel — a table of 32 dead sensors blocks ~1 s, not ~32 s. Override
+ * per device with sample_timeout_ms. */
 constexpr int SPG_DEVICE_TIMEOUT_MS = 1000;
 
 struct spg_device_channel {
@@ -60,6 +66,19 @@ struct spg_device_channel {
      * declared safe value is a channel nobody has decided about, and the
      * decision would then be made by whatever the machine was last told. */
     int64_t safe;
+    /* #119: whether this channel's PROGRAM needs the network (MQTT, HTTP,
+     * Modbus, an MCP bridge). Operator-declared in the channel form —
+     * `(network true)` — and therefore TRUSTED: the policy gate reads it from
+     * here, never from anything the model emitted. Default false = local.
+     * Declaring it truthfully is the operator's responsibility; geistshell
+     * cannot verify what a program does once it runs. */
+    bool network;
+    /* Per-channel watchdog bookkeeping (#118). A successful transaction on
+     * THIS channel is what feeds it — a sensor that answers must not keep an
+     * actuator that has gone silent looking alive. Same injected clock unit
+     * as the device-level fields. */
+    uint64_t last_contact;
+    bool     contact_pending;
 };
 
 struct spg_device {
@@ -75,7 +94,17 @@ struct spg_device {
     uint64_t watchdog_timeout; /* 0 disables it */
     uint64_t last_contact;
     bool     contact_pending; /* a transaction succeeded since the last check */
-    size_t   n_channels;
+    /* #121: per-program deadline in milliseconds, and — because a sampling
+     * round runs all programs concurrently — the round's total deadline too.
+     * 0 means SPG_DEVICE_TIMEOUT_MS. An operator whose run has a tight
+     * (wall_ms ...) budget sets this below it; the round can then never
+     * overrun the run budget by a channel-count multiple. */
+    uint64_t sample_timeout_ms;
+    /* #118: the tick-level watchdog service latches after driving the safe
+     * state so an expiry that persists does not re-drive (and re-journal) it
+     * every tick; any successful contact re-arms the latch. */
+    bool   watchdog_tripped;
+    size_t n_channels;
     struct spg_device_channel channels[SPG_DEVICE_MAX_CHANNELS];
 };
 
@@ -99,7 +128,14 @@ spg_device_add_channel(struct spg_device               *dev,
  * declare a safe value" becomes structurally unbreakable instead of checked
  * after the fact. The named price: a (safe ...) on a sensor makes it quietly
  * writable — the range still bounds it, and a sensor with a safe value is a
- * typo a review sees. */
+ * typo a review sees.
+ *
+ * Optional `(network true)` / `(network false)` declares that the program
+ * speaks over the network (#119). This is operator trust: the policy gate
+ * derives its network decision from this field of the LOADED config, so under
+ * (network_default deny) a network channel is refused before any fork while
+ * local channels keep working. Anything but the symbols true/false is a
+ * schema error, and absence means local. */
 [[nodiscard]] enum spg_status
 spg_device_parse_channel(size_t text_n, const char text[],
                          struct spg_device_channel *out);
@@ -147,8 +183,16 @@ struct spg_device_state {
  * A channel that fails is recorded unknown and does NOT abort the others — one
  * unreachable sensor must not blind the agent to the rest of the plant. Same
  * reasoning as spg_device_safe_state, which also attempts every channel.
- * Returns the FIRST failure, or SPG_OK when every channel answered; `out` is
- * complete either way.
+ * Returns the FIRST failure (in table order), or SPG_OK when every channel
+ * answered; `out` is complete either way.
+ *
+ * #121: all channel programs run CONCURRENTLY in one bounded batch through
+ * spg_cmd_executor_run. The round's worst-case latency is one
+ * sample_timeout_ms (default SPG_DEVICE_TIMEOUT_MS = 1000 ms) regardless of
+ * channel count; programs still running at the deadline are killed with
+ * their process groups and render unknown, finished readings are kept, and
+ * the result order is the table order whatever the completion order was.
+ * Fixed stack buffers, no allocation.
  *
  * A successful read counts as contact, so a run that only observes keeps the
  * watchdog alive. Contact is contact — before this existed only a write fed
@@ -199,12 +243,20 @@ void spg_device_arm_watchdog(struct spg_device *dev, uint64_t timeout,
                              uint64_t now);
 
 /* Fold in any successful transaction since the last call and report whether
- * the deadline has passed. Checking is what consumes the contact flag, so a
+ * the deadline has passed. Checking is what consumes the contact flags, so a
  * caller cannot succeed at keeping the machine alive while forgetting to
  * check — the two are the same call.
  *
  * EXPIRED is sticky until the next successful transaction: a machine that
- * answers once and goes quiet again must not look healthy in between. */
+ * answers once and goes quiet again must not look healthy in between.
+ *
+ * #118: the deadline is judged PER WRITABLE CHANNEL as well as globally. A
+ * writable channel is fed only by a successful write to it (arming stamps a
+ * baseline), so a sensor that keeps answering cannot mask an actuator whose
+ * writes stopped landing — EXPIRED as soon as ANY writable channel has gone
+ * a full timeout without contact. Read-only channels ride on the global
+ * deadline as before: for a plant of sensors, reads are the only contact
+ * there is. */
 [[nodiscard]] enum spg_device_watchdog
 spg_device_watchdog_check(struct spg_device *dev, uint64_t now);
 
@@ -221,7 +273,14 @@ spg_device_watchdog_check(struct spg_device *dev, uint64_t now);
  * stdout. Exit != 0, unparsable output or the timeout are SPG_E_IO — and the
  * reading stays untouched, never 0. There is no connect step: the first read
  * IS the connectivity probe, and a plant that cannot be read is something the
- * caller is told about per channel, not a session that failed to open. */
+ * caller is told about per channel, not a session that failed to open.
+ *
+ * The channel's range bounds readings as well as writes: a parsed value
+ * outside min..max is SPG_E_LIMIT, the reading stays untouched, and it does
+ * NOT count as watchdog contact. A defective or mis-scaled sensor must not
+ * inject an impossible number into the context/journal, and it must not keep
+ * a watchdog alive. The range is inclusive on both ends, same as the write
+ * check. */
 [[nodiscard]] enum spg_status spg_device_read(struct spg_device *dev,
                                               const char *name, int64_t *out);
 
