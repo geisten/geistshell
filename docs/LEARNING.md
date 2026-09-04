@@ -106,8 +106,15 @@ is the honest place to build "learns from use."
 
 ## Deliberately open — practice decides
 
-- **Sequence over set (decision 6):** the finer shape key, if too many distinct
-  scripts share one capability set and a guard misses regressions.
+- **Sequence over set (decision 6): mechanism SHIPPED (#12), default
+  unchanged.** `spg_shape_from_script_mode(..., SPG_SHAPE_MODE_SEQUENCE, ...)`
+  builds the finer key — the ordered `'>'`-joined sequence of
+  `<kind>:<capability>` tokens, consecutive duplicates collapsed, `finish`
+  excluded, deterministically truncated at `SPG_SHAPE_MAX_TOKENS`. The SET key
+  stays the default everywhere (cheaper, more bounded); switching a caller to
+  the sequence key remains trigger-gated on an observed guard collision — two
+  distinct tasks sharing a guard where a lesson broke one but the guard was
+  the other.
 - **Post-check command (decision 2):** a last-step shell probe (`exit 0 =
   success`) verifying world state, for tasks that produce files rather than
   stdout.
