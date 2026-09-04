@@ -108,6 +108,65 @@ static int test_expect_present(void) {
     return span_eq(text, config.expect_observation, "report generated") ? 0 : 1;
 }
 
+/* #13: the optional post-check command. Absent -> today's behaviour exactly;
+ * present -> parsed as a non-empty string, composing with (expect ...). */
+static int test_post_check(void) {
+    struct spg_run_config       config = {};
+    struct spg_run_config_error error  = {};
+    if (load_text(valid_run, &config, &error) != SPG_OK ||
+        config.has_post_check) {
+        return 1;
+    }
+    const char *text =
+        "(run"
+        " (model \"models/a.gguf\")"
+        " (policy \"policy/lab.spg\")"
+        " (scenario \"scenarios/lab.spg\")"
+        " (corpus \"corpus/manifest.spg\")"
+        " (journal \"runs/r1/run.sgj\")"
+        " (seed 42)"
+        " (budgets"
+        "  (inference_steps 100)"
+        "  (tokens 4096)"
+        "  (shell_actions 8)"
+        "  (sim_actions 250)"
+        "  (wall_ms 60000))"
+        " (expect \"report generated\")"
+        " (post_check \"test -f out/report.pdf\"))";
+    config = (struct spg_run_config){};
+    if (load_text(text, &config, &error) != SPG_OK) {
+        return 1;
+    }
+    if (!config.has_post_check ||
+        !span_eq(text, config.post_check, "test -f out/report.pdf")) {
+        return 1;
+    }
+    if (!config.has_expect) {
+        return 1; /* both compose; post_check replaces nothing */
+    }
+    /* An empty command is a config mistake, not a vacuous pass. */
+    const char *empty =
+        "(run"
+        " (model \"models/a.gguf\")"
+        " (policy \"policy/lab.spg\")"
+        " (scenario \"scenarios/lab.spg\")"
+        " (corpus \"corpus/manifest.spg\")"
+        " (journal \"runs/r1/run.sgj\")"
+        " (seed 42)"
+        " (budgets"
+        "  (inference_steps 100)"
+        "  (tokens 4096)"
+        "  (shell_actions 8)"
+        "  (sim_actions 250)"
+        "  (wall_ms 60000))"
+        " (post_check \"\"))";
+    config = (struct spg_run_config){};
+    if (load_text(empty, &config, &error) == SPG_OK) {
+        return 1;
+    }
+    return 0;
+}
+
 static int test_missing_required_field(void) {
     const char *text =
         "(run"
@@ -258,6 +317,10 @@ int main(void) {
     }
     if (test_expect_present() != 0) {
         fprintf(stderr, "test_expect_present failed\n");
+        return 1;
+    }
+    if (test_post_check() != 0) {
+        fprintf(stderr, "test_post_check failed\n");
         return 1;
     }
     if (test_missing_required_field() != 0) {

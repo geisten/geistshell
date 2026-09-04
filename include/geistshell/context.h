@@ -48,6 +48,11 @@ struct spg_context_sources {
     /* Optional free-text task, rendered near the top as (goal "..."). Null =
      * none: the scenario graph is the whole task. */
     const char *goal;
+    /* #79: bounded history window, rendered as (machine-history ...) right
+     * before the current snapshot — the trend, then the now. Null or a
+     * disabled (window 0) history renders nothing, byte-identical to a
+     * context without the feature. */
+    const struct spg_machine_history *machine_history;
     /* Optional machine telemetry snapshot, rendered as (machine-state ...).
      * Null = none, which is the default and keeps the context byte-identical
      * to before this existed — the phase-0 journal freeze depends on that. */
@@ -74,6 +79,12 @@ struct spg_context_sources {
      * index for steering a small model's behaviour (geistshell#40 follow-up).
      * Null = none. */
     const char *directive;
+    /* Optional user-profile line (geistshell#28), pre-rendered as one
+     * `(profile "...")` s-expression. Shapes framing/defaults only — it is
+     * context, never consulted by the policy gate — and is budgeted to a
+     * single line so a growing profile never grows the window. Null = none,
+     * the default, byte-identical to before. */
+    const char *user_profile;
     /* Pre-rendered command menu (#56), one line per command, placed in the
      * CONSTANT part of the context so it is pinnable with the contract (#58).
      * Null = the model is told about no commands, which was this table's state

@@ -1,0 +1,10 @@
+; #79 history probe: the SHARED current snapshot. 78 C says nothing by itself —
+; after 60->68->74 it is a machine heating up, after 92->86->82 one cooling
+; down. Whether the model answers differently for the two pasts is the whole
+; measurement.
+(machine-state (cpu-load-bp 3500) (load-1-cbp 120)
+ (memory-total-bytes 4245815296) (memory-used-bytes 1100000000)
+ (swap-used-bytes 0) (temperature-mc 78000) (cpu-freq-khz 1800000)
+ (throttle none) (process-count 40)
+ (process (id "critical_app") (role critical) (cpu-bp 900) (rss-bytes 52428800))
+ (process (id "batch_job") (role batch) (cpu-bp 400) (rss-bytes 20971520)))

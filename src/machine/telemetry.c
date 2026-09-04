@@ -462,6 +462,102 @@ enum spg_status spg_machine_state_render_masked(
     return SPG_OK;
 }
 
+/* --- phase 3b (#79): the bounded history window -------------------------- */
+
+void spg_machine_history_init(struct spg_machine_history *history,
+                              const size_t window) {
+    if (history == nullptr) {
+        return;
+    }
+    *history = (struct spg_machine_history){
+        .window = window > SPG_MACHINE_HISTORY_CAP ? SPG_MACHINE_HISTORY_CAP
+                                                   : window,
+    };
+}
+
+void spg_machine_history_push(struct spg_machine_history *history,
+                              const uint64_t tick,
+                              const struct spg_machine_state *state) {
+    if (history == nullptr || state == nullptr || history->window == 0u ||
+        history->window > SPG_MACHINE_HISTORY_CAP ||
+        history->head >= history->window) {
+        return; /* disabled, or a corrupted struct — never write out of it */
+    }
+    history->entries[history->head] = (struct spg_machine_history_entry){
+        .tick               = tick,
+        .cpu_utilisation_bp = state->cpu_utilisation_bp,
+        .load_1_cbp         = state->load_1_cbp,
+        .memory_used_bytes  = state->memory.used_bytes,
+        .swap_used_bytes    = state->memory.swap_used_bytes,
+        .temperature_mc     = state->temperature_mc,
+        .cpu_freq_khz       = state->cpu_freq_khz,
+        .throttle           = state->throttle,
+        .process_count      = state->process_count,
+    };
+    history->head = (history->head + 1u) % history->window;
+    if (history->n < history->window) {
+        history->n += 1u;
+    }
+}
+
+enum spg_status
+spg_machine_history_render(const struct spg_machine_history *history,
+                           const size_t dst_capacity,
+                           char dst[static dst_capacity],
+                           size_t *out_required) {
+    if (dst == nullptr || out_required == nullptr || dst_capacity == 0u) {
+        return SPG_E_INVALID_ARG;
+    }
+    if (history == nullptr || history->window == 0u) {
+        /* Disabled is ABSENT, not empty: the caller emits nothing and the
+         * context stays byte-identical to a run without history (#71). */
+        dst[0]        = '\0';
+        *out_required = 0u;
+        return SPG_OK;
+    }
+    if (history->window > SPG_MACHINE_HISTORY_CAP ||
+        history->n > history->window || history->head >= history->window) {
+        return SPG_E_INVALID_ARG;
+    }
+    struct writer w = {.capacity = dst_capacity, .dst = dst};
+    put(&w, "(machine-history");
+    /* Oldest -> newest. When the ring has wrapped, the oldest entry sits at
+     * head; before that, at 0. */
+    const size_t start =
+        history->n < history->window ? 0u : history->head;
+    for (size_t i = 0u; i < history->n; i += 1u) {
+        const struct spg_machine_history_entry *e =
+            &history->entries[(start + i) % history->window];
+        put(&w, " (t ");
+        put_u64(&w, e->tick);
+        put_field(&w, "cpu-load-bp", e->cpu_utilisation_bp);
+        put_field(&w, "load-1-cbp", e->load_1_cbp);
+        put_field(&w, "memory-used-bytes", e->memory_used_bytes);
+        put_field(&w, "swap-used-bytes", e->swap_used_bytes);
+        put(&w, " (temperature-mc ");
+        if (e->temperature_mc == SPG_MACHINE_UNKNOWN_S) {
+            put(&w, "unknown");
+        } else {
+            put_i64(&w, e->temperature_mc);
+        }
+        put(&w, ")");
+        put_field(&w, "cpu-freq-khz", e->cpu_freq_khz);
+        put(&w, " (throttle ");
+        put(&w, spg_throttle_state_to_string(e->throttle));
+        put(&w, ")");
+        put_field(&w, "process-count", e->process_count);
+        put(&w, ")");
+    }
+    put(&w, ")");
+    *out_required = w.used + 1u;
+    if (w.overflowed) {
+        dst[0] = '\0'; /* no partial record ever escapes */
+        return SPG_E_LIMIT;
+    }
+    dst[w.used] = '\0';
+    return SPG_OK;
+}
+
 enum spg_status spg_machine_state_render(const struct spg_machine_state *state,
                                          const size_t dst_capacity,
                                          char         dst[static dst_capacity],

@@ -59,6 +59,10 @@ struct spg_agent_run_inputs {
     /* Optional attached machine for device_write. Null = no machine reachable
      * from this run; the executor says so and the run continues. */
     struct spg_device *device;
+    /* #79: caller-owned bounded history ring (nullable). Init with the
+     * desired window; the loop pushes each tick's snapshot and the context
+     * renders the window. Callers may pre-seed entries (eval fixtures). */
+    struct spg_machine_history *machine_history;
     /* Optional plant readings for the context, re-sampled between ticks.
      * Null = no (device-state ...) block, and the context is unchanged. */
     struct spg_device_state *device_state;
@@ -98,6 +102,11 @@ struct spg_agent_run_config {
      * (directive "...") — the strong steering channel (vs the mind-palace
      * index). Null/absent or missing in the store -> no directive line. */
     const char *directive_slug;
+    /* #28: disable user-profile injection. By default a run renders the
+     * store's pref-* memories as one budgeted (profile "...") line; with this
+     * set the profile is never injected and the context is byte-identical to
+     * a run without any preferences. */
+    bool profile_off;
     /* Success marker watched across every step's observation, not just the
      * final one — see agent_loop.h. Set it to the (expect ...) substring the
      * run is judged against. Null = not watched. */

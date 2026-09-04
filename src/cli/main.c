@@ -17,6 +17,7 @@
 #include "geistshell/guard_ring.h"
 #include "geistshell/improve.h"
 #include "geistshell/machine_fixture.h"
+#include "geistshell/cmd_executor.h"
 #include "geistshell/cmd_menu.h"
 #include "geistshell/mem_command.h"
 #include "geistshell/mem_store.h"
@@ -39,14 +40,6 @@
 #include <sys/stat.h> /* stat: the audit dates a run against a lesson's mint */
 #include <time.h>
 #include <unistd.h> /* mkstemp/write/close/unlink: the guard-gate temp suite */
-
-/* free-and-null; formerly from the engine's heap.h, internalised in geist v0.9 */
-static void safe_free(void **ptr) {
-    if (ptr != nullptr) {
-        free(*ptr);
-        *ptr = nullptr;
-    }
-}
 
 #define CLI_TOKEN_CAPACITY 1024u
 #define CLI_NODE_CAPACITY 1024u
@@ -2090,6 +2083,7 @@ static int agent_command(int argc, char **argv) {
     const char *exemplars_path = nullptr;
     const char *memory_dir     = getenv("GEISTSHELL_MEMORY_DIR");
     const char *directive_slug = nullptr;
+    bool        no_profile      = false; /* #28 */
     size_t      max_steps      = 8u;
     size_t      max_repairs    = 2u;
     bool        allow_exec     = false;
@@ -2117,6 +2111,7 @@ static int agent_command(int argc, char **argv) {
      * it is driven to its safe state. */
     uint64_t device_watchdog_steps = 2u;
     bool     no_skill_inject       = false; /* #26 */
+    size_t   machine_history_window = 0u; /* #79: off by default */
     /* One tick's readings. Lives here rather than inside spg_device so the
      * port stays free of loop state and the block can be parsed back out of
      * an eval fixture. */
@@ -2126,6 +2121,8 @@ static int agent_command(int argc, char **argv) {
      * never widens or narrows what the executor permits (cmd_menu.h). */
     const char *menu_path    = nullptr;
     bool        command_mask = false;
+    bool        pmi_calibrate = false; /* #124/#57 */
+    size_t      reason_budget = 0u; /* #125: free think-tokens, 0 = off */
     for (int i = 2; i < argc; i += 1) {
         if ((strcmp(argv[i], "--config") == 0 ||
              strcmp(argv[i], "--run") == 0) &&
@@ -2177,6 +2174,20 @@ static int agent_command(int argc, char **argv) {
             constrained = true;
             continue;
         }
+        if (strcmp(argv[i], "--pmi-calibrate") == 0) {
+            /* #124/#57: subtract a request-free baseline at each masked
+             * choice slot. Only meaningful with --constrained. */
+            pmi_calibrate = true;
+            continue;
+        }
+        if (strcmp(argv[i], "--reason-first") == 0 && i + 1 < argc) {
+            /* #125: N free think-tokens decoded (into a parse-safe comment)
+             * before the forced (recommend (kind …. Only takes effect with
+             * --constrained; 0 (default) is byte-identical to today. */
+            reason_budget = (size_t)strtoull(argv[i + 1], nullptr, 10);
+            i += 1;
+            continue;
+        }
         if (strcmp(argv[i], "--host-status") == 0) {
             /* put the machine itself in the context every step: CPU count,
              * load average, die temperature, running process count. */
@@ -2188,6 +2199,12 @@ static int agent_command(int argc, char **argv) {
              */
             directive_slug = argv[i + 1];
             i += 1;
+            continue;
+        }
+        /* #28: disable user-profile injection. Byte-identical to a run with no
+         * preferences recorded. */
+        if (strcmp(argv[i], "--no-profile") == 0) {
+            no_profile = true;
             continue;
         }
         if (strcmp(argv[i], "--temperature") == 0 && i + 1 < argc) {
@@ -2233,6 +2250,37 @@ static int agent_command(int argc, char **argv) {
          * byte-identical to one without the feature. */
         if (strcmp(argv[i], "--no-skill-inject") == 0) {
             no_skill_inject = true;
+            continue;
+        }
+        /* #79: bounded history window over machine snapshots. 0 (default)
+         * disables it — context and journal stay byte-identical. */
+        if (strcmp(argv[i], "--machine-history") == 0 && i + 1 < argc) {
+            char      *end = nullptr;
+            const long n   = strtol(argv[i + 1], &end, 10);
+            if (end == argv[i + 1] || *end != '\0' || n < 0 ||
+                (unsigned long)n > SPG_MACHINE_HISTORY_CAP) {
+                fprintf(stderr,
+                        "agent: bad --machine-history (0..%u): %s\n",
+                        (unsigned)SPG_MACHINE_HISTORY_CAP, argv[i + 1]);
+                return 2;
+            }
+            machine_history_window = (size_t)n;
+            i += 1;
+            continue;
+        }
+        if (strcmp(argv[i], "--device-sample-ms") == 0 && i + 1 < argc) {
+            /* #121: the sampling round's total deadline (all channel programs
+             * run concurrently, so per-program == per-round). An operator
+             * with a tight (wall_ms ...) budget sets this below it. */
+            char      *end = nullptr;
+            const long ms  = strtol(argv[i + 1], &end, 10);
+            if (end == argv[i + 1] || *end != '\0' || ms <= 0) {
+                fprintf(stderr, "agent: bad --device-sample-ms: %s\n",
+                        argv[i + 1]);
+                return 2;
+            }
+            device.sample_timeout_ms = (uint64_t)ms;
+            i += 1;
             continue;
         }
         if (strcmp(argv[i], "--device-watchdog-steps") == 0 && i + 1 < argc) {
@@ -2469,6 +2517,8 @@ static int agent_command(int argc, char **argv) {
                   .capability_count = agent_caps_n,
                   .command_names = command_mask ? agent_menu_names : nullptr,
                   .command_name_count = command_mask ? agent_menu_n : 0u,
+                  .pmi_calibrate      = constrained && pmi_calibrate,
+                  .reason_budget      = constrained ? reason_budget : 0u,
                   .sampling         = {.max_seq_len = 4096u,
                                        .temperature = sample_temp,
                                        .top_p       = 1.0f,
@@ -2666,6 +2716,9 @@ static int agent_command(int argc, char **argv) {
          * to start. */
         (void)spg_device_sample(&device, &device_state);
     }
+    static struct spg_machine_history machine_history;
+    spg_machine_history_init(&machine_history, machine_history_window);
+
     const struct spg_agent_run_inputs inputs = {
         .model         = &model,
         .policy        = &policy,
@@ -2697,6 +2750,9 @@ static int agent_command(int argc, char **argv) {
         .profile_model = model_profile.present ? &model_profile : nullptr,
         .device       = device.n_channels > 0u ? &device : nullptr,
         .device_state = device.n_channels > 0u ? &device_state : nullptr,
+        /* #79: window 0 keeps the pointer null — byte-identical context. */
+        .machine_history =
+            machine_history_window > 0u ? &machine_history : nullptr,
     };
     /* Read before rcfg so the loop can watch it: the expect marker has to be
      * known at run time, not only at judge time. */
@@ -2728,6 +2784,7 @@ static int agent_command(int argc, char **argv) {
                 : true,
         .directive_slug        = directive_slug,
         .skill_injection_off   = no_skill_inject,
+        .profile_off           = no_profile,
         .execution_enabled     = allow_exec,
         .exec_timeout_ms       = 5000u,
         .exec_stdout_cap       = sizeof shell_stdout,
@@ -2806,7 +2863,46 @@ static int agent_command(int argc, char **argv) {
         printf("best_of=%zu attempts_used=%zu chosen=%zu rank=%d\n", attempts,
                used, chosen, best_rank);
     }
-    if (have_expect) {
+    /* #13: world-state post-check. Some tasks produce a file, not stdout —
+     * their success is invisible to the (expect ...) substring. The command
+     * runs ONCE, after the run (terminal verdict step only), bounded like any
+     * governed shell action, and its exit 0 ANDs into the verdict. Model-free,
+     * zero tokens: a shell probe, not inference. */
+    const bool have_post_check = run.has_post_check;
+    if (have_post_check) {
+        char cmd[512];
+        bool post_ok = false;
+        if (run.post_check.length < sizeof cmd) {
+            memcpy(cmd, run_text.data + run.post_check.offset,
+                   run.post_check.length);
+            cmd[run.post_check.length] = '\0';
+            const char  *post_argv[SPG_CMD_MAX_ARGS];
+            const size_t post_argc =
+                spg_cmd_split_ws(cmd, SPG_CMD_MAX_ARGS, post_argv);
+            char post_out[256];
+            char post_err[256];
+            const struct spg_cmd_request request = {
+                .argc       = post_argc,
+                .argv       = post_argv,
+                .timeout_ms = 5000u,
+                .limits     = SPG_CMD_DEFAULT_LIMITS,
+                .stdout_cap = sizeof post_out,
+                .stdout_buf = post_out,
+                .stderr_cap = sizeof post_err,
+                .stderr_buf = post_err,
+            };
+            struct spg_cmd_result result = {};
+            post_ok = post_argc > 0u &&
+                      spg_cmd_executor_run(1u, &request, &result) == SPG_OK &&
+                      result.status == SPG_OK && result.started &&
+                      result.exited && result.exit_code == 0;
+        }
+        printf("post_check=%s\n", post_ok ? "pass" : "fail");
+        if (!post_ok && verdict == SPG_EVAL_PASS) {
+            verdict = SPG_EVAL_FAIL_OBSERVATION; /* the world says no */
+        }
+    }
+    if (have_expect || have_post_check) {
         printf("verdict=%s\n", spg_eval_outcome_to_string(verdict));
         /* a FAIL exits non-zero so a caller (and a future miner) can act on it */
         if (verdict != SPG_EVAL_PASS && rc == 0) {
@@ -2993,6 +3089,18 @@ struct eval_run_report {
      * action", and those want opposite fixes. */
     size_t case_parsed[EVAL_MAX_CASES];
     size_t case_gated[EVAL_MAX_CASES];
+    /* #128: samples whose final RAW reply contained the case's expected
+     * observation substring — scored against the reply text itself, not
+     * against a parsed action's observation. Orthogonal to the ladder: high
+     * answered + low parsed means the model solves the question but not the
+     * interface; answered on a tool-requiring case is a fabrication detector.
+     * Only reported for cases that declare (expect (observation ...)). */
+    size_t case_answered[EVAL_MAX_CASES];
+    bool   case_has_answer[EVAL_MAX_CASES];
+    /* #126: tokens consumed per case, summed over samples. Deterministic for
+     * scripted fakes (one token per tick), so it can live in the default
+     * output — unlike wall time, which stays behind --timing. */
+    uint64_t case_tokens[EVAL_MAX_CASES];
     /* Phase 10 (#70): wall time per case and peak RSS for the whole suite.
      *
      * Measured here and nowhere else. The runtime reads no clock — that is what
@@ -3535,6 +3643,58 @@ static enum spg_status eval_run_suite(const char                 *suite_path,
         const bool has_fixture = eval_str(nod, c, suite_text.n, suite_text.data,
                                           "fixture", fixture, sizeof fixture);
 
+        /* #79: optional (machine_history "<fixture>" ...) — seed the window
+         * with scripted snapshots so a case can present the SAME current
+         * state after a rising or a falling past. Each value is a
+         * (machine-state ...) fixture file, pushed oldest-first with tick
+         * indices 1..k; the run's own ticks then append behind them. */
+        static struct spg_machine_history case_history;
+        bool           has_history = false;
+        const uint32_t hist_field  = eval_field(nod, c, suite_text.n,
+                                                suite_text.data,
+                                                "machine_history");
+        if (hist_field != SPG_SEXPR_INVALID_INDEX) {
+            spg_machine_history_init(&case_history, SPG_MACHINE_HISTORY_CAP);
+            uint64_t seed_tick = 1u;
+            for (uint32_t v = spg_sexpr_second_child(nod, hist_field);
+                 v != SPG_SEXPR_INVALID_INDEX; v = nod[v].next_sibling) {
+                struct spg_text_span sp;
+                char                 hist_path[CLI_PATH_MAX];
+                if (!spg_sexpr_string_payload_span(&nod[v], &sp) ||
+                    sp.length + 1u > sizeof hist_path) {
+                    fprintf(stderr, "eval: bad (machine_history ...) value\n");
+                    rc = SPG_E_SCHEMA;
+                    goto done;
+                }
+                memcpy(hist_path, suite_text.data + sp.offset, sp.length);
+                hist_path[sp.length] = '\0';
+                struct file_buffer htext = {};
+                if (read_file(hist_path, &htext) != SPG_OK) {
+                    fprintf(stderr,
+                            "eval: cannot read history fixture %s\n",
+                            hist_path);
+                    rc = SPG_E_IO;
+                    goto done;
+                }
+                static struct spg_machine_state hist_state;
+                const enum spg_status hs = spg_machine_state_parse(
+                    htext.n, htext.data, ws.token_capacity, ws.tokens,
+                    ws.node_capacity, ws.nodes, &hist_state);
+                free_file_buffer(&htext);
+                if (hs != SPG_OK) {
+                    fprintf(stderr,
+                            "eval: invalid history fixture %s: %s\n",
+                            hist_path, spg_status_to_string(hs));
+                    rc = hs;
+                    goto done;
+                }
+                spg_machine_history_push(&case_history, seed_tick,
+                                         &hist_state);
+                seed_tick += 1u;
+            }
+            has_history = true;
+        }
+
         /* #64: the scenario is a machine state. Reading it from a file rather
          * than sampling the host is what makes a diagnosis case reproducible
          * on a laptop with no Pi attached. */
@@ -3675,6 +3835,9 @@ static enum spg_status eval_run_suite(const char                 *suite_path,
         static struct eval_sandbox sandbox_state;
         const char *const          sandbox = sandbox_state.dir;
 
+        /* #128: the answered column exists only where an answer is declared. */
+        report->case_has_answer[case_idx] = expect.observation != nullptr;
+
         const struct spg_agent_run_config rcfg = {
             .max_steps           = (size_t)max_steps,
             .max_repairs         = (size_t)max_repairs,
@@ -3806,6 +3969,9 @@ static enum spg_status eval_run_suite(const char                 *suite_path,
                     if (has_goal_file) {
                         gin.machine_goal = &case_machine_goal;
                     }
+                    if (has_history) {
+                        gin.machine_history = &case_history;
+                    }
                     gin.machine_ablate = o->ablate;
                     if (has_fixture) {
                         if (!eval_sandbox_prepare(&sandbox_state, name, s,
@@ -3821,16 +3987,25 @@ static enum spg_status eval_run_suite(const char                 *suite_path,
                     }
                     struct spg_policy_usage      usage = {};
                     struct spg_agent_loop_result loop  = {};
-                    const enum spg_status        rs =
+                    /* #128: the buffer is static and outlives cases — a stale
+                     * reply from the previous sample must never score. */
+                    model_output[0]       = '\0';
+                    const enum spg_status rs =
                         spg_agent_run(&gin, &rcfg, &ws, &usage, &loop);
+                    if (expect.observation != nullptr &&
+                        strstr(model_output, expect.observation) != nullptr) {
+                        report->case_answered[case_idx] += 1u;
+                    }
                     last = (struct spg_eval_case_result){
                         .outcome =
                             spg_eval_judge(&expect, &loop, rs, observation),
-                        .termination  = loop.termination,
-                        .steps_taken  = loop.steps_taken,
-                        .repairs_used = loop.repairs_used,
-                        .status       = rs,
+                        .termination     = loop.termination,
+                        .steps_taken     = loop.steps_taken,
+                        .repairs_used    = loop.repairs_used,
+                        .status          = rs,
+                        .tokens_consumed = usage.consumed.tokens,
                     };
+                    report->case_tokens[case_idx] += usage.consumed.tokens;
                     eval_tally_ladder(report, case_idx, &last);
                     if (has_diagnosis &&
                         !eval_tally_diagnosis(
@@ -3891,6 +4066,9 @@ static enum spg_status eval_run_suite(const char                 *suite_path,
                 if (has_goal_file) {
                     cin.machine_goal = &case_machine_goal;
                 }
+                if (has_history) {
+                    cin.machine_history = &case_history;
+                }
                 cin.machine_ablate = o->ablate;
                 if (has_fixture) {
                     if (!eval_sandbox_prepare(&sandbox_state, name, s, fixture,
@@ -3905,15 +4083,21 @@ static enum spg_status eval_run_suite(const char                 *suite_path,
                     cin.store = &sandbox_state.store;
                 }
                 struct spg_eval_case_result r = {};
-                const enum spg_status       cs =
+                model_output[0]               = '\0'; /* #128: no stale reply */
+                const enum spg_status cs =
                     spg_eval_run_case(script, script_n, gate_marker, &cin,
                                       &rcfg, &ws, &expect, &r);
+                if (expect.observation != nullptr &&
+                    strstr(model_output, expect.observation) != nullptr) {
+                    report->case_answered[case_idx] += 1u;
+                }
                 if (cs != SPG_OK) {
                     free_file_buffer(&script_text);
                     rc = cs;
                     goto done;
                 }
                 last = r;
+                report->case_tokens[case_idx] += r.tokens_consumed;
                 eval_tally_ladder(report, case_idx, &r);
                 if (has_diagnosis) {
                     const struct spg_agent_loop_result synth = {
@@ -4040,6 +4224,22 @@ static void eval_print_report(const char                   *suite_path,
         /* #53: the ladder, appended so existing consumers keep matching. */
         printf(",\"parsed\":%zu,\"gated\":%zu", report->case_parsed[i],
                report->case_gated[i]);
+        /* #128: answer-judged, orthogonal to the ladder — the same substring
+         * the task rung uses, scored against the final RAW reply text. Only
+         * for cases that declare an expected observation, so every other
+         * suite's output stays byte-identical. */
+        if (report->case_has_answer[i]) {
+            printf(",\"answered\":%zu", report->case_answered[i]);
+        }
+        /* #126: cost. Tokens are deterministic (scripted fakes count one per
+         * tick) and always present; wall time varies run to run, so it stays
+         * behind --timing like latency_ms, under the issue's field name. */
+        printf(",\"tokens\":%llu",
+               (unsigned long long)report->case_tokens[i]);
+        if (report->report_timing) {
+            printf(",\"wall_ms\":%llu",
+                   (unsigned long long)report->case_latency_ms[i]);
+        }
         /* #64: only for diagnosis cases, so every other suite's output stays
          * byte-identical to what its consumers already parse. */
         if (report->case_expected[i][0] != '\0') {
@@ -4690,6 +4890,68 @@ static int audit_command(int argc, char **argv) {
     return 0;
 }
 
+/* #27 GEPA-lite: extract the concrete cue a description carries in its trailing
+ * parenthetical (e.g. "(last reply rejected: ... parse)") so a mutation can
+ * lead with it. Writes the inner text into cue[0..cap); empty when absent. */
+static void gepa_cue_of(const char *description, char *cue, const size_t cap) {
+    cue[0]            = '\0';
+    const char *open  = strchr(description, '(');
+    const char *close = open != nullptr ? strrchr(description, ')') : nullptr;
+    if (open == nullptr || close == nullptr || close <= open + 1) {
+        return;
+    }
+    const size_t inner = (size_t)(close - open - 1);
+    const size_t w     = inner + 1u > cap ? cap - 1u : inner;
+    memcpy(cue, open + 1, w);
+    cue[w] = '\0';
+}
+
+/* #27: search the deterministic mutation population for a description that
+ * scores strictly higher through the gate than the seed. Runs the suite once
+ * per applicable variant (offline — the point of GEPA-lite), keeps the fittest
+ * within the P6 budget, and writes it back into lesson->description. Returns
+ * the winning operator and its pass count for the report; the store is left
+ * holding the chosen description. */
+static enum spg_gepa_op gepa_evolve(struct spg_mem_store         *store,
+                                    const char                   *gate_path,
+                                    const struct eval_run_opts   *opts,
+                                    struct spg_lesson            *lesson,
+                                    size_t                       *out_score) {
+    char cue[SPG_MEM_DESC_MAX + 1u];
+    gepa_cue_of(lesson->description, cue, sizeof cue);
+
+    char   variants[SPG_GEPA_OP_COUNT][SPG_MEM_DESC_MAX + 1u];
+    size_t scores[SPG_GEPA_OP_COUNT] = {0};
+    /* index 0 is always the seed (IDENTITY); it is the incumbent the selector
+     * only unseats on a strict win. */
+    (void)snprintf(variants[0], sizeof variants[0], "%s", lesson->description);
+    for (size_t op = 1u; op < SPG_GEPA_OP_COUNT; op += 1u) {
+        variants[op][0] = '\0';
+        (void)spg_gepa_mutate((enum spg_gepa_op)op, lesson->description, cue,
+                              sizeof variants[op], variants[op]);
+    }
+
+    for (size_t op = 0u; op < SPG_GEPA_OP_COUNT; op += 1u) {
+        if (op > 0u && variants[op][0] == '\0') {
+            continue; /* operator did not apply / over budget */
+        }
+        (void)spg_mem_save(store, lesson->slug, variants[op], lesson->body);
+        struct eval_run_report trial;
+        if (eval_run_suite(gate_path, store, opts, &trial) != SPG_OK) {
+            scores[op] = 0u;
+            continue;
+        }
+        scores[op] = trial.passed;
+    }
+
+    const size_t best = spg_gepa_select(SPG_GEPA_OP_COUNT, scores);
+    (void)snprintf(lesson->description, sizeof lesson->description, "%s",
+                   variants[best]);
+    (void)spg_mem_save(store, lesson->slug, lesson->description, lesson->body);
+    *out_score = scores[best];
+    return (enum spg_gepa_op)best;
+}
+
 /* Self-improvement: run the suite, distill a lesson for each failing case,
  * persist each tentatively into the mind-palace, re-run, and keep it only if
  * the pass count did not drop (else revert). Emits a JSONL report. */
@@ -4701,10 +4963,19 @@ static int improve_command(int argc, char **argv) {
     const char           *validate_path = nullptr;
     size_t                samples       = 1u;
     bool                  constrained   = false;
+    bool                  evolve        = false;
+    bool                  prove_benefit = false;
     float                 temperature   = 0.0f;
     struct spg_guard_ring guards;
     spg_guard_ring_init(&guards);
     for (int i = 2; i < argc; i += 1) {
+        /* #27 GEPA-lite: before gating each candidate, search the
+         * deterministic mutation population for a wording that flips more
+         * cases. Off by default — output byte-identical to today. */
+        if (strcmp(argv[i], "--evolve") == 0) {
+            evolve = true;
+            continue;
+        }
         if (strcmp(argv[i], "--memory-dir") == 0 && i + 1 < argc) {
             memory_dir = argv[++i];
             continue;
@@ -4742,6 +5013,13 @@ static int improve_command(int argc, char **argv) {
             }
             continue;
         }
+        /* #11: opt-in stricter gate — the candidate's own failing case must
+         * flip to passing with the lesson present, on top of the regression
+         * gate. Without the flag the behaviour is byte-identical to today. */
+        if (strcmp(argv[i], "--prove-benefit") == 0) {
+            prove_benefit = true;
+            continue;
+        }
         if (strcmp(argv[i], "--guard") == 0 && i + 1 < argc) {
             /* a real run config re-run live to gate lessons (P5, Weg 2);
              * repeatable, deduped by shape=path in the ring */
@@ -4760,7 +5038,7 @@ static int improve_command(int argc, char **argv) {
         fprintf(
             stderr,
             "usage: %s improve <suite.spg> [--validate <holdout.spg>] "
-            "[--guard <run.spg>]... "
+            "[--guard <run.spg>]... [--evolve] [--prove-benefit] "
             "[--memory-dir <d>] [--remote-url <url>] [--remote-model <name>] "
             "[--samples <N>] [--constrained] [--temperature <t>]\n",
             argv[0]);
@@ -4785,8 +5063,11 @@ static int improve_command(int argc, char **argv) {
         return 1;
     }
 
-    /* Distinct candidate lessons from the failing cases. */
+    /* Distinct candidate lessons from the failing cases. origin_case[k] is
+     * the first suite case that distilled candidate k — the case the
+     * --prove-benefit gate re-checks with the lesson present (#11). */
     struct spg_lesson candidates[EVAL_MAX_CASES];
+    size_t            origin_case[EVAL_MAX_CASES];
     size_t            ncand = 0u;
     for (size_t i = 0u; i < baseline.ncases; i += 1u) {
         struct spg_lesson lesson;
@@ -4801,7 +5082,8 @@ static int improve_command(int argc, char **argv) {
             }
         }
         if (!seen && ncand < EVAL_MAX_CASES) {
-            candidates[ncand] = lesson;
+            candidates[ncand]  = lesson;
+            origin_case[ncand] = i;
             ncand += 1u;
         }
     }
@@ -4827,9 +5109,19 @@ static int improve_command(int argc, char **argv) {
     const size_t orig_passed = cur_passed;
     size_t       kept        = 0u;
     for (size_t k = 0u; k < ncand; k += 1u) {
-        const struct spg_lesson *lesson = &candidates[k];
+        struct spg_lesson *lesson = &candidates[k];
         (void)spg_mem_save(&store, lesson->slug, lesson->description,
                            lesson->body); /* tentative */
+        /* #27: evolve the directive text against the gate before scoring it.
+         * The search leaves the fittest variant in lesson->description and in
+         * the store, so the trial below scores exactly what will be kept. */
+        enum spg_gepa_op evolved_op = SPG_GEPA_OP_IDENTITY;
+        if (evolve) {
+            size_t evolved_score = 0u;
+            evolved_op = gepa_evolve(&store, gate_path, &opts, lesson,
+                                     &evolved_score);
+            (void)evolved_score;
+        }
         static struct eval_run_report trial;
         if (eval_run_suite(gate_path, &store, &opts, &trial) != SPG_OK) {
             fprintf(stderr, "improve: trial run failed\n");
@@ -4839,33 +5131,65 @@ static int improve_command(int argc, char **argv) {
          * (P5, Weg 2): re-run every guard with vs without the lesson and veto
          * if any that passed now regresses. A guard vetoes only a lesson the
          * suite already accepts, so it can only make the gate stricter. */
-        bool accepted     = spg_improve_accept(cur_passed, trial.passed);
-        bool guard_vetoed = false;
-        if (accepted) {
+        const bool suite_ok = spg_improve_accept(cur_passed, trial.passed);
+        /* #11: the benefit proof — the lesson's own origin case, live-re-run
+         * with the lesson present (the trial above IS that re-run when the
+         * gate path is the train suite; with --validate the train suite is
+         * re-run once more). Checked before the guards so a lesson that does
+         * not even fix its own case never costs guard inference. */
+        bool proven = !prove_benefit; /* vacuous without the flag */
+        if (prove_benefit && suite_ok) {
+            const struct eval_run_report *train_trial = &trial;
+            static struct eval_run_report prove_trial;
+            if (validate_path != nullptr) {
+                if (eval_run_suite(suite_path, &store, &opts, &prove_trial) !=
+                    SPG_OK) {
+                    fprintf(stderr, "improve: prove-benefit run failed\n");
+                    return 1;
+                }
+                train_trial = &prove_trial;
+            }
+            const size_t oc = origin_case[k];
+            proven = oc < train_trial->ncases &&
+                     train_trial->results[oc].outcome == SPG_EVAL_PASS;
+        }
+        bool guards_ok = true;
+        if (suite_ok && proven) {
             struct guard_ctx gctx = {
                 .store = &store, .opts = &opts, .lesson = lesson};
-            if (!spg_guard_ring_gate(&guards, guard_run, &gctx)) {
-                accepted     = false;
-                guard_vetoed = true;
-            }
+            guards_ok = spg_guard_ring_gate(&guards, guard_run, &gctx);
             /* the gate's guard runs toggled the lesson; leave it saved so the
              * commit below decides keep/revert from a known state */
             (void)spg_mem_save(&store, lesson->slug, lesson->description,
                                lesson->body);
         }
-        (void)guard_vetoed;
+        const bool accepted =
+            spg_improve_gate(suite_ok, guards_ok, prove_benefit, proven);
         bool was_kept = false;
         (void)spg_improve_commit(&store, lesson, accepted, &was_kept);
+        char evolved_field[32] = "";
+        if (evolve) {
+            static const char *const op_name[SPG_GEPA_OP_COUNT] = {
+                "identity", "truncate", "tighten", "cue_first"};
+            (void)snprintf(evolved_field, sizeof evolved_field,
+                           ",\"evolved\":\"%s\"", op_name[evolved_op]);
+        }
+        char proven_field[32] = "";
+        if (prove_benefit) {
+            (void)snprintf(proven_field, sizeof proven_field,
+                           ",\"benefit_proven\":%s",
+                           proven ? "true" : "false");
+        }
         if (validate_path != nullptr) {
             printf("{\"lesson\":\"%s\",\"accepted\":%s,\"held_out_passed\":%zu,"
-                   "\"trial_passed\":%zu}\n",
+                   "\"trial_passed\":%zu%s%s}\n",
                    lesson->slug, accepted ? "true" : "false", cur_passed,
-                   trial.passed);
+                   trial.passed, evolved_field, proven_field);
         } else {
             printf("{\"lesson\":\"%s\",\"accepted\":%s,\"baseline_passed\":%zu,"
-                   "\"trial_passed\":%zu}\n",
+                   "\"trial_passed\":%zu%s%s}\n",
                    lesson->slug, accepted ? "true" : "false", cur_passed,
-                   trial.passed);
+                   trial.passed, evolved_field, proven_field);
         }
         if (was_kept) {
             cur_passed = trial.passed;

@@ -42,10 +42,14 @@ struct spg_actor_state {
     const char *exemplars;
     const char *goal;
     const char *directive;
+    /* #28: pre-rendered user-profile line (framing/defaults only). Null=none. */
+    const char *user_profile;
     /* Pre-rendered command menu (#56). Null = none. */
     const char *tools;
     /* Optional machine snapshot for the context (roadmap phase 3). */
     const struct spg_machine_state *machine;
+    /* #79: the bounded history window (nullable). */
+    const struct spg_machine_history *machine_history;
     const struct spg_machine_goal  *machine_goal;
     /* Optional plant readings for the context. Null = none, and the
      * context is byte-identical to before this existed. */

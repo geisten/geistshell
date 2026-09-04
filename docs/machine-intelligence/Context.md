@@ -150,5 +150,58 @@ Realität — der Nachweis führt über das Journal, nicht über eine Testfixtur
 
 ## Was Phase 3 nicht tut
 
-Keine Action, kein History-Fenster (#79), keine Diagnose (#64). Kein
-Modellverhalten wird hier gemessen.
+Keine Action, keine Diagnose (#64). Kein Modellverhalten wird hier gemessen.
+
+## Phase 3b (#79): das History-Fenster
+
+Ein bounded Ringpuffer über die letzten N Snapshots, gerendert als
+`(machine-history ...)` **vor** dem aktuellen `(machine-state ...)` — erst der
+Trend, dann das Jetzt:
+
+```
+(machine-history
+  (t 3 (cpu-load-bp 3500) (load-1-cbp 120) (memory-used-bytes 1100000000)
+   (swap-used-bytes 0) (temperature-mc 74000) (cpu-freq-khz 1800000)
+   (throttle none) (process-count 40))
+  (t 4 ...))
+(machine-state ...)
+```
+
+**Was historisiert wird — und was nicht.** Nur die normalisierten Skalare
+(CPU, Load, Speicher, Swap, Temperatur, Frequenz, Throttle, Prozesszahl).
+Die Prozessliste fehlt bewusst: N Ticks Prozessdetail sprengen das
+Kontextbudget eines kleinen Modells; Trendfragen betreffen die Maschine,
+Drill-down ist Sache des aktuellen Snapshots. `unknown` bleibt `unknown`,
+nie interpoliert.
+
+**Semantik.** Der Loop pusht pro Tick den Snapshot, über den der Tick
+entschieden hat; der nächste Tick liest also den Verlauf bis einschließlich
+des Zustands, dem er folgt. Älteste→neueste, expliziter Tick-Index, bei
+Überlauf fällt der älteste Eintrag heraus. Leer-aber-aktiv rendert das
+explizite `(machine-history)`; Fenster 0 (der Default, und die
+Ablationsvariante für #71) rendert **nichts** — der restliche Context ist
+byteidentisch (Diff-Test in `test_machine_history.c`). Deterministisch:
+identische Snapshots ⇒ byteidentischer Block; der Replay bleibt
+byteidentisch, `test_cli_baseline.sh` bleibt grün, weil der Default aus ist.
+
+**Konfiguration.** `--machine-history N` (0..`SPG_MACHINE_HISTORY_CAP` = 8),
+Default 0. Eval-Cases seeden das Fenster mit
+`(machine_history "<fixture>" ...)` — so stellt
+`examples/eval/machine/history_probe.spg` denselben aktuellen Snapshot einmal
+hinter einen steigenden und einmal hinter einen fallenden Verlauf.
+
+**Gemessene Kosten** (typische Wertebreiten, `/tmp`-Messprogramm über
+`spg_machine_history_render`, ~4 Bytes/Token):
+
+| Fenster | Bytes | ≈ Tokens |
+|---|---|---|
+| 1 | 191 | 48 |
+| 2 | 365 | 92 |
+| 4 | 713 | 179 |
+| 8 | 1409 | 353 |
+
+~174 Bytes pro Eintrag plus 17 Bytes Rahmen — **konstant pro Tick**, wie die
+Lesson-Injection aus P6: das Fenster wächst mit N, nie mit der Laufzeit.
+Beide teilen sich das Kontextbudget des kleinen Modells; wer P6-Lessons und
+ein History-Fenster zugleich fährt, budgetiert beide zusammen (ein Fenster 8
+kostet so viel wie ~4–8 Directive-Zeilen).

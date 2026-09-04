@@ -704,6 +704,20 @@ static void render_machine(const struct spg_context_sources *sources,
             append_cstr(state, "\n");
         }
     }
+    /* #79: the window before the snapshot — the model reads the trend, then
+     * the now. Rendered by the module that owns the format; an enabled-but-
+     * empty history is the explicit (machine-history) form, a disabled one
+     * writes nothing at all. */
+    if (sources->machine_history != nullptr) {
+        char   trend[SPG_MACHINE_HISTORY_RENDER_CAP];
+        size_t trend_required = 0u;
+        if (spg_machine_history_render(sources->machine_history, sizeof trend,
+                                       trend, &trend_required) == SPG_OK &&
+            trend_required > 0u) {
+            append_cstr(state, trend);
+            append_cstr(state, "\n");
+        }
+    }
     /* Not an early return: a plant run needs no host telemetry at all, and
      * skipping the block below with it would leave that agent blind. */
     if (sources->machine != nullptr) {
@@ -762,6 +776,12 @@ enum spg_status spg_context_render(const struct spg_context_sources *sources,
         append_cstr(&state, "(directive ");
         append_quoted_cstr(&state, sources->directive);
         append_cstr(&state, ")\n");
+    }
+    /* #28: the user profile, one budgeted line. Framing/defaults only — the
+     * policy gate never reads it. Pre-rendered, so it goes in verbatim. */
+    if (sources->user_profile != nullptr && sources->user_profile[0] != '\0') {
+        append_cstr(&state, sources->user_profile);
+        append_char(&state, '\n');
     }
     if (sources->goal != nullptr && sources->goal[0] != '\0') {
         append_cstr(&state, "(goal ");

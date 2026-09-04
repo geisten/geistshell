@@ -97,7 +97,7 @@ is the honest place to build "learns from use."
 |---|---|---|
 | 1 | Verifier signal is programmatic (exit code, output substring) | Model-judged trajectory — blows a small model's sequence length; is Hermes' self-grading defect. |
 | 2 | Criterion reuses `spg_eval_expect`, optional on the live run | A new type — the eval loop already consumes this one. |
-| 3 | **Weg 2:** guards are re-run **live** at mint time (with vs without the lesson); a guard that passed and now fails vetoes it. Benefit is still longitudinal slug-recurrence. | Frozen replay of guards — a frozen tape ignores context, so it can never react to a lesson and thus gates nothing (found during P5 implementation). The live re-run's sequence-length cost is accepted for early regression detection on diverse tasks. |
+| 3 | **Weg 2:** guards are re-run **live** at mint time (with vs without the lesson); a guard that passed and now fails vetoes it. Benefit is still longitudinal slug-recurrence. *Opt-in stricter variant SHIPPED (#11):* `improve --prove-benefit` additionally re-runs the candidate's own failing case with the lesson present and keeps it only if that case now passes (`spg_improve_gate`); without the flag, behaviour and output are byte-identical to the regression-only gate. | Frozen replay of guards — a frozen tape ignores context, so it can never react to a lesson and thus gates nothing (found during P5 implementation). The live re-run's sequence-length cost is accepted for early regression detection on diverse tasks. |
 | 4 | Slug-triggered auto-injection of the single relevant lesson | Model-directed recall — a small model may never emit `memory_read`, so lessons sit unused. |
 | 5 | Frozen suite accumulates real positive guards | Shipped hand-written suite only — cannot represent diverse ad-hoc script tasks; the longitudinal signal is too slow to catch a broken rare type. |
 | 6 | Task-shape key = capability set `(action_kind, capability-class)` | Scenario name — ad-hoc runs have none. `expect` hash — collides unrelated tasks that share "exit 0". |
@@ -106,11 +106,22 @@ is the honest place to build "learns from use."
 
 ## Deliberately open — practice decides
 
-- **Sequence over set (decision 6):** the finer shape key, if too many distinct
-  scripts share one capability set and a guard misses regressions.
-- **Post-check command (decision 2):** a last-step shell probe (`exit 0 =
-  success`) verifying world state, for tasks that produce files rather than
-  stdout.
+- **Sequence over set (decision 6): mechanism SHIPPED (#12), default
+  unchanged.** `spg_shape_from_script_mode(..., SPG_SHAPE_MODE_SEQUENCE, ...)`
+  builds the finer key — the ordered `'>'`-joined sequence of
+  `<kind>:<capability>` tokens, consecutive duplicates collapsed, `finish`
+  excluded, deterministically truncated at `SPG_SHAPE_MAX_TOKENS`. The SET key
+  stays the default everywhere (cheaper, more bounded); switching a caller to
+  the sequence key remains trigger-gated on an observed guard collision — two
+  distinct tasks sharing a guard where a lesson broke one but the guard was
+  the other.
+- **Post-check command (decision 2): SHIPPED (#13).** An optional
+  `(post_check "<cmd>")` in the run config: after the run, the command
+  executes once through `cmd_executor` under the same bounds as any governed
+  shell action, and its exit 0 ANDs into the verdict alongside `(expect ...)`
+  — both must hold for `verdict=pass`. Terminal step only, model-free, zero
+  tokens. Whitespace-split argv, no shell interpretation (`test -f out.pdf`,
+  not pipelines). Absent, behaviour is byte-identical to before.
 
 ## Constrained decoding, forced-prefix first cut (geistshell#34, 2026-08-02)
 
@@ -573,6 +584,71 @@ like the lesson recurrence audit. A shape whose success rate has not risen
 since its skill was kept is flagged `review` — a removal candidate; nothing
 is removed automatically.
 
+## GEPA-lite: evolving the directive against the gate (geistshell#27)
+
+A lesson's DESCRIPTION is the one line a small model sees per tick, and today
+it is minted once and never refined — the first wording written is the wording
+that ships. GEPA-lite searches, OFFLINE, for a wording that flips more cases
+through the SAME acceptance gate (P5). `improve --evolve` runs, per candidate
+slug, a `mutate -> gate -> select` step over a fixed population of
+**deterministic** mutation operators:
+
+- `truncate` — keep only the first sentence;
+- `tighten` — drop a trailing parenthetical aside;
+- `cue_first` — lead with the concrete reject/observation cue, then the seed.
+
+Each variant is scored by re-running the suite (and the guard ring); the seed
+is the incumbent at index 0 and `spg_gepa_select` unseats it only on a
+**strict** win, so evolution never trades a proven wording for an equal guess.
+
+Two properties keep it small-model-safe, both enforced in code:
+
+- **Runtime is untouched.** The model still sees ONE budgeted directive; GEPA
+  only changes WHICH description text is stored. `--evolve` off ⇒ output
+  byte-identical to before.
+- **The P6 budget is a hard fitness constraint.** `spg_gepa_mutate` returns 0
+  (disqualified) for any variant over `SPG_MEM_DESC_MAX`, so a mutation can
+  never bloat the injected line.
+
+`test_cli_improve.sh` proves the loop *works*, not just runs: a suite whose
+gate marker only the `cue_first` wording produces cannot be opened by the seed
+directive, so `--evolve` must adopt the mutation (`"evolved":"cue_first"`,
+`trial_passed` 0→1) to pass it. Model-driven paraphrase stays out (an optional
+offline upgrade); a real-model lift measurement is the #25 numerator, on a
+model-completable corpus.
+## User-profile memory (geistshell#28)
+
+Task lessons and skills are about the WORLD (a failure the world proved, a
+procedure that worked). A **preference** is about the USER — how they want
+choices made — and is a distinct memory KIND, stored under a `pref-<key>` slug
+namespace alongside `lesson-*`/`skill-*` but never overloading them.
+
+Two boundaries are enforced in code, not just documented (`src/memory/pref.c`,
+`test/test_pref.c`):
+
+- **Write-on-evidence, never model self-assertion.** `spg_pref_should_write`
+  is the single gate: a repeated choice writes only at the second observation,
+  a user correction is authoritative on the first, and a model self-assertion
+  (`SPG_PREF_EVIDENCE_ASSERTED`) writes *nothing*, whatever the count. The same
+  anti-delusion stance as eval-gated learning — a preference is recorded when
+  the world shows it, not when the model guesses it. The CLI surface is
+  `geistshell memory pref <key> <value> --evidence … --count …`.
+
+- **Capability-invariance.** A preference shapes FRAMING and DEFAULTS only — it
+  is rendered as one `(profile "…")` context line and there is no code path
+  from a preference to the policy gate. `test_cli_pref.sh` proves it: a
+  `pref-allow_shell` naming shell access is injected into a plant run's
+  context, yet the plant policy (device capability only) still denies a
+  `local_shell` action. Personalization changes how a choice is elicited,
+  never what is permitted.
+
+The profile is one budgeted line however many preferences accumulate
+(`spg_pref_render`, capped at `SPG_MEM_DESC_MAX`) — the same
+context-invariance property as the P6 lesson directive, so a filling profile
+never grows the small model's window. Off-switch: `agent --no-profile` (or an
+empty store) leaves the context byte-identical. Orthogonal to #26/#27:
+personalization, not skill.
+
 ## Context-cost benchmark (2026-08-02, model-free)
 
 `eval/bench_context.sh` measures the load-bearing half of the small-seq-len
@@ -593,6 +669,17 @@ claim (learning is context-invariant). It does **not** measure success lift:
 the numerator (does flat context still improve task success?) needs a
 model-completable task corpus and real inference — the remaining half of #25.
 A benchmark that measures only the free half must say so.
+
+**The numerator arm (#25):** `eval/bench_learning_gain.sh` is the reproducible
+three-arm harness for the success side — control (no memory) vs geistshell
+(one directive/tick) vs full-index RAG (whole index/tick) — as the lesson set
+accumulates across passes, reporting task-success rate and context-tokens/tick
+per arm so the headline gain-per-context-token can be computed. It is
+model-gated (a real GGUF, not `make test`) because a fake model ignores
+injected learning, and it is written to be able to **refute** the claim: a
+null lift retires this paragraph rather than keeping it unproven. The number
+itself is produced on a model host; the harness and its honest framing are the
+deliverable here.
 
 The benchmark also surfaced and fixed a real bug: `spg_mem_directive`
 originally read the *capped* index, so a slug beyond `SPG_MEM_INDEX_TOPK`

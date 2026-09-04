@@ -43,9 +43,66 @@ printf '%s\n' "$OUT4" | grep -q '"lesson":"lesson-rejected","accepted":true,"hel
 printf '%s\n' "$OUT4" | grep -q '"validate":"examples/eval/improve_gated.spg"'
 printf '%s\n' "$OUT4" | grep -q '"held_out_baseline":0,"held_out_final":1,"lessons_kept":1'
 
+# --- #11: --prove-benefit tightens the gate. The improve_suite lesson is kept
+#     by the regression-only gate (equality keeps), but it does NOT flip its
+#     own failing case — with the flag it must be rejected and leave no file. ---
+OUT5=$("$SPG_BIN" improve examples/eval/improve_suite.spg --prove-benefit \
+    --memory-dir "$T/p1")
+printf '%s\n' "$OUT5"
+printf '%s\n' "$OUT5" | grep -q '"lesson":"lesson-rejected","accepted":false.*"benefit_proven":false'
+printf '%s\n' "$OUT5" | grep -q '"lessons_kept":0'
+test ! -f "$T/p1/lesson-rejected.md"
+
+# --- and a lesson that DOES flip its case still passes the stricter gate ---
+OUT6=$("$SPG_BIN" improve examples/eval/improve_gated.spg --prove-benefit \
+    --memory-dir "$T/p2")
+printf '%s\n' "$OUT6" | grep -q '"lesson":"lesson-rejected","accepted":true.*"benefit_proven":true'
+printf '%s\n' "$OUT6" | grep -q '"lessons_kept":1'
+test -f "$T/p2/lesson-rejected.md"
+
+# --- without the flag the output is byte-identical to before (no new field) ---
+if printf '%s\n' "$OUT" | grep -q 'benefit_proven'; then
+    echo "FAIL: benefit_proven leaked into the default output" >&2
+    exit 1
+fi
+
 # --- deterministic: two fresh runs of the failing suite agree byte-for-byte ---
 "$SPG_BIN" improve examples/eval/improve_suite.spg --memory-dir "$T/a" > "$T/a.out"
 "$SPG_BIN" improve examples/eval/improve_suite.spg --memory-dir "$T/b" > "$T/b.out"
 cmp "$T/a.out" "$T/b.out"
+
+# --- #27 GEPA-lite: --evolve searches the mutation population against the gate.
+#     A suite whose gate marker only the CUE_FIRST wording produces — the
+#     concrete reject phrase followed by ". Emit" — cannot be opened by the
+#     seed directive, so evolution must adopt the mutation to pass it. ---
+cat > "$T/gepa.spg" <<'EOF'
+(eval_suite
+ (config "examples/run.spg")
+ (case (name "gepa") (script "examples/eval/gated.txt") (gate_marker "schema. Emit exactly") (max_steps 5)
+       (expect (termination finished))))
+EOF
+# without --evolve the seed wording cannot open the gate: the case fails
+OUTG=$("$SPG_BIN" improve "$T/gepa.spg" --memory-dir "$T/g1")
+printf '%s\n' "$OUTG" | grep -q '"trial_passed":0' || {
+    echo "FAIL: setup — the seed unexpectedly opened the GEPA gate" >&2
+    echo "$OUTG" >&2; exit 1
+}
+if printf '%s\n' "$OUTG" | grep -q 'evolved'; then
+    echo "FAIL: the evolved field leaked without --evolve" >&2; exit 1
+fi
+# with --evolve the search adopts the CUE_FIRST wording and the case passes
+OUTE=$("$SPG_BIN" improve "$T/gepa.spg" --evolve --memory-dir "$T/g2")
+printf '%s\n' "$OUTE"
+printf '%s\n' "$OUTE" | grep -q '"evolved":"cue_first"' || {
+    echo "FAIL: evolution did not adopt the wording that opens the gate" >&2
+    echo "$OUTE" >&2; exit 1
+}
+printf '%s\n' "$OUTE" | grep -q '"trial_passed":1' ||
+    { echo "FAIL: the evolved directive did not flip the case" >&2; exit 1; }
+
+# --- --evolve is deterministic: two fresh runs agree byte-for-byte ----------
+"$SPG_BIN" improve "$T/gepa.spg" --evolve --memory-dir "$T/e1" > "$T/e1.out"
+"$SPG_BIN" improve "$T/gepa.spg" --evolve --memory-dir "$T/e2" > "$T/e2.out"
+cmp "$T/e1.out" "$T/e2.out"
 
 echo "test_cli_improve: PASS"
