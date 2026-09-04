@@ -120,6 +120,21 @@ size_t spg_model_capabilities_from_policy(
  * expands three-fold. */
 #define SPG_MODEL_CAPABILITY_MAX (SPG_POLICY_MAX_CAPABILITIES * 3u)
 
+/* #124/#57 PMI calibration of a masked choice slot. Naive token masking picks
+ * the candidate with the highest raw logit, which for a not-tool-trained model
+ * is dominated by how common the name's tokens are in pretraining, not by fit
+ * to the request (Grammar-Aligned Decoding, NeurIPS'24). Subtracting a
+ * request-INDEPENDENT baseline logit per candidate — measured once against a
+ * request-free prompt — leaves the request-driven signal (a PMI-style
+ * correction, the calibration geistlib's router uses).
+ *
+ * Pure selector: return the index of the highest calibrated logit, where
+ * calibrated[i] = logits[i] - (baseline ? baseline[i] : 0). baseline == null
+ * is plain argmax — the uncalibrated path, byte-identical to before. Ties keep
+ * the lowest index (deterministic). Returns 0 when n == 0. */
+[[nodiscard]] size_t spg_pmi_pick(size_t n, const float logits[],
+                                  const float baseline[]);
+
 #ifdef __cplusplus
 }
 #endif
