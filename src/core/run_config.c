@@ -65,6 +65,14 @@ static const struct spg_schema_field_rule run_fields[] = {
      .max_values = 1u,
      .required   = false,
      .unique     = true},
+    /* Optional world-state verifier (#13): a command whose exit 0 ANDs into
+     * the verdict after the run. Absent -> today's behaviour exactly. */
+    {.name       = "post_check",
+     .value_kind = SPG_SCHEMA_VALUE_STRING,
+     .min_values = 1u,
+     .max_values = 1u,
+     .required   = false,
+     .unique     = true},
 };
 
 static const struct spg_schema_form_rule run_forms[] = {
@@ -277,6 +285,24 @@ enum spg_status spg_run_config_load(
             return status;
         }
         out->has_goal = true;
+    }
+
+    /* Optional post-check command (#13): must be a non-empty string. An
+     * empty command would "verify" nothing and fail every run at verdict
+     * time — a config mistake that should be loud at load time instead. */
+    const uint32_t post_field =
+        find_field(input_n, input, nodes, run_node, "post_check");
+    if (post_field != SPG_SEXPR_INVALID_INDEX) {
+        status = string_value_span(nodes, post_field, &out->post_check);
+        if (status == SPG_OK && out->post_check.length == 0u) {
+            status = SPG_E_SCHEMA;
+        }
+        if (status != SPG_OK) {
+            set_error(error, status, post_field,
+                      nodes[post_field].span.offset);
+            return status;
+        }
+        out->has_post_check = true;
     }
 
     return SPG_OK;

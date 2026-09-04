@@ -47,6 +47,19 @@ struct spg_run_config {
      * headroom a learning lesson can shape. Absent -> no goal line. */
     bool                 has_goal;
     struct spg_text_span goal;
+
+    /* Optional post-check command (docs/LEARNING.md decision 2, #13): some
+     * tasks produce a FILE or other world state instead of stdout, so their
+     * success is invisible to the (expect ...) substring. After the run
+     * completes, this command executes once, bounded through cmd_executor
+     * (same timeout/output caps as any governed shell action); exit 0 means
+     * success. It composes with (expect ...) by AND — both must hold for
+     * verdict=pass — and replaces nothing. Terminal verdict step only, never
+     * run mid-loop. Model-free, zero tokens: a shell probe, not inference.
+     * Whitespace-split argv, no shell interpretation — `test -f out.pdf`,
+     * not pipelines. */
+    bool                 has_post_check;
+    struct spg_text_span post_check;
 };
 
 struct spg_run_config_error {

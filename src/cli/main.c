@@ -17,6 +17,7 @@
 #include "geistshell/guard_ring.h"
 #include "geistshell/improve.h"
 #include "geistshell/machine_fixture.h"
+#include "geistshell/cmd_executor.h"
 #include "geistshell/cmd_menu.h"
 #include "geistshell/mem_command.h"
 #include "geistshell/mem_store.h"
@@ -2831,7 +2832,46 @@ static int agent_command(int argc, char **argv) {
         printf("best_of=%zu attempts_used=%zu chosen=%zu rank=%d\n", attempts,
                used, chosen, best_rank);
     }
-    if (have_expect) {
+    /* #13: world-state post-check. Some tasks produce a file, not stdout —
+     * their success is invisible to the (expect ...) substring. The command
+     * runs ONCE, after the run (terminal verdict step only), bounded like any
+     * governed shell action, and its exit 0 ANDs into the verdict. Model-free,
+     * zero tokens: a shell probe, not inference. */
+    const bool have_post_check = run.has_post_check;
+    if (have_post_check) {
+        char cmd[512];
+        bool post_ok = false;
+        if (run.post_check.length < sizeof cmd) {
+            memcpy(cmd, run_text.data + run.post_check.offset,
+                   run.post_check.length);
+            cmd[run.post_check.length] = '\0';
+            const char  *post_argv[SPG_CMD_MAX_ARGS];
+            const size_t post_argc =
+                spg_cmd_split_ws(cmd, SPG_CMD_MAX_ARGS, post_argv);
+            char post_out[256];
+            char post_err[256];
+            const struct spg_cmd_request request = {
+                .argc       = post_argc,
+                .argv       = post_argv,
+                .timeout_ms = 5000u,
+                .limits     = SPG_CMD_DEFAULT_LIMITS,
+                .stdout_cap = sizeof post_out,
+                .stdout_buf = post_out,
+                .stderr_cap = sizeof post_err,
+                .stderr_buf = post_err,
+            };
+            struct spg_cmd_result result = {};
+            post_ok = post_argc > 0u &&
+                      spg_cmd_executor_run(1u, &request, &result) == SPG_OK &&
+                      result.status == SPG_OK && result.started &&
+                      result.exited && result.exit_code == 0;
+        }
+        printf("post_check=%s\n", post_ok ? "pass" : "fail");
+        if (!post_ok && verdict == SPG_EVAL_PASS) {
+            verdict = SPG_EVAL_FAIL_OBSERVATION; /* the world says no */
+        }
+    }
+    if (have_expect || have_post_check) {
         printf("verdict=%s\n", spg_eval_outcome_to_string(verdict));
         /* a FAIL exits non-zero so a caller (and a future miner) can act on it */
         if (verdict != SPG_EVAL_PASS && rc == 0) {
