@@ -18,6 +18,7 @@
 #include <stdlib.h>
 #include <string.h>
 #include <sys/stat.h>
+#include <time.h>
 #include <unistd.h>
 
 #define LIT(s) (sizeof(s) - 1u), (s)
@@ -413,6 +414,78 @@ static int test_exec_contract(void) {
     return 0;
 }
 
+static uint64_t now_ms(void) {
+    struct timespec ts = {};
+    (void)clock_gettime(CLOCK_MONOTONIC, &ts);
+    return (uint64_t)ts.tv_sec * 1000u + (uint64_t)ts.tv_nsec / 1000000u;
+}
+
+/* #121: a sampling round has ONE deadline, not one per channel. Eight hung
+ * programs at a 300 ms timeout would serially block >= 2.4 s; the concurrent
+ * batch finishes the whole round in roughly one timeout. The fast channel is
+ * LAST in the table, so its known value also proves that completion order
+ * does not reorder the result, and that stragglers cost nobody else their
+ * reading. */
+static int test_sample_deadline(void) {
+    char dir[] = "/tmp/spg_device_XXXXXX";
+    if (mkdtemp(dir) == nullptr) {
+        return 1;
+    }
+    char slow_prog[256], fast_prog[256];
+    if (write_script(dir, "slow", "sleep 30\n", slow_prog,
+                     sizeof slow_prog) != 0 ||
+        write_script(dir, "fast", "echo 7\n", fast_prog,
+                     sizeof fast_prog) != 0) {
+        return 1;
+    }
+    struct spg_device dev = {};
+    spg_device_init(&dev);
+    dev.sample_timeout_ms = 300u;
+    for (size_t i = 0u; i < 16u; i += 1u) {
+        struct spg_device_channel ch = {.min = 0, .max = 100};
+        (void)snprintf(ch.name, sizeof ch.name, "hung%zu", i);
+        (void)snprintf(ch.program, sizeof ch.program, "%s", slow_prog);
+        if (spg_device_add_channel(&dev, &ch) != SPG_OK) {
+            return 1;
+        }
+    }
+    struct spg_device_channel fast = {.name = "fast", .min = 0, .max = 100};
+    (void)snprintf(fast.program, sizeof fast.program, "%s", fast_prog);
+    if (spg_device_add_channel(&dev, &fast) != SPG_OK) {
+        return 1;
+    }
+
+    struct spg_device_state state   = {};
+    const uint64_t          started = now_ms();
+    const enum spg_status   status  = spg_device_sample(&dev, &state);
+    const uint64_t          elapsed = now_ms() - started;
+
+    if (status == SPG_OK || state.n != 17u) {
+        return 1; /* the hung channels are a reported failure */
+    }
+    for (size_t i = 0u; i < 16u; i += 1u) {
+        if (state.readings[i].known) {
+            return 1;
+        }
+    }
+    if (!state.readings[16].known || state.readings[16].value != 7 ||
+        strcmp(state.readings[16].name, "fast") != 0) {
+        return 1; /* the fast value survives the stragglers, in table order */
+    }
+    if (!dev.contact_pending) {
+        return 1; /* the one answer still counts as contact */
+    }
+    /* 16 hung channels at a 300 ms deadline would take ~4.8 s serially; the
+     * concurrent batch is one deadline plus spawn/kill overhead. A generous
+     * 2.5 s bound separates the two without being wall-clock-flaky under load. */
+    if (elapsed >= 2500u) {
+        (void)fprintf(stderr, "  round took %llu ms — serial, not batched\n",
+                      (unsigned long long)elapsed);
+        return 1;
+    }
+    return 0;
+}
+
 static int test_watchdog(void) {
     struct spg_device dev = {};
     spg_device_init(&dev);
@@ -697,6 +770,7 @@ int main(void) {
         {"table", test_table},
         {"write_refusals", test_write_refusals},
         {"exec_contract", test_exec_contract},
+        {"sample_deadline", test_sample_deadline},
         {"watchdog", test_watchdog},
         {"watchdog_per_channel", test_watchdog_per_channel},
         {"safe_state", test_safe_state},

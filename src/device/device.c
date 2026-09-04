@@ -291,19 +291,26 @@ enum spg_status spg_device_load(const size_t text_n, const char text[],
 
 /* --- The transport: one program --------------------------------------- */
 
-/* Run the channel's program, bounded: SPG_DEVICE_TIMEOUT_MS, then the whole
- * process group is killed — a silent machine must never stall the loop that
- * governs it. stderr is captured and dropped here; the device executor is
- * where failures become journal entries. */
+/* The per-program deadline: the operator's override, or the default. */
+static uint64_t device_timeout_ms(const struct spg_device *dev) {
+    return dev->sample_timeout_ms != 0u ? dev->sample_timeout_ms
+                                        : (uint64_t)SPG_DEVICE_TIMEOUT_MS;
+}
+
+/* Run the channel's program, bounded: after timeout_ms the whole process
+ * group is killed — a silent machine must never stall the loop that governs
+ * it. stderr is captured and dropped here; the device executor is where
+ * failures become journal entries. */
 static enum spg_status run_program(const char *program, const char *argument,
-                                   const size_t stdout_cap,
-                                   char        stdout_buf[]) {
+                                   const uint64_t timeout_ms,
+                                   const size_t   stdout_cap,
+                                   char           stdout_buf[]) {
     const char *argv[2] = {program, argument};
     char        stderr_buf[256];
     const struct spg_cmd_request request = {
         .argc       = argument == nullptr ? 1u : 2u,
         .argv       = argv,
-        .timeout_ms = (uint64_t)SPG_DEVICE_TIMEOUT_MS,
+        .timeout_ms = timeout_ms,
         .limits     = SPG_CMD_DEFAULT_LIMITS,
         .stdout_cap = stdout_cap,
         .stdout_buf = stdout_buf,
@@ -357,7 +364,8 @@ enum spg_status spg_device_read(struct spg_device *dev, const char *name,
     }
     char                  output[64] = {};
     const enum spg_status status =
-        run_program(channel->program, nullptr, sizeof output, output);
+        run_program(channel->program, nullptr, device_timeout_ms(dev),
+                    sizeof output, output);
     if (status != SPG_OK) {
         return status;
     }
@@ -406,7 +414,8 @@ enum spg_status spg_device_write(struct spg_device *dev, const char *name,
     (void)snprintf(argument, sizeof argument, "%lld", (long long)value);
     char                  output[64] = {};
     const enum spg_status status =
-        run_program(channel->program, argument, sizeof output, output);
+        run_program(channel->program, argument, device_timeout_ms(dev),
+                    sizeof output, output);
     if (status != SPG_OK) {
         return status;
     }
@@ -502,26 +511,80 @@ enum spg_status spg_device_safe_state(struct spg_device *dev) {
 
 /* --- What the agent sees ----------------------------------------------- */
 
+/* #121: one round, one deadline. Every channel program is spawned together
+ * and multiplexed by spg_cmd_executor_run, so the round takes at most one
+ * sample_timeout_ms whatever the channel count — a table of dead sensors
+ * blocks the loop for one timeout, not for one timeout each. Stragglers are
+ * killed with their process groups by the executor; their channels render
+ * unknown, finished readings are kept, and the output order is the table
+ * order regardless of completion order. Fixed stack buffers, no allocation. */
+static_assert(SPG_DEVICE_MAX_CHANNELS <= SPG_CMD_MAX_BATCH,
+              "a sampling round must fit one executor batch");
+
 enum spg_status spg_device_sample(struct spg_device       *dev,
                                   struct spg_device_state *out) {
     if (dev == nullptr || out == nullptr) {
         return SPG_E_INVALID_ARG;
     }
     *out = (struct spg_device_state){};
+
+    struct spg_cmd_request requests[SPG_DEVICE_MAX_CHANNELS] = {};
+    struct spg_cmd_result  results[SPG_DEVICE_MAX_CHANNELS]  = {};
+    const char            *argvs[SPG_DEVICE_MAX_CHANNELS][1];
+    char                   outputs[SPG_DEVICE_MAX_CHANNELS][64] = {};
+    char                   errors[SPG_DEVICE_MAX_CHANNELS][64];
+    const uint64_t         timeout = device_timeout_ms(dev);
+    const size_t           n       = dev->n_channels;
+
+    for (size_t i = 0u; i < n; i += 1u) {
+        argvs[i][0] = dev->channels[i].program;
+        requests[i] = (struct spg_cmd_request){
+            .argc       = 1u,
+            .argv       = argvs[i],
+            .timeout_ms = timeout,
+            .limits     = SPG_CMD_DEFAULT_LIMITS,
+            .stdout_cap = sizeof outputs[0],
+            .stdout_buf = outputs[i],
+            .stderr_cap = sizeof errors[0],
+            .stderr_buf = errors[i],
+        };
+    }
+    const enum spg_status batch = spg_cmd_executor_run(n, requests, results);
+
     enum spg_status first = SPG_OK;
-    for (size_t i = 0u; i < dev->n_channels; i += 1u) {
+    for (size_t i = 0u; i < n; i += 1u) {
         struct spg_device_reading *reading = &out->readings[out->n];
         memcpy(reading->name, dev->channels[i].name, sizeof reading->name);
-        int64_t               value  = 0;
-        const enum spg_status status = spg_device_read(dev, reading->name,
-                                                       &value);
+        enum spg_status status = batch;
+        if (status == SPG_OK) {
+            const struct spg_cmd_result *r = &results[i];
+            if (r->status != SPG_OK || !r->started || !r->exited ||
+                r->exit_code != 0) {
+                status = SPG_E_IO; /* covers the killed straggler */
+            }
+        }
+        int64_t value = 0;
+        if (status == SPG_OK && !parse_output(outputs[i], &value)) {
+            status = SPG_E_FORMAT;
+        }
+        if (status == SPG_OK &&
+            (value < dev->channels[i].min || value > dev->channels[i].max)) {
+            /* #120: the range is a plausibility bound for readings too — an
+             * out-of-range value renders unknown and does not feed contact,
+             * exactly as spg_device_read enforces for a single read. */
+            status = SPG_E_LIMIT;
+        }
         if (status == SPG_OK) {
             reading->value = value;
             reading->known = true;
+            /* Same contact rule as spg_device_read: an answer feeds the
+             * watchdog — this channel (#118) and the device. */
+            dev->contact_pending             = true;
+            dev->channels[i].contact_pending = true;
         } else if (first == SPG_OK) {
             /* Every channel is attempted even after one fails — one dead
              * sensor must not blind the agent to the rest of the plant. The
-             * first failure is what the caller hears about. */
+             * first failure (in table order) is what the caller hears about. */
             first = status;
         }
         out->n += 1u;

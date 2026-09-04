@@ -46,7 +46,13 @@ constexpr size_t SPG_DEVICE_MAX_CHANNELS = 32u;
 /* Milliseconds before a silent program is killed (whole process group). A
  * device that does not answer must never be able to stall the loop that
  * governs it — an agent blocked on a read is an agent that cannot react to
- * anything else. */
+ * anything else.
+ *
+ * #121: this is also the WHOLE sampling round's deadline. spg_device_sample
+ * runs every channel program concurrently in one batch, so the worst-case
+ * latency of a round is one timeout (plus spawn overhead), not one timeout
+ * per channel — a table of 32 dead sensors blocks ~1 s, not ~32 s. Override
+ * per device with sample_timeout_ms. */
 constexpr int SPG_DEVICE_TIMEOUT_MS = 1000;
 
 struct spg_device_channel {
@@ -88,6 +94,12 @@ struct spg_device {
     uint64_t watchdog_timeout; /* 0 disables it */
     uint64_t last_contact;
     bool     contact_pending; /* a transaction succeeded since the last check */
+    /* #121: per-program deadline in milliseconds, and — because a sampling
+     * round runs all programs concurrently — the round's total deadline too.
+     * 0 means SPG_DEVICE_TIMEOUT_MS. An operator whose run has a tight
+     * (wall_ms ...) budget sets this below it; the round can then never
+     * overrun the run budget by a channel-count multiple. */
+    uint64_t sample_timeout_ms;
     /* #118: the tick-level watchdog service latches after driving the safe
      * state so an expiry that persists does not re-drive (and re-journal) it
      * every tick; any successful contact re-arms the latch. */
@@ -171,8 +183,16 @@ struct spg_device_state {
  * A channel that fails is recorded unknown and does NOT abort the others — one
  * unreachable sensor must not blind the agent to the rest of the plant. Same
  * reasoning as spg_device_safe_state, which also attempts every channel.
- * Returns the FIRST failure, or SPG_OK when every channel answered; `out` is
- * complete either way.
+ * Returns the FIRST failure (in table order), or SPG_OK when every channel
+ * answered; `out` is complete either way.
+ *
+ * #121: all channel programs run CONCURRENTLY in one bounded batch through
+ * spg_cmd_executor_run. The round's worst-case latency is one
+ * sample_timeout_ms (default SPG_DEVICE_TIMEOUT_MS = 1000 ms) regardless of
+ * channel count; programs still running at the deadline are killed with
+ * their process groups and render unknown, finished readings are kept, and
+ * the result order is the table order whatever the completion order was.
+ * Fixed stack buffers, no allocation.
  *
  * A successful read counts as contact, so a run that only observes keeps the
  * watchdog alive. Contact is contact — before this existed only a write fed

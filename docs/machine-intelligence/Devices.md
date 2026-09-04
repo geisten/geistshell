@@ -210,6 +210,19 @@ steht, hat den Transport nicht bemerkt.
   regelnde Schleife nicht anhalten. Beim Socket war das `SO_RCVTIMEO`, beim
   Programm der Prozessgruppen-Kill; die Frist ist dieselbe.
 
+- **Eine Runde, eine Frist (#121).** `spg_device_sample` startet alle
+  Kanalprogramme **gleichzeitig** als einen Batch über `spg_cmd_executor_run`.
+  Die Worst-Case-Latenz einer Abtastrunde ist damit eine Frist plus
+  Spawn-Overhead — nicht eine Frist pro Kanal: 32 tote Sensoren blockieren
+  ~1 s, nicht ~32 s. Default `SPG_DEVICE_TIMEOUT_MS` = 1000 ms; konfigurierbar
+  pro Gerät über `sample_timeout_ms` bzw. `--device-sample-ms` (Maximum: der
+  Batch bleibt durch die Frist selbst gebunden, ein Wert oberhalb des
+  Run-`wall_ms` wäre sinnlos — die Runde soll das Wall-Budget nie um ein
+  Kanalzahl-Vielfaches überschreiten können). Nachzügler werden mit ihrer
+  Prozessgruppe getötet und rendern `unknown`; fertige Messungen bleiben
+  erhalten; die Ausgabereihenfolge ist die Tabellenreihenfolge, unabhängig von
+  der Fertigstellungsreihenfolge. Feste Stack-Puffer, keine Allokation.
+
 ## Der Sensor: der fehlende Rückweg
 
 **Jeder Kanal wird pro Schritt abgetastet und gerendert** — einmal vor dem
