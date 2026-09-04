@@ -141,6 +141,25 @@ spg_eval_run_case(const struct spg_fake_response *script, size_t script_n,
     const struct spg_fake_response responses[], size_t n, size_t cap,
     char out[], size_t *len);
 
+/* #12 (LEARNING.md decision 6): how the shape key is built.
+ *
+ * SET is the default and stays what spg_shape_from_script computes: the
+ * deduplicated, sorted capability set — cheaper and more bounded. SEQUENCE is
+ * the finer key for when too many distinct scripts share one set and a single
+ * guard stops protecting meaningfully different tasks: the ORDERED sequence
+ * of "<kind>:<capability>" tokens, joined with '>', consecutive duplicates
+ * collapsed (a retried step is the same step, not a new shape). `finish` is
+ * excluded in both modes. A trajectory longer than SPG_SHAPE_MAX_TOKENS
+ * truncates deterministically at that many tokens. */
+enum spg_shape_mode {
+    SPG_SHAPE_MODE_SET = 0,
+    SPG_SHAPE_MODE_SEQUENCE,
+};
+
+[[nodiscard]] enum spg_status spg_shape_from_script_mode(
+    const struct spg_fake_response responses[], size_t n,
+    enum spg_shape_mode mode, size_t cap, char out[], size_t *len);
+
 /* Per-slug failure recurrence in one journal (docs/LEARNING.md P7): the
  * benefit of a kept lesson is not proven at mint time but observed in the
  * field — a lesson that works makes its failure slug stop recurring. This

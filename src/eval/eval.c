@@ -190,7 +190,16 @@ enum { SPG_SHAPE_MAX_TOKENS = 16u, SPG_SHAPE_TOKEN_MAX = 48u };
 enum spg_status spg_shape_from_script(const struct spg_fake_response responses[],
                                       const size_t n, const size_t cap,
                                       char out[], size_t *len) {
-    if (responses == nullptr || out == nullptr || len == nullptr || cap == 0u) {
+    return spg_shape_from_script_mode(responses, n, SPG_SHAPE_MODE_SET, cap,
+                                      out, len);
+}
+
+enum spg_status spg_shape_from_script_mode(
+    const struct spg_fake_response responses[], const size_t n,
+    const enum spg_shape_mode mode, const size_t cap, char out[],
+    size_t *len) {
+    if (responses == nullptr || out == nullptr || len == nullptr || cap == 0u ||
+        (mode != SPG_SHAPE_MODE_SET && mode != SPG_SHAPE_MODE_SEQUENCE)) {
         return SPG_E_INVALID_ARG;
     }
     *len   = 0u;
@@ -228,6 +237,21 @@ enum spg_status spg_shape_from_script(const struct spg_fake_response responses[]
             (void)snprintf(token, sizeof token, "%s", kind);
         }
 
+        if (mode == SPG_SHAPE_MODE_SEQUENCE) {
+            /* #12: order matters; only CONSECUTIVE duplicates collapse — a
+             * retried step is the same step, but a capability revisited later
+             * is a different trajectory. Overlong trajectories truncate
+             * deterministically at the token cap. */
+            if ((token_count > 0u &&
+                 strcmp(tokens[token_count - 1u], token) == 0) ||
+                token_count == SPG_SHAPE_MAX_TOKENS) {
+                continue;
+            }
+            (void)snprintf(tokens[token_count], sizeof tokens[0], "%s", token);
+            token_count++;
+            continue;
+        }
+
         /* insert into the sorted set, skipping duplicates */
         size_t pos = 0u;
         bool   dup = false;
@@ -252,7 +276,8 @@ enum spg_status spg_shape_from_script(const struct spg_fake_response responses[]
         token_count++;
     }
 
-    size_t w = 0u;
+    const char joiner = mode == SPG_SHAPE_MODE_SEQUENCE ? '>' : '+';
+    size_t     w      = 0u;
     for (size_t i = 0u; i < token_count; i++) {
         const size_t tn = strlen(tokens[i]);
         const size_t sep = (i > 0u) ? 1u : 0u;
@@ -261,7 +286,7 @@ enum spg_status spg_shape_from_script(const struct spg_fake_response responses[]
             return SPG_E_LIMIT;
         }
         if (sep) {
-            out[w++] = '+';
+            out[w++] = joiner;
         }
         memcpy(out + w, tokens[i], tn);
         w += tn;
