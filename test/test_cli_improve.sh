@@ -43,6 +43,29 @@ printf '%s\n' "$OUT4" | grep -q '"lesson":"lesson-rejected","accepted":true,"hel
 printf '%s\n' "$OUT4" | grep -q '"validate":"examples/eval/improve_gated.spg"'
 printf '%s\n' "$OUT4" | grep -q '"held_out_baseline":0,"held_out_final":1,"lessons_kept":1'
 
+# --- #11: --prove-benefit tightens the gate. The improve_suite lesson is kept
+#     by the regression-only gate (equality keeps), but it does NOT flip its
+#     own failing case — with the flag it must be rejected and leave no file. ---
+OUT5=$("$SPG_BIN" improve examples/eval/improve_suite.spg --prove-benefit \
+    --memory-dir "$T/p1")
+printf '%s\n' "$OUT5"
+printf '%s\n' "$OUT5" | grep -q '"lesson":"lesson-rejected","accepted":false.*"benefit_proven":false'
+printf '%s\n' "$OUT5" | grep -q '"lessons_kept":0'
+test ! -f "$T/p1/lesson-rejected.md"
+
+# --- and a lesson that DOES flip its case still passes the stricter gate ---
+OUT6=$("$SPG_BIN" improve examples/eval/improve_gated.spg --prove-benefit \
+    --memory-dir "$T/p2")
+printf '%s\n' "$OUT6" | grep -q '"lesson":"lesson-rejected","accepted":true.*"benefit_proven":true'
+printf '%s\n' "$OUT6" | grep -q '"lessons_kept":1'
+test -f "$T/p2/lesson-rejected.md"
+
+# --- without the flag the output is byte-identical to before (no new field) ---
+if printf '%s\n' "$OUT" | grep -q 'benefit_proven'; then
+    echo "FAIL: benefit_proven leaked into the default output" >&2
+    exit 1
+fi
+
 # --- deterministic: two fresh runs of the failing suite agree byte-for-byte ---
 "$SPG_BIN" improve examples/eval/improve_suite.spg --memory-dir "$T/a" > "$T/a.out"
 "$SPG_BIN" improve examples/eval/improve_suite.spg --memory-dir "$T/b" > "$T/b.out"

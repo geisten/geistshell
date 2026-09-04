@@ -210,6 +210,31 @@ static int test_accept_gate(void) {
     return 0;
 }
 
+/* #11 (LEARNING.md decision 3): the full composition. Without the flag the
+ * gate is the historical regression-only one, whatever case_now_passes says;
+ * with it, the proof can only make the gate stricter — a lesson that does not
+ * flip its own failing case is rejected even when nothing regressed. */
+static int test_prove_benefit_gate(void) {
+    /* flag off: case outcome ignored, historical behaviour */
+    if (!spg_improve_gate(true, true, false, false) ||
+        !spg_improve_gate(true, true, false, true)) {
+        return 1;
+    }
+    /* flag on: the proof is required on top */
+    if (!spg_improve_gate(true, true, true, true) ||
+        spg_improve_gate(true, true, true, false)) {
+        return 1;
+    }
+    /* the proof can never rescue a suite regression or a guard veto */
+    if (spg_improve_gate(false, true, true, true) ||
+        spg_improve_gate(true, false, true, true) ||
+        spg_improve_gate(false, true, false, false) ||
+        spg_improve_gate(true, false, false, false)) {
+        return 1;
+    }
+    return 0;
+}
+
 static int test_reflect_null_args(void) {
     struct spg_lesson lesson = {};
     const struct spg_eval_case_result result = {.outcome =
@@ -375,6 +400,10 @@ int main(void) {
     }
     if (test_gepa_select() != 0) {
         fprintf(stderr, "test_gepa_select failed\n");
+        return 1;
+    }
+    if (test_prove_benefit_gate() != 0) {
+        fprintf(stderr, "test_prove_benefit_gate failed\n");
         return 1;
     }
     if (test_reflect_null_args() != 0) {

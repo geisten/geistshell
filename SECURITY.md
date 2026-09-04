@@ -59,7 +59,12 @@ decision. The gate checks, in order:
   (capabilities are opt-in; an unknown or disabled capability is denied),
 - the capability **kind** must match the action kind,
 - **network**: if `uses_network` is set and the policy's `network_default` is
-  `DENY`, the action is denied (except `ssh_auth_probe`),
+  `DENY`, the action is denied (except `ssh_auth_probe`). For a `device_write`
+  the flag is derived from the target channel's operator-declared
+  `(network true)` field in the loaded table (#119) — never from model text
+  (the recommendation form must say `uses_network false` or it fails to
+  parse). Declaring a channel's transport truthfully is operator trust:
+  geistshell cannot verify what the channel program does once it runs,
 - **budgets**: per-capability budget and global per-action-class budget; usage is
   accumulated monotonically across the run.
 
@@ -124,8 +129,9 @@ untrusted model or running it on a machine you care about.**
   privileges allow, via absolute paths or `..`. `allowed_workdir_prefix`
   constrains the *launch* directory, **not** what the command can touch.
 - **No network enforcement at the syscall level.** Network containment is
-  *declarative*: it relies on the model's self-declared `uses_network` flag and
-  the policy `network_default`. The command itself is **not** inspected, and the
+  *declarative*: it relies on the model's self-declared `uses_network` flag
+  (for device channels: the operator-declared `(network ...)` field of the
+  channel table, #119) and the policy `network_default`. The command itself is **not** inspected, and the
   OS does not block sockets. A program that does network I/O (e.g. `curl`, `nc`)
   launched with `uses_network=false` will **not** be stopped by geistshell.
 - **No privilege drop, no seccomp, no cgroups.** The child inherits the parent's

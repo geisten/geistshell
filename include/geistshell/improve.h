@@ -79,6 +79,22 @@ struct spg_lesson {
     return candidate_passed >= baseline_passed;
 }
 
+/* #11 (LEARNING.md decision 3): the full keep/revert composition, including
+ * the OPT-IN benefit proof. Default (prove_benefit false) is the historical
+ * regression-only gate: suite pass count did not drop AND no live guard
+ * vetoed; benefit stays a longitudinal slug-recurrence question (P7). With
+ * prove_benefit, the gate is STRICTLY tighter: the candidate's own failing
+ * case, re-run live with the lesson present, must additionally now pass —
+ * for rare failure types whose recurrence signal would confirm benefit only
+ * weeks later. case_now_passes is ignored without the flag, so callers can
+ * pass anything (conventionally false). Pure; the live re-run itself is the
+ * caller's injected concern, same as the guard-ring runner. */
+[[nodiscard]] static inline bool spg_improve_gate(bool suite_ok, bool guards_ok,
+                                                  bool prove_benefit,
+                                                  bool case_now_passes) {
+    return suite_ok && guards_ok && (!prove_benefit || case_now_passes);
+}
+
 /* Commit the gate's decision for a lesson that was already tentatively saved
  * into the store before re-evaluation: keep it when accepted, otherwise delete
  * it (revert). Sets *kept. Returns SPG_E_INVALID_ARG on null args, SPG_E_IO if
