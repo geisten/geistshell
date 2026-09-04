@@ -2110,6 +2110,7 @@ static int agent_command(int argc, char **argv) {
      * Two means the machine may miss one decision's worth of contact before
      * it is driven to its safe state. */
     uint64_t device_watchdog_steps = 2u;
+    size_t   machine_history_window = 0u; /* #79: off by default */
     /* One tick's readings. Lives here rather than inside spg_device so the
      * port stays free of loop state and the block can be parsed back out of
      * an eval fixture. */
@@ -2241,6 +2242,22 @@ static int agent_command(int argc, char **argv) {
                         argv[i + 1], spg_status_to_string(dstatus), bad);
                 return 2;
             }
+            i += 1;
+            continue;
+        }
+        /* #79: bounded history window over machine snapshots. 0 (default)
+         * disables it — context and journal stay byte-identical. */
+        if (strcmp(argv[i], "--machine-history") == 0 && i + 1 < argc) {
+            char      *end = nullptr;
+            const long n   = strtol(argv[i + 1], &end, 10);
+            if (end == argv[i + 1] || *end != '\0' || n < 0 ||
+                (unsigned long)n > SPG_MACHINE_HISTORY_CAP) {
+                fprintf(stderr,
+                        "agent: bad --machine-history (0..%u): %s\n",
+                        (unsigned)SPG_MACHINE_HISTORY_CAP, argv[i + 1]);
+                return 2;
+            }
+            machine_history_window = (size_t)n;
             i += 1;
             continue;
         }
@@ -2692,6 +2709,9 @@ static int agent_command(int argc, char **argv) {
          * to start. */
         (void)spg_device_sample(&device, &device_state);
     }
+    static struct spg_machine_history machine_history;
+    spg_machine_history_init(&machine_history, machine_history_window);
+
     const struct spg_agent_run_inputs inputs = {
         .model         = &model,
         .policy        = &policy,
@@ -2723,6 +2743,9 @@ static int agent_command(int argc, char **argv) {
         .profile_model = model_profile.present ? &model_profile : nullptr,
         .device       = device.n_channels > 0u ? &device : nullptr,
         .device_state = device.n_channels > 0u ? &device_state : nullptr,
+        /* #79: window 0 keeps the pointer null — byte-identical context. */
+        .machine_history =
+            machine_history_window > 0u ? &machine_history : nullptr,
     };
     /* Read before rcfg so the loop can watch it: the expect marker has to be
      * known at run time, not only at judge time. */
@@ -3594,6 +3617,58 @@ static enum spg_status eval_run_suite(const char                 *suite_path,
         const bool has_fixture = eval_str(nod, c, suite_text.n, suite_text.data,
                                           "fixture", fixture, sizeof fixture);
 
+        /* #79: optional (machine_history "<fixture>" ...) — seed the window
+         * with scripted snapshots so a case can present the SAME current
+         * state after a rising or a falling past. Each value is a
+         * (machine-state ...) fixture file, pushed oldest-first with tick
+         * indices 1..k; the run's own ticks then append behind them. */
+        static struct spg_machine_history case_history;
+        bool           has_history = false;
+        const uint32_t hist_field  = eval_field(nod, c, suite_text.n,
+                                                suite_text.data,
+                                                "machine_history");
+        if (hist_field != SPG_SEXPR_INVALID_INDEX) {
+            spg_machine_history_init(&case_history, SPG_MACHINE_HISTORY_CAP);
+            uint64_t seed_tick = 1u;
+            for (uint32_t v = spg_sexpr_second_child(nod, hist_field);
+                 v != SPG_SEXPR_INVALID_INDEX; v = nod[v].next_sibling) {
+                struct spg_text_span sp;
+                char                 hist_path[CLI_PATH_MAX];
+                if (!spg_sexpr_string_payload_span(&nod[v], &sp) ||
+                    sp.length + 1u > sizeof hist_path) {
+                    fprintf(stderr, "eval: bad (machine_history ...) value\n");
+                    rc = SPG_E_SCHEMA;
+                    goto done;
+                }
+                memcpy(hist_path, suite_text.data + sp.offset, sp.length);
+                hist_path[sp.length] = '\0';
+                struct file_buffer htext = {};
+                if (read_file(hist_path, &htext) != SPG_OK) {
+                    fprintf(stderr,
+                            "eval: cannot read history fixture %s\n",
+                            hist_path);
+                    rc = SPG_E_IO;
+                    goto done;
+                }
+                static struct spg_machine_state hist_state;
+                const enum spg_status hs = spg_machine_state_parse(
+                    htext.n, htext.data, ws.token_capacity, ws.tokens,
+                    ws.node_capacity, ws.nodes, &hist_state);
+                free_file_buffer(&htext);
+                if (hs != SPG_OK) {
+                    fprintf(stderr,
+                            "eval: invalid history fixture %s: %s\n",
+                            hist_path, spg_status_to_string(hs));
+                    rc = hs;
+                    goto done;
+                }
+                spg_machine_history_push(&case_history, seed_tick,
+                                         &hist_state);
+                seed_tick += 1u;
+            }
+            has_history = true;
+        }
+
         /* #64: the scenario is a machine state. Reading it from a file rather
          * than sampling the host is what makes a diagnosis case reproducible
          * on a laptop with no Pi attached. */
@@ -3868,6 +3943,9 @@ static enum spg_status eval_run_suite(const char                 *suite_path,
                     if (has_goal_file) {
                         gin.machine_goal = &case_machine_goal;
                     }
+                    if (has_history) {
+                        gin.machine_history = &case_history;
+                    }
                     gin.machine_ablate = o->ablate;
                     if (has_fixture) {
                         if (!eval_sandbox_prepare(&sandbox_state, name, s,
@@ -3961,6 +4039,9 @@ static enum spg_status eval_run_suite(const char                 *suite_path,
                 }
                 if (has_goal_file) {
                     cin.machine_goal = &case_machine_goal;
+                }
+                if (has_history) {
+                    cin.machine_history = &case_history;
                 }
                 cin.machine_ablate = o->ablate;
                 if (has_fixture) {

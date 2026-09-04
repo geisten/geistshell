@@ -300,6 +300,72 @@ spg_machine_sample(uint64_t timestamp_ns, const struct spg_cpu_sample *prev,
     const struct spg_process_sample   prev_procs[],
     const struct spg_process_profile *profile, struct spg_machine_state *out);
 
+/* --- phase 3b (#79): bounded history window ------------------------------ */
+
+/* One historised tick: the normalised scalars only. The per-process list is
+ * deliberately absent — N ticks of process detail would explode the context
+ * budget; trend questions are about the machine, and drill-down is what the
+ * CURRENT snapshot is for (documented in Context.md). Unknown values stay the
+ * UNKNOWN sentinels and render as `unknown`, never interpolated. */
+struct spg_machine_history_entry {
+    uint64_t tick; /* the loop's injected step clock, explicit in the render */
+    uint64_t cpu_utilisation_bp;
+    uint64_t load_1_cbp;
+    uint64_t memory_used_bytes;
+    uint64_t swap_used_bytes;
+    int64_t  temperature_mc;
+    uint64_t cpu_freq_khz;
+    enum spg_throttle_state throttle;
+    uint64_t process_count;
+};
+
+#define SPG_MACHINE_HISTORY_CAP 8u
+
+/* Fixed-capacity ring over the last `window` pushed snapshots: constant
+ * memory, no allocation per tick, and a context cost CONSTANT in the number
+ * of ticks — the same context-invariance property as the P6 lesson
+ * injection. window is clamped to SPG_MACHINE_HISTORY_CAP at init; 0
+ * disables history entirely (nothing recorded, nothing rendered — the
+ * ablation arm for #71, byte-identical context to a build without it). */
+struct spg_machine_history {
+    size_t window; /* 0 = disabled */
+    size_t n;      /* stored entries, <= window */
+    size_t head;   /* next write slot in the ring */
+    struct spg_machine_history_entry entries[SPG_MACHINE_HISTORY_CAP];
+};
+
+void spg_machine_history_init(struct spg_machine_history *history,
+                              size_t window);
+
+/* Record one snapshot's scalars under the given tick index. The oldest entry
+ * falls out once `window` entries are stored. No-op when disabled or on null
+ * args. */
+void spg_machine_history_push(struct spg_machine_history *history,
+                              uint64_t tick,
+                              const struct spg_machine_state *state);
+
+/* Upper bound for a rendered window: SPG_MACHINE_HISTORY_CAP entries of nine
+ * numbered fields. A caller can size a stack buffer from this and never
+ * truncate. */
+constexpr size_t SPG_MACHINE_HISTORY_RENDER_CAP = 2048u;
+
+/* Deterministic s-expression, oldest -> newest, one entry per pushed tick:
+ *
+ *   (machine-history
+ *     (t 3 (cpu-load-bp 100) ... (process-count 170))
+ *     (t 4 ...))
+ *
+ * An enabled-but-empty history renders the explicit empty form
+ * `(machine-history)` — the first tick is a valid state, not a special case.
+ * A DISABLED history (window 0, or null) renders nothing and returns SPG_OK
+ * with *out_required = 0. Identical input yields identical bytes; on
+ * SPG_E_LIMIT dst holds no partial record. */
+[[nodiscard]] enum spg_status
+spg_machine_history_render(const struct spg_machine_history *history,
+                           size_t dst_capacity,
+                           char dst[static dst_capacity],
+                           size_t *out_required);
+
 /* --- layer 3: serialisation --------------------------------------------- */
 
 /* Deterministic s-expression: fixed field order, unknown values as the symbol

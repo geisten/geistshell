@@ -1,0 +1,29 @@
+; Phase 3b (#79): does the history window reach the DECISION, not just the
+; context? The two cases share one current snapshot (78 C); only the seeded
+; (machine_history ...) differs — rising 60->68->74 vs falling 92->86->82.
+; A model that answers both cases identically has the window in its context
+; but not in its judgement.
+;
+; Real-model suite: needs a GGUF and is not part of `make test` (the scripted
+; smoke lives in test_cli_machine_history.sh). Run it like diagnosis_model.spg:
+;   geistshell eval examples/eval/machine/history_probe.spg --samples 5 --constrained
+(eval_suite
+ (config "examples/eval/machine/run_local.spg")
+
+ (case (name "trend-rising") (model "geist")
+       (machine_history "examples/eval/machine/states/trend_up_1.spg"
+                        "examples/eval/machine/states/trend_up_2.spg"
+                        "examples/eval/machine/states/trend_up_3.spg")
+       (machine "examples/eval/machine/states/trend_current.spg")
+       (goal "The context shows a machine-history window and the current machine state. Judge the temperature TREND across them. Answer with exactly one action: (recommend (kind finish) (reason \"rising\")) or (recommend (kind finish) (reason \"falling\")). Do not propose any other action.")
+       (max_steps 2)
+       (expect (termination finished) (diagnosis "rising")))
+
+ (case (name "trend-falling") (model "geist")
+       (machine_history "examples/eval/machine/states/trend_down_1.spg"
+                        "examples/eval/machine/states/trend_down_2.spg"
+                        "examples/eval/machine/states/trend_down_3.spg")
+       (machine "examples/eval/machine/states/trend_current.spg")
+       (goal "The context shows a machine-history window and the current machine state. Judge the temperature TREND across them. Answer with exactly one action: (recommend (kind finish) (reason \"rising\")) or (recommend (kind finish) (reason \"falling\")). Do not propose any other action.")
+       (max_steps 2)
+       (expect (termination finished) (diagnosis "falling"))))

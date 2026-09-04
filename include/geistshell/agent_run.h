@@ -59,6 +59,10 @@ struct spg_agent_run_inputs {
     /* Optional attached machine for device_write. Null = no machine reachable
      * from this run; the executor says so and the run continues. */
     struct spg_device *device;
+    /* #79: caller-owned bounded history ring (nullable). Init with the
+     * desired window; the loop pushes each tick's snapshot and the context
+     * renders the window. Callers may pre-seed entries (eval fixtures). */
+    struct spg_machine_history *machine_history;
     /* Optional plant readings for the context, re-sampled between ticks.
      * Null = no (device-state ...) block, and the context is unchanged. */
     struct spg_device_state *device_state;

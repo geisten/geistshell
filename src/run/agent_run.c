@@ -116,6 +116,7 @@ enum spg_status spg_agent_run(const struct spg_agent_run_inputs *inputs,
         .profile       = inputs->profile,
         .pause_ledger  = inputs->pause_ledger,
         .device        = inputs->device,
+        .machine_history = inputs->machine_history,
         .device_state  = inputs->device_state,
     };
 
