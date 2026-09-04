@@ -555,6 +555,17 @@ the numerator (does flat context still improve task success?) needs a
 model-completable task corpus and real inference — the remaining half of #25.
 A benchmark that measures only the free half must say so.
 
+**The numerator arm (#25):** `eval/bench_learning_gain.sh` is the reproducible
+three-arm harness for the success side — control (no memory) vs geistshell
+(one directive/tick) vs full-index RAG (whole index/tick) — as the lesson set
+accumulates across passes, reporting task-success rate and context-tokens/tick
+per arm so the headline gain-per-context-token can be computed. It is
+model-gated (a real GGUF, not `make test`) because a fake model ignores
+injected learning, and it is written to be able to **refute** the claim: a
+null lift retires this paragraph rather than keeping it unproven. The number
+itself is produced on a model host; the harness and its honest framing are the
+deliverable here.
+
 The benchmark also surfaced and fixed a real bug: `spg_mem_directive`
 originally read the *capped* index, so a slug beyond `SPG_MEM_INDEX_TOPK`
 injected nothing; it now reads the description from the memory file, available
