@@ -142,3 +142,56 @@ spg_device_executor_step(const struct spg_device_executor_state  *state,
     out->sequence = sequence;
     return status_j;
 }
+
+enum spg_status spg_device_watchdog_service(
+    struct spg_device *device, struct spg_journal_writer *journal,
+    const struct spg_device_executor_config *config,
+    struct spg_device_executor_result *out, uint64_t *out_sequence) {
+    if (config == nullptr || out_sequence == nullptr) {
+        return SPG_E_INVALID_ARG;
+    }
+    *out_sequence = 0u;
+    if (out != nullptr) {
+        *out = (struct spg_device_executor_result){
+            .outcome = SPG_DEVICE_OUTCOME_NOT_EXECUTED};
+    }
+    if (device == nullptr) {
+        return SPG_OK; /* no machine on this run — nothing to guard */
+    }
+    const enum spg_device_watchdog wd =
+        spg_device_watchdog_check(device, config->timestamp_ns);
+    if (wd == SPG_WATCHDOG_OK) {
+        /* Contact resumed: the next expiry is a new event, not the tail of
+         * the last one. */
+        device->watchdog_tripped = false;
+        return SPG_OK;
+    }
+    if (wd != SPG_WATCHDOG_EXPIRED || device->watchdog_tripped) {
+        return SPG_OK; /* disabled, or already handled this expiry */
+    }
+    device->watchdog_tripped = true;
+    /* Same rule as the pre-write check: the one command a silent machine must
+     * still be given is its safe state. Best effort across all channels; the
+     * first failure is what the journal shows. */
+    const enum spg_status safe = spg_device_safe_state(device);
+    if (out != nullptr) {
+        out->outcome           = SPG_DEVICE_OUTCOME_WATCHDOG_EXPIRED;
+        out->safe_state_driven = true;
+        out->safe_state_status = safe;
+    }
+    if (!config->write_journal || journal == nullptr) {
+        return SPG_OK;
+    }
+    char      record[128] = {};
+    const int written =
+        snprintf(record, sizeof record,
+                 "(device_watchdog (outcome expired) (safe_state %s))",
+                 safe == SPG_OK ? "ok" : "failed");
+    if (written < 0 || (size_t)written >= sizeof record) {
+        return SPG_E_LIMIT;
+    }
+    return spg_journal_writer_append(
+        journal, config->timestamp_ns, config->parent_sequence,
+        SPG_JOURNAL_EVENT_ACTION, SPG_E_INVALID_STATE, (size_t)written,
+        (const uint8_t *)record, out_sequence);
+}

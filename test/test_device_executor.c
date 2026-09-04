@@ -136,6 +136,69 @@ static int test_watchdog_precedes_the_write(void) {
     return 0;
 }
 
+/* #118: the tick-level service — expiry handled without any device_write
+ * recommendation in flight, latched so a persisting expiry acts once, and
+ * re-armed by resumed contact. */
+static int test_watchdog_service(void) {
+    const struct spg_device_executor_config at5   = {.timestamp_ns = 5u};
+    const struct spg_device_executor_config at50  = {.timestamp_ns = 50u};
+    const struct spg_device_executor_config at60  = {.timestamp_ns = 60u};
+    const struct spg_device_executor_config at200 = {.timestamp_ns = 200u};
+    struct spg_device_executor_result       out   = {};
+    uint64_t                                seq   = 77u;
+
+    /* No machine on the run: a no-op, not an error. */
+    if (spg_device_watchdog_service(nullptr, nullptr, &at5, &out, &seq) !=
+            SPG_OK ||
+        seq != 0u || out.outcome != SPG_DEVICE_OUTCOME_NOT_EXECUTED) {
+        return 1;
+    }
+
+    struct spg_device dev = {};
+    build_device(&dev);
+    spg_device_arm_watchdog(&dev, 10u, 0u);
+
+    /* Within the deadline: nothing driven. */
+    if (spg_device_watchdog_service(&dev, nullptr, &at5, &out, &seq) !=
+            SPG_OK ||
+        out.safe_state_driven || dev.watchdog_tripped) {
+        return 1;
+    }
+
+    /* Expired: the safe state is driven even though NO device_write is in
+     * flight — this is the gap the service closes. The channel program does
+     * not exist, so the failed safe state must be visible, never silent. */
+    if (spg_device_watchdog_service(&dev, nullptr, &at50, &out, &seq) !=
+            SPG_OK ||
+        out.outcome != SPG_DEVICE_OUTCOME_WATCHDOG_EXPIRED ||
+        !out.safe_state_driven || out.safe_state_status == SPG_OK ||
+        !dev.watchdog_tripped) {
+        return 1;
+    }
+
+    /* Still expired on the next tick: latched, not re-driven. */
+    if (spg_device_watchdog_service(&dev, nullptr, &at60, &out, &seq) !=
+            SPG_OK ||
+        out.outcome != SPG_DEVICE_OUTCOME_NOT_EXECUTED) {
+        return 1;
+    }
+
+    /* Contact resumes: the latch re-arms, and a LATER expiry acts again. */
+    dev.contact_pending             = true;
+    dev.channels[0].contact_pending = true;
+    if (spg_device_watchdog_service(&dev, nullptr, &at60, &out, &seq) !=
+            SPG_OK ||
+        dev.watchdog_tripped) {
+        return 1;
+    }
+    if (spg_device_watchdog_service(&dev, nullptr, &at200, &out, &seq) !=
+            SPG_OK ||
+        out.outcome != SPG_DEVICE_OUTCOME_WATCHDOG_EXPIRED) {
+        return 1;
+    }
+    return 0;
+}
+
 /* A denied decision, or a recommendation of another kind, must never reach the
  * machine — the gate is upstream, and the executor must not second-guess it in
  * either direction. */
@@ -201,6 +264,7 @@ int main(void) {
         {"dry_run", test_dry_run},
         {"refused_out_of_range", test_refused_out_of_range},
         {"watchdog_precedes_the_write", test_watchdog_precedes_the_write},
+        {"watchdog_service", test_watchdog_service},
         {"not_our_action", test_not_our_action},
         {"span_bounds", test_span_bounds},
     };
