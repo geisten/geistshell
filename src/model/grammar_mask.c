@@ -303,6 +303,23 @@ size_t spg_scaffold_for_kind(enum spg_action_kind            kind,
     return 0u;
 }
 
+size_t spg_pmi_pick(const size_t n, const float logits[],
+                    const float baseline[]) {
+    if (n == 0u || logits == nullptr) {
+        return 0u;
+    }
+    size_t best  = 0u;
+    float  bestv = logits[0] - (baseline != nullptr ? baseline[0] : 0.0f);
+    for (size_t i = 1u; i < n; i += 1u) {
+        const float v = logits[i] - (baseline != nullptr ? baseline[i] : 0.0f);
+        if (v > bestv) { /* strict > keeps the lowest index on a tie */
+            bestv = v;
+            best  = i;
+        }
+    }
+    return best;
+}
+
 size_t spg_reason_comment(const char *raw, const size_t cap, char out[]) {
     if (out == nullptr || cap == 0u) {
         return 0u;

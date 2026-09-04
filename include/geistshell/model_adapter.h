@@ -103,6 +103,12 @@ struct spg_model_adapter_config {
     const char *const *command_names;
     size_t             command_name_count;
 
+    /* #124/#57 PMI-calibrate the masked choice slots (kind, capability):
+     * subtract a request-independent baseline logit per candidate, measured
+     * once at init against a request-free anchor, so the slot follows the
+     * request-driven signal rather than the pretraining prior. false (default)
+     * = raw argmax, byte-identical to before. GEIST + constrained only. */
+    bool pmi_calibrate;
     /* #125 reason-first scaffold: decode up to reason_budget free tokens
      * BEFORE the forced prefix and emit them as one parse-safe comment line,
      * so a small model gets its own thinking in the KV cache before the
@@ -133,6 +139,14 @@ struct spg_model_adapter {
     const char *const                 *command_names; /* #56 command mask */
     size_t                             command_name_count;
     size_t                             reason_budget; /* #125 reason-first */
+
+    /* #124 PMI calibration: a bounded map of candidate first-token -> its
+     * request-free baseline logit, measured once at init. 0 entries (or
+     * !pmi_calibrate) means the choice slots run raw argmax. */
+    bool     pmi_calibrate;
+    size_t   pmi_n;
+    int32_t  pmi_tok[128];
+    float    pmi_base[128];
 
     /* REMOTE transport state: opaque CURL handle, borrowed config strings, and
      * the sampling values forwarded to the chat/completions request. */

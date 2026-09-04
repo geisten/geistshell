@@ -247,6 +247,26 @@ int main(void) {
         return 1;
     }
 
+    /* #124/#57 PMI selector: null baseline is plain argmax; a baseline shifts
+     * the winner by the request-free prior; ties keep the lowest index. */
+    {
+        const float logits[3] = {1.0f, 3.0f, 2.0f};
+        if (spg_pmi_pick(3u, logits, nullptr) != 1u) {
+            return fail("null baseline must be raw argmax");
+        }
+        /* candidate 1 is common in pretraining (high baseline), so once its
+         * prior is subtracted the request-driven winner becomes candidate 2. */
+        const float baseline[3] = {0.0f, 2.5f, 0.0f};
+        if (spg_pmi_pick(3u, logits, baseline) != 2u) {
+            return fail("calibration must subtract the pretraining prior");
+        }
+        const float tie[2] = {5.0f, 5.0f};
+        if (spg_pmi_pick(2u, tie, nullptr) != 0u ||
+            spg_pmi_pick(0u, tie, nullptr) != 0u) {
+            return fail("ties keep the lowest index; n=0 returns 0");
+        }
+    }
+
     /* #125 reason-first: the free reasoning is wrapped as ONE s-expr comment
      * line so the form the parser then reads is untouched. Prove it survives
      * an adversarial reasoning string (newlines that would end the comment,

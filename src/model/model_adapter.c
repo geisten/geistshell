@@ -298,6 +298,21 @@ static double choice_rand(struct spg_model_adapter *adapter) {
     return (double) (x >> 11) * (1.0 / 9007199254740992.0);
 }
 
+/* #124: the request-free baseline logit for token `tok`, or 0 when calibration
+ * is off or the token was not measured (both -> raw argmax for that token). */
+static float pmi_lookup(const struct spg_model_adapter *adapter,
+                        const int32_t tok) {
+    if (!adapter->pmi_calibrate) {
+        return 0.0f;
+    }
+    for (size_t i = 0u; i < adapter->pmi_n; i += 1u) {
+        if (adapter->pmi_tok[i] == tok) {
+            return adapter->pmi_base[i];
+        }
+    }
+    return 0.0f;
+}
+
 static enum spg_status decode_choice_slot(
     struct spg_model_adapter *adapter, struct spg_model_generate_result *result,
     const char *const *names, const size_t names_n, char *out,
@@ -317,7 +332,7 @@ static enum spg_status decode_choice_slot(
          * ponytail: 512-candidate cap — kind/capability prefixes never approach
          * it; widen if a larger vocabulary of names is ever masked here. */
         geist_token_t cand[512];
-        float         cand_logit[512];
+        float         cand_logit[512]; /* #124: request-free-CALIBRATED logit */
         size_t        nc   = 0u;
         float         maxl = -INFINITY;
         for (size_t t = 0u; t < n_vocab && nc < 512u; t += 1u) {
@@ -327,10 +342,13 @@ static enum spg_status decode_choice_slot(
                 !spg_choice_prefix_ok(names, names_n, out, piece)) {
                 continue;
             }
+            /* #124: subtract the token's request-free baseline (0 when
+             * calibration is off), so both the argmax and the softmax below
+             * see the request-driven signal, not the pretraining prior. */
             cand[nc]       = (geist_token_t) t;
-            cand_logit[nc] = logits[t];
-            if (logits[t] > maxl) {
-                maxl = logits[t];
+            cand_logit[nc] = logits[t] - pmi_lookup(adapter, (int32_t) t);
+            if (cand_logit[nc] > maxl) {
+                maxl = cand_logit[nc];
             }
             nc += 1u;
         }
@@ -356,13 +374,9 @@ static enum spg_status decode_choice_slot(
                 }
             }
         } else {
-            float best_logit = cand_logit[0];
-            for (size_t i = 1u; i < nc; i += 1u) {
-                if (cand_logit[i] > best_logit) {
-                    best_logit = cand_logit[i];
-                    best       = cand[i];
-                }
-            }
+            /* #124: the tested pure selector over the calibrated logits (the
+             * baseline is already folded in above, so pass null). */
+            best = cand[spg_pmi_pick(nc, cand_logit, nullptr)];
         }
         const char *piece = geist_session_token_to_str(adapter->session, best);
         const char *ap    = piece;
@@ -590,6 +604,71 @@ static enum spg_status generate_geist(
     return SPG_OK;
 }
 
+/* #124: record token `tok`'s request-free baseline logit `base`, deduped, up
+ * to the fixed map capacity. */
+static void pmi_add(struct spg_model_adapter *adapter, const int32_t tok,
+                    const float base) {
+    for (size_t i = 0u; i < adapter->pmi_n; i += 1u) {
+        if (adapter->pmi_tok[i] == tok) {
+            return;
+        }
+    }
+    if (adapter->pmi_n < sizeof adapter->pmi_tok / sizeof adapter->pmi_tok[0]) {
+        adapter->pmi_tok[adapter->pmi_n]  = tok;
+        adapter->pmi_base[adapter->pmi_n] = base;
+        adapter->pmi_n += 1u;
+    }
+}
+
+/* #124: measure each choice candidate's first-token logit against a
+ * request-free anchor (the forced prefix alone, or the bare recommend opening
+ * — no goal, no observation), so the calibration captures the pretraining
+ * prior the request should be read against. Best-effort: any failure leaves
+ * pmi_n = 0 and every slot runs raw argmax. */
+static void measure_pmi_baseline(struct spg_model_adapter               *adapter,
+                                 const struct spg_model_adapter_config *config) {
+    const char *anchor = (adapter->force_prefix != nullptr &&
+                          adapter->force_prefix[0] != '\0')
+                             ? adapter->force_prefix
+                             : "(recommend (kind ";
+    if (geist_session_set_prompt(adapter->session, anchor) != GEIST_OK) {
+        return;
+    }
+    size_t       n_vocab = 0u;
+    const float *logits  = geist_session_peek_logits(adapter->session, &n_vocab);
+    if (logits == nullptr || n_vocab == 0u) {
+        return; /* arch without peek_logits: no calibration, safe */
+    }
+    /* Candidate names: the kind vocabulary plus every masked capability. Their
+     * FIRST tokens are what the choice slot decides between first. */
+    const char  *kn[16];
+    const size_t knn = spg_kind_names(kn, sizeof kn / sizeof kn[0]);
+    for (size_t i = 0u; i < knn; i += 1u) {
+        geist_token_t ids[8];
+        size_t        n = 0u;
+        if (geist_session_tokenize(adapter->session, kn[i],
+                                   sizeof ids / sizeof ids[0], ids, &n) ==
+                GEIST_OK &&
+            n > 0u && (size_t)ids[0] < n_vocab) {
+            pmi_add(adapter, (int32_t)ids[0], logits[ids[0]]);
+        }
+    }
+    for (size_t i = 0u; i < config->capability_count; i += 1u) {
+        const char *name = config->capabilities[i].name;
+        if (name == nullptr || name[0] == '\0') {
+            continue;
+        }
+        geist_token_t ids[8];
+        size_t        n = 0u;
+        if (geist_session_tokenize(adapter->session, name,
+                                   sizeof ids / sizeof ids[0], ids, &n) ==
+                GEIST_OK &&
+            n > 0u && (size_t)ids[0] < n_vocab) {
+            pmi_add(adapter, (int32_t)ids[0], logits[ids[0]]);
+        }
+    }
+}
+
 enum spg_status
 spg_model_adapter_init(struct spg_model_adapter *adapter,
                        const struct spg_model_adapter_config *config) {
@@ -675,6 +754,14 @@ spg_model_adapter_init(struct spg_model_adapter *adapter,
      * explore different valid decisions. */
     adapter->temperature = config->sampling.temperature;
     adapter->choice_rng  = config->sampling.random_seed * 2654435761u + 1u;
+
+    adapter->pmi_calibrate = config->pmi_calibrate;
+    if (adapter->pmi_calibrate) {
+        /* #124: measure the request-free baseline now, once. A failure here
+         * (an arch without peek_logits) simply leaves pmi_n = 0, and every
+         * choice slot falls back to raw argmax — never an error. */
+        measure_pmi_baseline(adapter, config);
+    }
 
     adapter->initialized = true;
     return SPG_OK;

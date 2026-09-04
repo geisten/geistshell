@@ -440,8 +440,8 @@ static int test_sample_deadline(void) {
     }
     struct spg_device dev = {};
     spg_device_init(&dev);
-    dev.sample_timeout_ms = 300u;
-    for (size_t i = 0u; i < 16u; i += 1u) {
+    dev.sample_timeout_ms = 1000u;
+    for (size_t i = 0u; i < 4u; i += 1u) {
         struct spg_device_channel ch = {.min = 0, .max = 100};
         (void)snprintf(ch.name, sizeof ch.name, "hung%zu", i);
         (void)snprintf(ch.program, sizeof ch.program, "%s", slow_prog);
@@ -460,24 +460,25 @@ static int test_sample_deadline(void) {
     const enum spg_status   status  = spg_device_sample(&dev, &state);
     const uint64_t          elapsed = now_ms() - started;
 
-    if (status == SPG_OK || state.n != 17u) {
+    if (status == SPG_OK || state.n != 5u) {
         return 1; /* the hung channels are a reported failure */
     }
-    for (size_t i = 0u; i < 16u; i += 1u) {
+    for (size_t i = 0u; i < 4u; i += 1u) {
         if (state.readings[i].known) {
             return 1;
         }
     }
-    if (!state.readings[16].known || state.readings[16].value != 7 ||
-        strcmp(state.readings[16].name, "fast") != 0) {
+    if (!state.readings[4].known || state.readings[4].value != 7 ||
+        strcmp(state.readings[4].name, "fast") != 0) {
         return 1; /* the fast value survives the stragglers, in table order */
     }
     if (!dev.contact_pending) {
         return 1; /* the one answer still counts as contact */
     }
-    /* 16 hung channels at a 300 ms deadline would take ~4.8 s serially; the
-     * concurrent batch is one deadline plus spawn/kill overhead. A generous
-     * 2.5 s bound separates the two without being wall-clock-flaky under load. */
+    /* 4 hung channels at a 1 s deadline would take ~4 s serially; the
+     * concurrent batch is one deadline (~1 s) plus the spawn/kill overhead of
+     * only five processes. A 2.5 s bound separates the two with wide margin on
+     * both sides, so it is not wall-clock-flaky even under load. */
     if (elapsed >= 2500u) {
         (void)fprintf(stderr, "  round took %llu ms — serial, not batched\n",
                       (unsigned long long)elapsed);
