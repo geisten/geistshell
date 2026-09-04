@@ -334,6 +334,13 @@ enum spg_status spg_device_read(struct spg_device *dev, const char *name,
     if (!parse_output(output, &value)) {
         return SPG_E_FORMAT;
     }
+    if (value < channel->min || value > channel->max) {
+        /* The operator's range is also the plausibility bound for readings: a
+         * physically impossible number must not become a known measurement,
+         * and it must not feed the watchdog — a sensor that answers garbage
+         * is not a machine in contact. `out` stays untouched. */
+        return SPG_E_LIMIT;
+    }
     *out = value;
     /* Contact is contact: a successful read keeps the watchdog fed, so a run
      * that only observes does not look like a machine gone silent. */

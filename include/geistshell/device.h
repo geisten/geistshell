@@ -221,7 +221,14 @@ spg_device_watchdog_check(struct spg_device *dev, uint64_t now);
  * stdout. Exit != 0, unparsable output or the timeout are SPG_E_IO — and the
  * reading stays untouched, never 0. There is no connect step: the first read
  * IS the connectivity probe, and a plant that cannot be read is something the
- * caller is told about per channel, not a session that failed to open. */
+ * caller is told about per channel, not a session that failed to open.
+ *
+ * The channel's range bounds readings as well as writes: a parsed value
+ * outside min..max is SPG_E_LIMIT, the reading stays untouched, and it does
+ * NOT count as watchdog contact. A defective or mis-scaled sensor must not
+ * inject an impossible number into the context/journal, and it must not keep
+ * a watchdog alive. The range is inclusive on both ends, same as the write
+ * check. */
 [[nodiscard]] enum spg_status spg_device_read(struct spg_device *dev,
                                               const char *name, int64_t *out);
 
