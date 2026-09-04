@@ -3,9 +3,13 @@
  * load-bearing — plus the budgeted one-line render. */
 
 /* mkdtemp is POSIX; -std=c23 defines __STRICT_ANSI__, so glibc hides it on
- * Linux unless a feature-test macro asks for it (macOS exposes it by
- * default). The same 200809L the other test programs declare. */
+ * Linux unless a feature-test macro asks for it. On macOS it is a BSD
+ * extension that _POSIX_C_SOURCE alone would hide, so _DARWIN_C_SOURCE is
+ * needed too — the exact pair test_device.c / test_improve.c declare. */
 #define _POSIX_C_SOURCE 200809L
+#if defined(__APPLE__)
+#    define _DARWIN_C_SOURCE 1
+#endif
 
 #include "geistshell/context.h"
 #include "geistshell/pref.h"
