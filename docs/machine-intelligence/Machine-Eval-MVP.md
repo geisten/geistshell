@@ -33,10 +33,11 @@ Restrisiko: die manipulierte Memory-Lesson (7) und der Replay mit verändertem
 Host-State (11). Angriff 9 — der Parser kennt keine Obergrenze für `reason` —
 ist teilweise offen.
 
-## Das erste Go/No-Go ist beantwortet
+## Die Frage nach der Rule Baseline ist beantwortet — und war die falsche
 
-Plan §19, Woche 3 stellt die Frage: *„Liefert AI gegenüber Regeln relevanten
-Zusatznutzen?"* [Go-No-Go.md](Go-No-Go.md) hat sie gemessen.
+Plan §19, Woche 3 fragt: *„Liefert AI gegenüber Regeln relevanten Zusatznutzen?"*
+Phase 4 und 5 haben sie gemessen ([Diagnosis-Benchmark.md](Diagnosis-Benchmark.md),
+[Small-Model-Gap.md](Small-Model-Gap.md)):
 
 | Methode | Known | Held-out | Zeit |
 |---|---|---|---|
@@ -45,15 +46,41 @@ Zusatznutzen?"* [Go-No-Go.md](Go-No-Go.md) hat sie gemessen.
 | BitNet b1.58-3B | 0/6 | 0/3 | 388 s |
 | BitNet b1.58-large | 0/6 | 0/3 | 89 s |
 
-Damit ist die PIVOT-Bedingung aus §20 wörtlich erfüllt: *Regeln sind meist
-besser, Governance und Evaluation sind klar nützlich.* Dass das Ergebnis in
-diesem Repo überhaupt steht — samt Sensitivitätslauf, in dem die Regeln bei um
-10 % angehobenen Schwellwerten selbst auf 6/9 einbrechen — ist der Grund, warum
-den guten Zahlen daneben jemand glauben kann.
+**Die Antwort steht, und sie wird sich nicht drehen.** Neun Szenarien, ein
+geschlossener Ursachenraum, ein eingefrorener Snapshot rein, eine Klassifikation
+raus: vier Schwellwertvergleiche sind dafür die natürliche Form, und kein Modell
+wird sie darin schlagen. Wer diese Tabelle als Produktentscheidung liest, hat den
+Vergleich gewonnen und die Aufgabe verfehlt.
 
-**Die Zahl gilt für Diagnose.** Ein eingefrorener Telemetrie-Snapshot rein, eine
-Klassifikation raus; ein Schwellwertregelwerk ist dafür die natürliche Form.
-Regelung ist eine andere Aufgabe, und sie ist ungemessen.
+Denn die Regeln in dieser Zeile gibt es nur, weil jemand sie geschrieben hat —
+für **diese** neun Szenarien, für **diese** Maschine, mit Schwellwerten, die den
+Sensitivitätslauf nach unten überstehen und nach oben auf 6/9 einbrechen. Das ist
+die eigentliche Aussage der Tabelle: eine Rule Baseline ist kein Konkurrent, sie
+ist ein **Maßstab für die Fälle, die schon jemand verstanden hat**.
+
+### Wofür geistshell antritt
+
+> In einer Umgebung, für die niemand Regeln geschrieben hat, zurechtkommen und
+> das System **kontrollieren** — notfalls mit selbst erstellten Regeln. Die
+> Kontrolle bleibt bei uns.
+
+Daraus folgt, was gemessen wird und was nicht:
+
+| Nicht die Aufgabe | Die Aufgabe |
+|---|---|
+| Einen Schwellwertvergleich schlagen | Handeln, wo kein Schwellwert existiert |
+| Diagnose bei geschlossenem Ursachenraum | Ein Ziel verfolgen, das sich im Lauf ändert |
+| Der beste Regler sein | Entscheiden, wann geregelt und wann angehalten wird |
+| Eine Regel je Fall vorab | Eine Regel aus dem Lauf gewinnen, durch das Gate, ins Journal |
+
+Die Governance ist dabei die nicht verhandelbare Hälfte: eine selbst gewonnene
+Regel ist genau so viel wert wie das Gate, das sie prüft, und das Journal, das
+sie nachvollziehbar macht. Ein Agent, der sich seine eigenen Regeln gibt, ist
+ohne Policy Gate kein Produkt, sondern ein Risiko.
+
+Deshalb ist der PID-Vergleich in Woche 2 unten so gebaut, dass der Sollwertfall
+dem Regler gehört — und die Verriegelung, der Zielwechsel in Worten und der
+widersprüchliche Sensor die Fälle sind, für die niemand vorher eine Regel hatte.
 
 ## Die Lücke zwischen Plan und Repo
 
@@ -133,7 +160,8 @@ fahren kann.
   Angriff 9 ist ein Parser-Limit
 - Bericht mit dem PID daneben, veröffentlicht auch wenn er verliert
 
-**Deliverable:** der Nachfolger von Go-No-Go, für Regelung statt Diagnose.
+**Deliverable:** die erste Messung auf der Aufgabe, für die geistshell antritt —
+Regelung und Entscheidung statt Diagnose.
 
 ## Der Entscheidungspunkt danach
 

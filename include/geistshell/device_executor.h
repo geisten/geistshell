@@ -73,6 +73,27 @@ spg_device_executor_step(const struct spg_device_executor_state  *state,
                          const struct spg_policy_decision  *decision,
                          struct spg_device_executor_result *out);
 
+/* #118: tick-level watchdog service, independent of model actions. The agent
+ * loop calls this every tick and once more before a normal run end, so a
+ * contact loss is caught even when the model never asks for another
+ * device_write (or the run is about to finish).
+ *
+ * On the EXPIRED transition: drives every writable channel to its safe value
+ * (best effort, first failure reported in *out), journals
+ *   (device_watchdog (outcome expired) (safe_state ok|failed))
+ * under SPG_JOURNAL_EVENT_ACTION when journal+write_journal are set, and
+ * latches — a persisting expiry does not re-drive or re-journal every tick;
+ * any successful contact re-arms the latch (see spg_device.watchdog_tripped).
+ *
+ * device may be null (no machine on this run): nothing happens, SPG_OK.
+ * *out_sequence receives the journaled sequence (0 when nothing was written).
+ * out (nullable) receives what was done. The timestamp is the caller's
+ * injected clock, same unit the watchdog was armed with. */
+[[nodiscard]] enum spg_status spg_device_watchdog_service(
+    struct spg_device *device, struct spg_journal_writer *journal,
+    const struct spg_device_executor_config *config,
+    struct spg_device_executor_result       *out, uint64_t *out_sequence);
+
 #ifdef __cplusplus
 }
 #endif
