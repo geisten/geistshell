@@ -1,9 +1,11 @@
 #include "geistshell/agent_run.h"
 
+#include "geistshell/device_executor.h" /* #118: watchdog check at run end */
 #include "geistshell/graph.h"
 #include "geistshell/mem_store.h" /* #40 follow-up: strong directive channel */
 #include "geistshell/memory.h"
 #include "geistshell/orchestrator.h"
+#include "geistshell/pref.h" /* #28: user-profile line */
 
 static bool workspace_valid(const struct spg_agent_run_workspace *w) {
     return w != nullptr && w->context != nullptr && w->model_output != nullptr &&
@@ -42,6 +44,17 @@ enum spg_status spg_agent_run(const struct spg_agent_run_inputs *inputs,
         spg_mem_directive(inputs->store, config->directive_slug, 0u,
                           sizeof directive_buf, directive_buf) > 0u) {
         directive = directive_buf;
+    }
+
+    /* #28: the user profile — one budgeted (profile "...") line from the
+     * store's pref-* memories. Framing/defaults only; nothing downstream of
+     * the policy gate reads it. Off-switch or an empty store -> no line. */
+    char        profile_buf[SPG_MEM_DESC_MAX + 32u];
+    const char *user_profile = nullptr;
+    if (!config->profile_off && inputs->store != nullptr &&
+        spg_pref_render(inputs->store, 0u, sizeof profile_buf, profile_buf) >
+            0u) {
+        user_profile = profile_buf;
     }
 
     const struct spg_orchestrator_workspace ow = {
@@ -94,6 +107,7 @@ enum spg_status spg_agent_run(const struct spg_agent_run_inputs *inputs,
         .goal          = inputs->goal,
         .tools         = inputs->tools,
         .directive     = directive,
+        .user_profile  = user_profile,
         .machine       = inputs->machine,
         .machine_after = inputs->machine_after,
         .machine_goal  = inputs->machine_goal,
@@ -139,5 +153,22 @@ enum spg_status spg_agent_run(const struct spg_agent_run_inputs *inputs,
         .journal_headers         = workspace->trajectory,
     };
 
-    return spg_agent_loop_run(&state, &loop_config, &ow, usage, result);
+    const enum spg_status loop_status =
+        spg_agent_loop_run(&state, &loop_config, &ow, usage, result);
+
+    /* #118: a run must not END with an unnoticed contact loss — the loop
+     * checks before each tick, so an expiry between the last tick and the
+     * terminal state would otherwise slip out unhandled. One more service
+     * pass at the clock value the next tick would have carried. */
+    if (inputs->device != nullptr && loop_status == SPG_OK) {
+        const struct spg_device_executor_config wd_cfg = {
+            .actor_id      = 1u,
+            .timestamp_ns  = (uint64_t)result->steps_taken + 1u,
+            .write_journal = inputs->journal != nullptr,
+        };
+        uint64_t wd_seq = 0u;
+        (void)spg_device_watchdog_service(inputs->device, inputs->journal,
+                                          &wd_cfg, nullptr, &wd_seq);
+    }
+    return loop_status;
 }

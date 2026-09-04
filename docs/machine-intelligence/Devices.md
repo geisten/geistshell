@@ -174,6 +174,18 @@ nachträglich geprüft. Der Preis ist benannt: ein `(safe …)` an einem Sensor
 macht ihn still schreibbar. Der Bereich begrenzt ihn weiterhin, und ein Sensor
 mit einem sicheren Wert ist ein Tippfehler, den ein Review sieht.
 
+**`(network true)` deklariert den Transportbedarf (#119).** Ein Kanal, dessen
+Programm über das Netz spricht — MQTT, HTTP, Modbus TCP, eine MCP-Bridge —
+trägt das Feld in seiner Form. Es ist **Operator-Trust**: der Policy-Gate
+leitet die Netzwerkentscheidung eines `device_write` aus diesem Feld der
+geladenen Tabelle ab, niemals aus Modelltext (die Recommendation-Form muss
+`uses_network false` sagen, sonst scheitert der Parse). Unter
+`(network_default deny)` wird ein Netzwerk-Kanal vor jedem Fork verweigert
+und journalisiert; lokale Kanäle bleiben nutzbar. Fehlt das Feld, gilt lokal;
+alles außer den Symbolen `true`/`false` ist ein Schemafehler. geistshell kann
+nicht prüfen, was ein Programm zur Laufzeit tut — die wahrheitsgemäße Angabe
+ist Verantwortung des Betreibers (siehe SECURITY.md).
+
 `--device-channel` bleibt für Einzeiler und Tests bestehen — es nimmt
 dieselbe `(channel …)`-Form als ein Argument, kein zweites Format.
 
@@ -197,6 +209,19 @@ steht, hat den Transport nicht bemerkt.
 - **Timeout in beide Richtungen.** Eine Maschine, die schweigt, darf die
   regelnde Schleife nicht anhalten. Beim Socket war das `SO_RCVTIMEO`, beim
   Programm der Prozessgruppen-Kill; die Frist ist dieselbe.
+
+- **Eine Runde, eine Frist (#121).** `spg_device_sample` startet alle
+  Kanalprogramme **gleichzeitig** als einen Batch über `spg_cmd_executor_run`.
+  Die Worst-Case-Latenz einer Abtastrunde ist damit eine Frist plus
+  Spawn-Overhead — nicht eine Frist pro Kanal: 32 tote Sensoren blockieren
+  ~1 s, nicht ~32 s. Default `SPG_DEVICE_TIMEOUT_MS` = 1000 ms; konfigurierbar
+  pro Gerät über `sample_timeout_ms` bzw. `--device-sample-ms` (Maximum: der
+  Batch bleibt durch die Frist selbst gebunden, ein Wert oberhalb des
+  Run-`wall_ms` wäre sinnlos — die Runde soll das Wall-Budget nie um ein
+  Kanalzahl-Vielfaches überschreiten können). Nachzügler werden mit ihrer
+  Prozessgruppe getötet und rendern `unknown`; fertige Messungen bleiben
+  erhalten; die Ausgabereihenfolge ist die Tabellenreihenfolge, unabhängig von
+  der Fertigstellungsreihenfolge. Feste Stack-Puffer, keine Allokation.
 
 ## Der Sensor: der fehlende Rückweg
 
@@ -321,6 +346,23 @@ Zeit aussieht und keine ist. Deshalb heißt das Flag `--device-watchdog-steps`.
 
 Mit `exec` bekommt der Watchdog eine Aufgabe mehr: ein Programm, das dauerhaft
 mit Timeout stirbt, ist Kontaktverlust — genauso wie ein stummer Socket.
+
+**Pro Kanal, pro Tick (#118).** Kontakt wird pro Kanal geführt: eine
+erfolgreiche Transaktion füttert genau den Kanal, über den sie lief, und
+zusätzlich den globalen Stempel. Abgelaufen ist der Watchdog, sobald der
+globale Stempel **oder irgendein schreibbarer Kanal** eine volle Frist ohne
+Kontakt ist — ein Sensor, der weiter antwortet, kann einen verstummten Aktor
+nicht mehr verdecken. (Reine Sensor-Tabellen laufen wie zuvor über den
+globalen Stempel: Lesen ist dort der einzige Kontakt, den es gibt.)
+
+Geprüft wird nicht mehr nur vor einem `device_write`:
+`spg_device_watchdog_service` läuft in jedem Agenten-Tick — auch in Ticks, die
+nur beobachten, Memory schreiben oder `finish` wählen — und noch einmal vor dem
+regulären Run-Ende. Beim Ablauf fährt er alle schreibbaren Kanäle best-effort
+auf ihren sicheren Wert und journaliert
+`(device_watchdog (outcome expired) (safe_state ok|failed))`. Ein anhaltender
+Ablauf wird **einmal** behandelt (Latch), nicht jeden Tick erneut;
+wiederkehrender Kontakt spannt den Latch neu.
 
 ## Die Aktion
 

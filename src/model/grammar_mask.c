@@ -315,3 +315,42 @@ bool spg_tokens_are_prefix(const size_t full_n, const int32_t full[],
     }
     return true;
 }
+
+size_t spg_pmi_pick(const size_t n, const float logits[],
+                    const float baseline[]) {
+    if (n == 0u || logits == nullptr) {
+        return 0u;
+    }
+    size_t best  = 0u;
+    float  bestv = logits[0] - (baseline != nullptr ? baseline[0] : 0.0f);
+    for (size_t i = 1u; i < n; i += 1u) {
+        const float v = logits[i] - (baseline != nullptr ? baseline[i] : 0.0f);
+        if (v > bestv) { /* strict > keeps the lowest index on a tie */
+            bestv = v;
+            best  = i;
+        }
+    }
+    return best;
+}
+
+size_t spg_reason_comment(const char *raw, const size_t cap, char out[]) {
+    if (out == nullptr || cap == 0u) {
+        return 0u;
+    }
+    out[0] = '\0';
+    /* Need room for at least "; " + one char + "\n" + NUL. */
+    if (raw == nullptr || raw[0] == '\0' || cap < 5u) {
+        return 0u;
+    }
+    size_t w = 0u;
+    out[w++] = ';';
+    out[w++] = ' ';
+    for (const char *p = raw; *p != '\0' && w + 2u < cap; p += 1u) {
+        /* A CR/LF would close the comment and expose the rest to the parser —
+         * replace it with a space so the reasoning stays one safe line. */
+        out[w++] = (*p == '\n' || *p == '\r') ? ' ' : *p;
+    }
+    out[w++] = '\n';
+    out[w]   = '\0';
+    return w;
+}

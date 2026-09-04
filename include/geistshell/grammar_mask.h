@@ -130,6 +130,30 @@ size_t spg_model_capabilities_from_policy(
  * layer needs no engine header. */
 [[nodiscard]] bool spg_tokens_are_prefix(size_t full_n, const int32_t full[],
                                          size_t pfx_n, const int32_t pfx[]);
+/* #124/#57 PMI calibration of a masked choice slot. Naive token masking picks
+ * the candidate with the highest raw logit, which for a not-tool-trained model
+ * is dominated by how common the name's tokens are in pretraining, not by fit
+ * to the request (Grammar-Aligned Decoding, NeurIPS'24). Subtracting a
+ * request-INDEPENDENT baseline logit per candidate — measured once against a
+ * request-free prompt — leaves the request-driven signal (a PMI-style
+ * correction, the calibration geistlib's router uses).
+ *
+ * Pure selector: return the index of the highest calibrated logit, where
+ * calibrated[i] = logits[i] - (baseline ? baseline[i] : 0). baseline == null
+ * is plain argmax — the uncalibrated path, byte-identical to before. Ties keep
+ * the lowest index (deterministic). Returns 0 when n == 0. */
+[[nodiscard]] size_t spg_pmi_pick(size_t n, const float logits[],
+                                  const float baseline[]);
+/* #125 reason-first scaffold: wrap a bounded free-reasoning string as ONE
+ * parse-safe s-expression comment line — "; <text>\n" — so a "reason free,
+ * constrain late" decode can prepend the model's own thinking before the
+ * forced (recommend (kind … prefix without corrupting the form the parser
+ * then reads. A newline inside the reasoning would END the comment and expose
+ * the rest to the parser, so every CR/LF in `raw` is replaced with a space;
+ * the output is capped to cap-1 bytes (the budget is a hard bound). Writes a
+ * NUL-terminated line into out[0..cap) and returns its length (0 when raw is
+ * empty or cap is too small for even "; \n"). Pure and deterministic. */
+size_t spg_reason_comment(const char *raw, size_t cap, char out[]);
 
 #ifdef __cplusplus
 }
