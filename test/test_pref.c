@@ -15,6 +15,7 @@
 #include "geistshell/pref.h"
 
 #include <stdio.h>
+#include <stdlib.h> /* mkdtemp */
 #include <string.h>
 #include <unistd.h>
 
