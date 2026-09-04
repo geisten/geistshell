@@ -4496,6 +4496,7 @@ static int improve_command(int argc, char **argv) {
     const char           *validate_path = nullptr;
     size_t                samples       = 1u;
     bool                  constrained   = false;
+    bool                  prove_benefit = false;
     float                 temperature   = 0.0f;
     struct spg_guard_ring guards;
     spg_guard_ring_init(&guards);
@@ -4537,6 +4538,13 @@ static int improve_command(int argc, char **argv) {
             }
             continue;
         }
+        /* #11: opt-in stricter gate — the candidate's own failing case must
+         * flip to passing with the lesson present, on top of the regression
+         * gate. Without the flag the behaviour is byte-identical to today. */
+        if (strcmp(argv[i], "--prove-benefit") == 0) {
+            prove_benefit = true;
+            continue;
+        }
         if (strcmp(argv[i], "--guard") == 0 && i + 1 < argc) {
             /* a real run config re-run live to gate lessons (P5, Weg 2);
              * repeatable, deduped by shape=path in the ring */
@@ -4555,7 +4563,7 @@ static int improve_command(int argc, char **argv) {
         fprintf(
             stderr,
             "usage: %s improve <suite.spg> [--validate <holdout.spg>] "
-            "[--guard <run.spg>]... "
+            "[--guard <run.spg>]... [--prove-benefit] "
             "[--memory-dir <d>] [--remote-url <url>] [--remote-model <name>] "
             "[--samples <N>] [--constrained] [--temperature <t>]\n",
             argv[0]);
@@ -4580,8 +4588,11 @@ static int improve_command(int argc, char **argv) {
         return 1;
     }
 
-    /* Distinct candidate lessons from the failing cases. */
+    /* Distinct candidate lessons from the failing cases. origin_case[k] is
+     * the first suite case that distilled candidate k — the case the
+     * --prove-benefit gate re-checks with the lesson present (#11). */
     struct spg_lesson candidates[EVAL_MAX_CASES];
+    size_t            origin_case[EVAL_MAX_CASES];
     size_t            ncand = 0u;
     for (size_t i = 0u; i < baseline.ncases; i += 1u) {
         struct spg_lesson lesson;
@@ -4596,7 +4607,8 @@ static int improve_command(int argc, char **argv) {
             }
         }
         if (!seen && ncand < EVAL_MAX_CASES) {
-            candidates[ncand] = lesson;
+            candidates[ncand]  = lesson;
+            origin_case[ncand] = i;
             ncand += 1u;
         }
     }
@@ -4634,33 +4646,58 @@ static int improve_command(int argc, char **argv) {
          * (P5, Weg 2): re-run every guard with vs without the lesson and veto
          * if any that passed now regresses. A guard vetoes only a lesson the
          * suite already accepts, so it can only make the gate stricter. */
-        bool accepted     = spg_improve_accept(cur_passed, trial.passed);
-        bool guard_vetoed = false;
-        if (accepted) {
+        const bool suite_ok = spg_improve_accept(cur_passed, trial.passed);
+        /* #11: the benefit proof — the lesson's own origin case, live-re-run
+         * with the lesson present (the trial above IS that re-run when the
+         * gate path is the train suite; with --validate the train suite is
+         * re-run once more). Checked before the guards so a lesson that does
+         * not even fix its own case never costs guard inference. */
+        bool proven = !prove_benefit; /* vacuous without the flag */
+        if (prove_benefit && suite_ok) {
+            const struct eval_run_report *train_trial = &trial;
+            static struct eval_run_report prove_trial;
+            if (validate_path != nullptr) {
+                if (eval_run_suite(suite_path, &store, &opts, &prove_trial) !=
+                    SPG_OK) {
+                    fprintf(stderr, "improve: prove-benefit run failed\n");
+                    return 1;
+                }
+                train_trial = &prove_trial;
+            }
+            const size_t oc = origin_case[k];
+            proven = oc < train_trial->ncases &&
+                     train_trial->results[oc].outcome == SPG_EVAL_PASS;
+        }
+        bool guards_ok = true;
+        if (suite_ok && proven) {
             struct guard_ctx gctx = {
                 .store = &store, .opts = &opts, .lesson = lesson};
-            if (!spg_guard_ring_gate(&guards, guard_run, &gctx)) {
-                accepted     = false;
-                guard_vetoed = true;
-            }
+            guards_ok = spg_guard_ring_gate(&guards, guard_run, &gctx);
             /* the gate's guard runs toggled the lesson; leave it saved so the
              * commit below decides keep/revert from a known state */
             (void)spg_mem_save(&store, lesson->slug, lesson->description,
                                lesson->body);
         }
-        (void)guard_vetoed;
+        const bool accepted =
+            spg_improve_gate(suite_ok, guards_ok, prove_benefit, proven);
         bool was_kept = false;
         (void)spg_improve_commit(&store, lesson, accepted, &was_kept);
+        char proven_field[32] = "";
+        if (prove_benefit) {
+            (void)snprintf(proven_field, sizeof proven_field,
+                           ",\"benefit_proven\":%s",
+                           proven ? "true" : "false");
+        }
         if (validate_path != nullptr) {
             printf("{\"lesson\":\"%s\",\"accepted\":%s,\"held_out_passed\":%zu,"
-                   "\"trial_passed\":%zu}\n",
+                   "\"trial_passed\":%zu%s}\n",
                    lesson->slug, accepted ? "true" : "false", cur_passed,
-                   trial.passed);
+                   trial.passed, proven_field);
         } else {
             printf("{\"lesson\":\"%s\",\"accepted\":%s,\"baseline_passed\":%zu,"
-                   "\"trial_passed\":%zu}\n",
+                   "\"trial_passed\":%zu%s}\n",
                    lesson->slug, accepted ? "true" : "false", cur_passed,
-                   trial.passed);
+                   trial.passed, proven_field);
         }
         if (was_kept) {
             cur_passed = trial.passed;
