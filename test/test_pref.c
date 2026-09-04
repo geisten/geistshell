@@ -2,6 +2,11 @@
  * capability-invariance boundary — the two properties the ticket calls
  * load-bearing — plus the budgeted one-line render. */
 
+/* mkdtemp is POSIX; -std=c23 defines __STRICT_ANSI__, so glibc hides it on
+ * Linux unless a feature-test macro asks for it (macOS exposes it by
+ * default). The same 200809L the other test programs declare. */
+#define _POSIX_C_SOURCE 200809L
+
 #include "geistshell/context.h"
 #include "geistshell/pref.h"
 
