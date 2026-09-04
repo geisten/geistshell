@@ -302,3 +302,25 @@ size_t spg_scaffold_for_kind(enum spg_action_kind            kind,
     *out = nullptr;
     return 0u;
 }
+
+size_t spg_reason_comment(const char *raw, const size_t cap, char out[]) {
+    if (out == nullptr || cap == 0u) {
+        return 0u;
+    }
+    out[0] = '\0';
+    /* Need room for at least "; " + one char + "\n" + NUL. */
+    if (raw == nullptr || raw[0] == '\0' || cap < 5u) {
+        return 0u;
+    }
+    size_t w = 0u;
+    out[w++] = ';';
+    out[w++] = ' ';
+    for (const char *p = raw; *p != '\0' && w + 2u < cap; p += 1u) {
+        /* A CR/LF would close the comment and expose the rest to the parser —
+         * replace it with a space so the reasoning stays one safe line. */
+        out[w++] = (*p == '\n' || *p == '\r') ? ' ' : *p;
+    }
+    out[w++] = '\n';
+    out[w]   = '\0';
+    return w;
+}

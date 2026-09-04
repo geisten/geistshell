@@ -160,6 +160,46 @@ static enum spg_status emit_literal(struct spg_model_adapter *adapter,
     return SPG_OK;
 }
 
+/* #125 reason-first: decode up to `budget` free tokens (the model's own
+ * thinking) into the KV cache, then emit them as ONE parse-safe comment line
+ * before the forced prefix. The tokens condition every constrained choice that
+ * follows; the emitted comment is skipped by the s-expr parser, so the form it
+ * then reads is unchanged. budget 0 is a no-op. */
+static enum spg_status
+emit_reason_prefix(struct spg_model_adapter         *adapter,
+                   struct spg_model_generate_result *result,
+                   const size_t                      budget) {
+    if (budget == 0u) {
+        return SPG_OK;
+    }
+    char   raw[512];
+    size_t used = 0u;
+    for (size_t j = 0u; j < budget && used + 1u < sizeof raw; j += 1u) {
+        geist_token_t     token  = 0;
+        enum geist_status status = geist_session_decode_step(adapter->session,
+                                                             &token);
+        if (status != GEIST_OK) {
+            return map_geist_status(status);
+        }
+        result->tokens_decoded += 1u;
+        const char *piece = geist_session_token_to_str(adapter->session, token);
+        if (piece == nullptr || piece[0] == '\0') {
+            break; /* eos ends the reasoning */
+        }
+        for (const char *p = piece; *p != '\0' && used + 1u < sizeof raw;
+             p += 1u) {
+            raw[used++] = *p;
+        }
+    }
+    raw[used] = '\0';
+    if (used == 0u) {
+        return SPG_OK; /* the model volunteered nothing */
+    }
+    char         comment[600];
+    const size_t n = spg_reason_comment(raw, sizeof comment, comment);
+    return n > 0u ? append_bytes(result, n, comment) : SPG_OK;
+}
+
 /* Free-decode one scaffold string value (#34): the model fills the slot, but we
  * stop at the first character that would close or corrupt the STRING — the
  * closing quote or a newline (a newline is a hard error inside an s-expr string;
@@ -455,6 +495,14 @@ static enum spg_status generate_geist(
     const bool constrained =
         adapter->force_prefix != nullptr && adapter->force_prefix[0] != '\0';
     if (constrained) {
+        /* 0. #125: optional reason-first — the model thinks in a comment line
+         * before the forced decision, conditioning the KV. Off (budget 0) is
+         * byte-identical to the original constrained path. */
+        const enum spg_status reason_as =
+            emit_reason_prefix(adapter, result, adapter->reason_budget);
+        if (reason_as != SPG_OK) {
+            return reason_as;
+        }
         /* 1. forced opening "(recommend (kind " */
         const enum spg_status prefix_as =
             emit_literal(adapter, result, adapter->force_prefix);
@@ -556,6 +604,7 @@ spg_model_adapter_init(struct spg_model_adapter *adapter,
         .capability_count = config->capability_count,
         .command_names      = config->command_names,
         .command_name_count = config->command_name_count,
+        .reason_budget      = config->reason_budget,
     };
 
     if (config->kind == SPG_MODEL_ADAPTER_FAKE) {
