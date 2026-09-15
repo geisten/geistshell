@@ -17,7 +17,8 @@ else
 endif
 
 GEIST_REPO ?= https://github.com/geisten/geistlib.git
-GEIST_REF  ?= v0.10.1
+# v0.11.0. A full SHA, not the tag: a tag can be moved, a SHA cannot.
+GEIST_REF  ?= 6781d425e4d9ac9ec4bf5fa7da9fa383be7e5d58
 
 # Build target for the engine. Detected from the HOST, not from deps/geist:
 # the old fallback asked mk/detect-target.sh and echoed `mac` when the engine
