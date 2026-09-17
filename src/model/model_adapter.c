@@ -323,7 +323,7 @@ static enum spg_status decode_choice_slot(
          step < 24u && !spg_choice_complete(names, names_n, out); step += 1u) {
         size_t       n_vocab = 0u;
         const float *logits =
-            geist_session_peek_logits(adapter->session, &n_vocab);
+            geist_session_peek_logits(&n_vocab, adapter->session);
         if (logits == nullptr || n_vocab == 0u) {
             break;
         }
@@ -730,7 +730,7 @@ static void measure_pmi_baseline(struct spg_model_adapter               *adapter
         return;
     }
     size_t       n_vocab = 0u;
-    const float *logits  = geist_session_peek_logits(adapter->session, &n_vocab);
+    const float *logits  = geist_session_peek_logits(&n_vocab, adapter->session);
     if (logits == nullptr || n_vocab == 0u) {
         return; /* arch without peek_logits: no calibration, safe */
     }

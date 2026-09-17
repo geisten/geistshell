@@ -17,7 +17,8 @@ else
 endif
 
 GEIST_REPO ?= https://github.com/geisten/geistlib.git
-GEIST_REF  ?= v0.10.1
+# v0.11.0. A full SHA, not the tag: a tag can be moved, a SHA cannot.
+GEIST_REF  ?= 6781d425e4d9ac9ec4bf5fa7da9fa383be7e5d58
 
 # Build target for the engine. Detected from the HOST, not from deps/geist:
 # the old fallback asked mk/detect-target.sh and echoed `mac` when the engine
@@ -198,26 +199,18 @@ host-debug:
 host-release:
 	$(MAKE) BUILD_MODE=host-release build-mode
 
+# Enforces GEIST_REF on every build instead of trusting whatever deps/geist
+# holds (scripts/sync-engine.sh). Phony, so it runs once per make invocation;
+# everything that reads the engine waits for it.
 sync-engine:
 	@mkdir -p $(DEPS_DIR)
-	@if [ ! -d "$(GEIST_DIR)/.git" ]; then \
-		echo "Cloning libgeist from $(GEIST_REPO) @ $(GEIST_REF)"; \
-		rm -rf "$(GEIST_DIR)"; \
-		git clone --quiet "$(GEIST_REPO)" "$(GEIST_DIR)"; \
-		git -C "$(GEIST_DIR)" checkout --quiet $(GEIST_REF); \
-	else \
-		echo "libgeist already present at $(GEIST_DIR)"; \
-	fi
+	@GEIST_REPO='$(GEIST_REPO)' GEIST_REF='$(GEIST_REF)' GEIST_DIR='$(GEIST_DIR)' \
+		sh scripts/sync-engine.sh
 
 update-engine:
 	@mkdir -p $(DEPS_DIR)
-	@if [ ! -d "$(GEIST_DIR)/.git" ]; then \
-		$(MAKE) sync-engine; \
-	else \
-		echo "Updating libgeist from $(GEIST_REPO) @ $(GEIST_REF)"; \
-		git -C "$(GEIST_DIR)" fetch --quiet --tags origin; \
-		git -C "$(GEIST_DIR)" checkout --quiet $(GEIST_REF); \
-	fi
+	@GEIST_FETCH=1 GEIST_REPO='$(GEIST_REPO)' GEIST_REF='$(GEIST_REF)' GEIST_DIR='$(GEIST_DIR)' \
+		sh scripts/sync-engine.sh
 
 # CC is forwarded, and that is not cosmetic. geistshell picked its compiler
 # (HOST_CC) for a reason — C23 needs gcc >= 14 or clang >= 19 — but the engine
@@ -246,10 +239,12 @@ $(CHAT_BIN): $(CHAT_OBJECTS) $(SPG_LIB) $(GEIST_LIB)
 # free to compile first and die on `#include <geist.h>` — which every
 # development machine hides, because deps/geist is already there. The first CI
 # run on a clean checkout found it immediately (#105).
-$(GEIST_DIR)/include/geist.h:
-	$(MAKE) sync-engine
-
-$(OBJ_DIR)/%.o: %.c | $(GEIST_DIR)/include/geist.h
+#
+# The prerequisite is sync-engine itself, not a file rule that runs
+# `$(MAKE) sync-engine`: that recursive make and the sync $(GEIST_LIB) pulls in
+# were two concurrent clones under -j, the second saw .git and returned, and
+# objects compiled against a checkout that had no geist.h yet.
+$(OBJ_DIR)/%.o: %.c | sync-engine
 	@mkdir -p $(@D)
 	$(CC) $(CFLAGS) -MMD -MP -c $< -o $@
 
@@ -336,8 +331,8 @@ help:
 	@echo "  make test            build and run standalone tests"
 	@echo "  make bench           real-model benchmark (skips when no GGUF)"
 	@echo "  make REMOTE=1 ...     build with the libcurl remote model adapter"
-	@echo "  make sync-engine     clone deps/geist from GitHub if missing"
-	@echo "  make update-engine   checkout the pinned GEIST_REF in deps/geist"
+	@echo "  make sync-engine     check out GEIST_REF in deps/geist (every build does this)"
+	@echo "  make update-engine   same, but fetch origin first (for a moving GEIST_REF)"
 	@echo "  make clean           remove top-level build outputs"
 	@echo "  make distclean       remove build outputs and deps"
 
