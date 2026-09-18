@@ -30,11 +30,11 @@ void spg_hash_init(struct spg_hash_state *state);
                                               const uint8_t data[]);
 [[nodiscard]] enum spg_status spg_hash_final(struct spg_hash_state *state,
                                              size_t out_n,
-                                             uint8_t out[static out_n]);
+                                             uint8_t out[SPG_AT_LEAST(out_n)]);
 [[nodiscard]] enum spg_status spg_hash_bytes(size_t input_n,
                                              const uint8_t input[],
                                              size_t out_n,
-                                             uint8_t out[static out_n]);
+                                             uint8_t out[SPG_AT_LEAST(out_n)]);
 
 #ifdef __cplusplus
 }

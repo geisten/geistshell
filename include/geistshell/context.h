@@ -154,11 +154,11 @@ struct spg_context_view {
 
 void spg_context_view_init(
     struct spg_context_view *view, size_t graph_ref_capacity,
-    struct spg_context_graph_ref   graph_refs[static graph_ref_capacity],
+    struct spg_context_graph_ref   graph_refs[SPG_AT_LEAST(graph_ref_capacity)],
     size_t                         memory_ref_capacity,
-    struct spg_context_memory_ref  memory_refs[static memory_ref_capacity],
+    struct spg_context_memory_ref  memory_refs[SPG_AT_LEAST(memory_ref_capacity)],
     size_t                         journal_ref_capacity,
-    struct spg_context_journal_ref journal_refs[static journal_ref_capacity]);
+    struct spg_context_journal_ref journal_refs[SPG_AT_LEAST(journal_ref_capacity)]);
 
 [[nodiscard]] enum spg_status
 spg_context_build(const struct spg_context_sources *sources,
@@ -173,7 +173,7 @@ spg_context_build(const struct spg_context_sources *sources,
 [[nodiscard]] enum spg_status
 spg_context_render(const struct spg_context_sources *sources,
                    const struct spg_context_view *view, size_t dst_capacity,
-                   char dst[static dst_capacity], size_t *out_required,
+                   char dst[SPG_AT_LEAST(dst_capacity)], size_t *out_required,
                    size_t *out_prefix_len);
 
 #ifdef __cplusplus

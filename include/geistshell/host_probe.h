@@ -86,7 +86,7 @@ spg_host_telemetry_read(struct spg_host_telemetry *out);
 
 [[nodiscard]] enum spg_status
 spg_host_telemetry_render(const struct spg_host_telemetry *telemetry,
-                          size_t dst_capacity, char dst[static dst_capacity]);
+                          size_t dst_capacity, char dst[SPG_AT_LEAST(dst_capacity)]);
 
 #ifdef __cplusplus
 }

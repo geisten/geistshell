@@ -28,9 +28,9 @@ extern "C" {
  * receives the byte length written, excluding the NUL. */
 [[nodiscard]] enum spg_status
 spg_remote_build_request(const char *model_name, size_t prompt_n,
-                         const char prompt[static prompt_n], size_t max_tokens,
+                         const char prompt[SPG_AT_LEAST(prompt_n)], size_t max_tokens,
                          float temperature, float top_p, size_t out_cap,
-                         char out[static out_cap], size_t *out_used);
+                         char out[SPG_AT_LEAST(out_cap)], size_t *out_used);
 
 /* Parse a chat/completions response body. The text of
  * choices[0].message.content is JSON-unescaped into result->output, honouring
@@ -46,7 +46,7 @@ spg_remote_build_request(const char *model_name, size_t prompt_n,
  * SPG_E_FORMAT; a well-formed body lacking a string content field yields
  * SPG_E_SCHEMA. */
 [[nodiscard]] enum spg_status
-spg_remote_parse_response(size_t body_n, const char body[static body_n],
+spg_remote_parse_response(size_t body_n, const char body[SPG_AT_LEAST(body_n)],
                           size_t token_cap, void *tokens,
                           struct spg_model_generate_result *result);
 

@@ -76,13 +76,13 @@ struct spg_run_config_error {
  * On success *out is fully populated; on failure *out is left zero-initialized. */
 [[nodiscard]] enum spg_status spg_run_budgets_parse(
     size_t input_n, const char input[],
-    const struct spg_sexpr_node nodes[static 1], uint32_t budgets_field,
+    const struct spg_sexpr_node nodes[SPG_AT_LEAST(1)], uint32_t budgets_field,
     struct spg_run_budgets *out, uint32_t *err_node, size_t *err_offset);
 
 [[nodiscard]] enum spg_status spg_run_config_load(
     size_t input_n, const char input[], size_t token_capacity,
-    struct spg_sexpr_token tokens[static token_capacity], size_t node_capacity,
-    struct spg_sexpr_node nodes[static node_capacity],
+    struct spg_sexpr_token tokens[SPG_AT_LEAST(token_capacity)], size_t node_capacity,
+    struct spg_sexpr_node nodes[SPG_AT_LEAST(node_capacity)],
     struct spg_run_config *out, struct spg_run_config_error *error);
 
 #ifdef __cplusplus

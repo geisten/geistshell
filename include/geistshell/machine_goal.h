@@ -78,9 +78,9 @@ struct spg_goal_evaluation {
 
 [[nodiscard]] enum spg_status
 spg_machine_goal_load(size_t input_n, const char input[], size_t token_capacity,
-                      struct spg_sexpr_token   tokens[static token_capacity],
+                      struct spg_sexpr_token   tokens[SPG_AT_LEAST(token_capacity)],
                       size_t                   node_capacity,
-                      struct spg_sexpr_node    nodes[static node_capacity],
+                      struct spg_sexpr_node    nodes[SPG_AT_LEAST(node_capacity)],
                       struct spg_machine_goal *out);
 
 /* Judge a finished run against its goal, from the OBSERVED state.
@@ -99,7 +99,7 @@ spg_machine_goal_evaluate(const struct spg_machine_goal  *goal,
  * the file, so what the model reads is what the harness checks. */
 [[nodiscard]] enum spg_status
 spg_machine_goal_render(const struct spg_machine_goal *goal,
-                        size_t dst_capacity, char dst[static dst_capacity],
+                        size_t dst_capacity, char dst[SPG_AT_LEAST(dst_capacity)],
                         size_t *out_required);
 
 [[nodiscard]] const char *

@@ -46,8 +46,8 @@ struct spg_process_profile_error {
  * target ambiguous. */
 [[nodiscard]] enum spg_status spg_process_profile_load(
     size_t input_n, const char input[], size_t token_capacity,
-    struct spg_sexpr_token tokens[static token_capacity], size_t node_capacity,
-    struct spg_sexpr_node       nodes[static node_capacity],
+    struct spg_sexpr_token tokens[SPG_AT_LEAST(token_capacity)], size_t node_capacity,
+    struct spg_sexpr_node       nodes[SPG_AT_LEAST(node_capacity)],
     struct spg_process_profile *out, struct spg_process_profile_error *error);
 
 /* Index of the first entry matching name, or SPG_PROCESS_NO_PROFILE.
