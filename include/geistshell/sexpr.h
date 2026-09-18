@@ -60,14 +60,14 @@ struct spg_sexpr_error {
 [[nodiscard]] enum spg_status
 spg_sexpr_tokenize(size_t input_n, const char input[],
                    size_t token_capacity,
-                   struct spg_sexpr_token tokens[static token_capacity],
+                   struct spg_sexpr_token tokens[SPG_AT_LEAST(token_capacity)],
                    size_t *token_count, struct spg_sexpr_error *error);
 
 [[nodiscard]] enum spg_status
 spg_sexpr_parse(size_t token_n,
                 const struct spg_sexpr_token tokens[],
                 size_t node_capacity,
-                struct spg_sexpr_node nodes[static node_capacity],
+                struct spg_sexpr_node nodes[SPG_AT_LEAST(node_capacity)],
                 size_t *node_count, struct spg_sexpr_error *error);
 
 /* ---- Parse-tree accessors ----
@@ -86,12 +86,12 @@ spg_sexpr_parse(size_t token_n,
 
 /* First child of node, or SPG_SEXPR_INVALID_INDEX when it has none. */
 [[nodiscard]] uint32_t
-spg_sexpr_first_child(const struct spg_sexpr_node nodes[static 1],
+spg_sexpr_first_child(const struct spg_sexpr_node nodes[SPG_AT_LEAST(1)],
                       uint32_t node);
 
 /* Second child of node, or SPG_SEXPR_INVALID_INDEX when fewer than two. */
 [[nodiscard]] uint32_t
-spg_sexpr_second_child(const struct spg_sexpr_node nodes[static 1],
+spg_sexpr_second_child(const struct spg_sexpr_node nodes[SPG_AT_LEAST(1)],
                        uint32_t node);
 
 /* Strip the surrounding quotes of a STRING node, returning its payload span in
@@ -111,9 +111,9 @@ spg_sexpr_parse_uint64_span(size_t input_n, const char input[],
 [[nodiscard]] enum spg_status
 spg_sexpr_parse_text(size_t input_n, const char input[],
                      size_t token_capacity,
-                     struct spg_sexpr_token tokens[static token_capacity],
+                     struct spg_sexpr_token tokens[SPG_AT_LEAST(token_capacity)],
                      size_t node_capacity,
-                     struct spg_sexpr_node nodes[static node_capacity],
+                     struct spg_sexpr_node nodes[SPG_AT_LEAST(node_capacity)],
                      size_t *token_count, size_t *node_count,
                      struct spg_sexpr_error *error);
 
@@ -139,7 +139,7 @@ struct spg_sexpr_writer {
 /* Bind writer to buffer (capacity bytes, capacity > 0) and reset it to the
  * empty string. */
 void spg_sexpr_writer_init(struct spg_sexpr_writer *writer, size_t capacity,
-                           char buffer[static capacity]);
+                           char buffer[SPG_AT_LEAST(capacity)]);
 
 /* Append a NUL-terminated string. */
 [[nodiscard]] enum spg_status

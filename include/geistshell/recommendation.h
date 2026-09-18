@@ -73,8 +73,8 @@ struct spg_recommendation_error {
 
 [[nodiscard]] enum spg_status spg_recommendation_parse(
     size_t input_n, const char input[], size_t token_capacity,
-    struct spg_sexpr_token tokens[static token_capacity], size_t node_capacity,
-    struct spg_sexpr_node nodes[static node_capacity],
+    struct spg_sexpr_token tokens[SPG_AT_LEAST(token_capacity)], size_t node_capacity,
+    struct spg_sexpr_node nodes[SPG_AT_LEAST(node_capacity)],
     struct spg_recommendation *out, struct spg_recommendation_error *error);
 
 [[nodiscard]] const char *spg_recommendation_reject_reason_to_string(

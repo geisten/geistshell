@@ -77,8 +77,8 @@ struct spg_model_profile {
 
 [[nodiscard]] enum spg_status spg_model_profile_load(
     size_t input_n, const char input[], size_t token_capacity,
-    struct spg_sexpr_token tokens[static token_capacity], size_t node_capacity,
-    struct spg_sexpr_node     nodes[static node_capacity],
+    struct spg_sexpr_token tokens[SPG_AT_LEAST(token_capacity)], size_t node_capacity,
+    struct spg_sexpr_node     nodes[SPG_AT_LEAST(node_capacity)],
     struct spg_model_profile *out);
 
 /* Pick a template from an architecture string when the profile says `auto`.
@@ -99,7 +99,7 @@ struct spg_model_profile {
 [[nodiscard]] enum spg_status
 spg_chat_frame(enum spg_chat_template tmpl, const char *system, size_t user_n,
                const char user[], size_t dst_capacity,
-               char dst[static dst_capacity], size_t *out_used);
+               char dst[SPG_AT_LEAST(dst_capacity)], size_t *out_used);
 
 [[nodiscard]] const char *
 spg_chat_template_to_string(enum spg_chat_template tmpl);

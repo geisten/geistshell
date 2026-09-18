@@ -1,6 +1,21 @@
 #ifndef GEISTSHELL_STATUS_H
 #define GEISTSHELL_STATUS_H
 
+/* `T arr[SPG_AT_LEAST(n)]` — "non-null, and at least n elements". C spells that
+ * `T arr[static n]`; C++ has no such grammar, and `extern "C"` does not help,
+ * since it changes linkage and not parsing. A C++ consumer therefore sees plain
+ * `T arr[]` — the same parameter type, both decay to `T *` — instead of a header
+ * it cannot parse at all. Mirrors GEIST_AT_LEAST in geistlib's <geist.h>; spelled
+ * here because no geistshell header includes the engine's public headers.
+ *
+ * Public headers under include/ use the macro. Code under src/ keeps the plain
+ * `[static n]` form; nothing includes it from C++. */
+#ifdef __cplusplus
+#define SPG_AT_LEAST(n)
+#else
+#define SPG_AT_LEAST(n) static n
+#endif
+
 #ifdef __cplusplus
 extern "C" {
 #endif

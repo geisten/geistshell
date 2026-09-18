@@ -23,11 +23,11 @@ extern "C" {
 [[nodiscard]] enum spg_status spg_hmac(size_t key_n, const uint8_t key[],
                                        size_t msg_n, const uint8_t msg[],
                                        size_t out_n,
-                                       uint8_t out[static out_n]);
+                                       uint8_t out[SPG_AT_LEAST(out_n)]);
 
 /* Constant-time equality of two SPG_HASH_BYTES tags (no early exit). */
-[[nodiscard]] bool spg_hmac_equal(const uint8_t a[static SPG_HASH_BYTES],
-                                  const uint8_t b[static SPG_HASH_BYTES]);
+[[nodiscard]] bool spg_hmac_equal(const uint8_t a[SPG_AT_LEAST(SPG_HASH_BYTES)],
+                                  const uint8_t b[SPG_AT_LEAST(SPG_HASH_BYTES)]);
 
 #ifdef __cplusplus
 }

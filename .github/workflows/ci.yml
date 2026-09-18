@@ -75,6 +75,11 @@ jobs:
       - name: Build (host-debug = ASan + UBSan)
         run: make ${{ runner.os == 'Linux' && 'HOST_CC=gcc-14' || '' }}
 
+      # `make test` depends on this too, but a header that a C++ consumer cannot
+      # parse should be visible before the suite runs, not after it.
+      - name: Public headers compile standalone, as C23 and as C++17
+        run: make ${{ runner.os == 'Linux' && 'HOST_CC=gcc-14' || '' }} check-headers
+
       # pipefail, or `tee` reports success and every failing test is swallowed —
       # the same defect this file exists to prevent, one layer up. GitHub's
       # default shell does not set it.

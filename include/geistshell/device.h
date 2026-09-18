@@ -225,7 +225,7 @@ constexpr size_t SPG_DEVICE_RENDER_CAP = 2048u;
  * measures that rejection rate — not before. */
 [[nodiscard]] enum spg_status
 spg_device_state_render(const struct spg_device_state *state,
-                        size_t dst_capacity, char dst[static dst_capacity],
+                        size_t dst_capacity, char dst[SPG_AT_LEAST(dst_capacity)],
                         size_t *out_required);
 
 /* --- The watchdog ----------------------------------------------------- */

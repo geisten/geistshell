@@ -363,7 +363,7 @@ constexpr size_t SPG_MACHINE_HISTORY_RENDER_CAP = 2048u;
 [[nodiscard]] enum spg_status
 spg_machine_history_render(const struct spg_machine_history *history,
                            size_t dst_capacity,
-                           char dst[static dst_capacity],
+                           char dst[SPG_AT_LEAST(dst_capacity)],
                            size_t *out_required);
 
 /* --- layer 3: serialisation --------------------------------------------- */
@@ -384,14 +384,14 @@ spg_machine_history_render(const struct spg_machine_history *history,
  * short list that looks complete would invite wrong conclusions. */
 [[nodiscard]] enum spg_status
 spg_machine_state_render(const struct spg_machine_state *state,
-                         size_t dst_capacity, char dst[static dst_capacity],
+                         size_t dst_capacity, char dst[SPG_AT_LEAST(dst_capacity)],
                          size_t *out_required);
 
 /* Same, with parts left out. spg_machine_state_render is this with mask 0 —
  * one implementation, so an ablated block cannot drift from the full one. */
 [[nodiscard]] enum spg_status spg_machine_state_render_masked(
     const struct spg_machine_state *state, uint32_t ablate, size_t dst_capacity,
-    char dst[static dst_capacity], size_t *out_required);
+    char dst[SPG_AT_LEAST(dst_capacity)], size_t *out_required);
 
 [[nodiscard]] const char *
 spg_throttle_state_to_string(enum spg_throttle_state state);

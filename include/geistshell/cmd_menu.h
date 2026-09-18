@@ -114,7 +114,7 @@ struct spg_cmd_menu {
  * SPG_E_LIMIT when the file exceeds SPG_CMD_MENU_MAX entries or the text
  * store. A malformed menu is an error, never a silently shorter menu. */
 [[nodiscard]] enum spg_status spg_cmd_menu_load(size_t input_n,
-                                                const char input[static 1],
+                                                const char input[SPG_AT_LEAST(1)],
                                                 struct spg_cmd_menu *out);
 
 /* Render a loaded menu, same shape as spg_cmd_menu_render. */

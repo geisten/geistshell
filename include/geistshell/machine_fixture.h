@@ -26,8 +26,8 @@ extern "C" {
  * More than SPG_MACHINE_MAX_PROCESSES process entries yields SPG_E_LIMIT. */
 [[nodiscard]] enum spg_status spg_machine_state_parse(
     size_t input_n, const char input[], size_t token_capacity,
-    struct spg_sexpr_token tokens[static token_capacity], size_t node_capacity,
-    struct spg_sexpr_node     nodes[static node_capacity],
+    struct spg_sexpr_token tokens[SPG_AT_LEAST(token_capacity)], size_t node_capacity,
+    struct spg_sexpr_node     nodes[SPG_AT_LEAST(node_capacity)],
     struct spg_machine_state *out);
 
 #ifdef __cplusplus

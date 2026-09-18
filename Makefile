@@ -17,8 +17,10 @@ else
 endif
 
 GEIST_REPO ?= https://github.com/geisten/geistlib.git
-# v0.11.0. A full SHA, not the tag: a tag can be moved, a SHA cannot.
-GEIST_REF  ?= 6781d425e4d9ac9ec4bf5fa7da9fa383be7e5d58
+# geistlib main (v0.11.0-64), not a tag: a tag can be moved, a SHA cannot. Past
+# v0.11.0 because GEIST_AT_LEAST — the engine's macro that SPG_AT_LEAST mirrors,
+# see include/geistshell/status.h — landed after it.
+GEIST_REF  ?= 18a52c303421a4dd145002ac13c479bb77a8a900
 
 # Build target for the engine. Detected from the HOST, not from deps/geist:
 # the old fallback asked mk/detect-target.sh and echoed `mac` when the engine
@@ -187,7 +189,7 @@ CHAT_OBJECTS := $(patsubst %.c,$(OBJ_DIR)/%.o,$(CHAT_SOURCES))
 TEST_BINS := $(patsubst test/%.c,$(TEST_DIR)/%,$(TEST_SOURCES))
 DEPS := $(SPG_OBJECTS:.o=.d) $(CLI_OBJECTS:.o=.d) $(CHAT_OBJECTS:.o=.d)
 
-.PHONY: all build-mode host-debug host-release sync-engine update-engine lib test bench clean distclean help
+.PHONY: all build-mode host-debug host-release sync-engine update-engine lib test check-headers bench clean distclean help
 
 all: host-debug
 
@@ -266,6 +268,26 @@ check-backends:
 		$(CC) $(CFLAGS) -Werror -fsyntax-only $$f || exit 1; \
 	done
 
+# Every public header, compiled alone — once as C23, once as C++17. Alone,
+# because a header that only builds after its neighbour is not usable; as C++,
+# because `extern "C"` guards are worthless if the grammar does not parse, which
+# is what SPG_AT_LEAST (include/geistshell/status.h) exists for. Same contract as
+# geistlib and geist-memory. Headers under src/ are internal and not covered.
+PUBLIC_HEADERS := $(wildcard include/geistshell/*.h)
+HOST_CXX       ?= $(if $(filter clang,$(HOST_CC)),clang++,$(HOST_CC:gcc%=g++%))
+
+check-headers:
+	@for h in $(PUBLIC_HEADERS); do \
+		b=$$(basename $$h); \
+		printf '#include "geistshell/%s"\nint main(void) { return 0; }\n' "$$b" \
+		    | $(HOST_CC) -std=c23 $(WARNINGS) -Werror $(CPPFLAGS) -fsyntax-only -x c - \
+		    || { echo "check-headers: $$h fails as C23" >&2; exit 1; }; \
+		printf '#include "geistshell/%s"\nint main() { return 0; }\n' "$$b" \
+		    | $(HOST_CXX) -std=c++17 -Wall -Wextra -pedantic-errors $(CPPFLAGS) -fsyntax-only -x c++ - \
+		    || { echo "check-headers: $$h fails as C++17" >&2; exit 1; }; \
+	done
+	@echo "check-headers: $(words $(PUBLIC_HEADERS)) public headers build as C23 and C++17"
+
 # CHAT_BIN belongs here because test_cli_chat.sh runs it. It was missing, and
 # the failure only showed after `make clean`: an incremental tree still had the
 # binary from an earlier `make all`, so the suite was green on a file no rule
@@ -288,7 +310,7 @@ check-backends:
 #
 # Output goes through a file rather than a pipe: POSIX sh has no PIPESTATUS, and
 # `cmd | tee` would report tee's status, silently swallowing every failure.
-test: $(TEST_BINS) $(PROBE_BINS) $(SPG_BIN) $(CHAT_BIN) $(WORKLOAD_BIN) check-backends
+test: $(TEST_BINS) $(PROBE_BINS) $(SPG_BIN) $(CHAT_BIN) $(WORKLOAD_BIN) check-backends check-headers
 	@log=$$(mktemp); one=$$(mktemp); status=0; \
 	for t in $(TEST_BINS); do \
 		echo "$$t"; \
@@ -329,6 +351,7 @@ help:
 	@echo "  make host-debug      build ASan/UBSan host binary"
 	@echo "  make host-release    build optimized host binary"
 	@echo "  make test            build and run standalone tests"
+	@echo "  make check-headers   every public header alone, as C23 and as C++17"
 	@echo "  make bench           real-model benchmark (skips when no GGUF)"
 	@echo "  make REMOTE=1 ...     build with the libcurl remote model adapter"
 	@echo "  make sync-engine     check out GEIST_REF in deps/geist (every build does this)"
