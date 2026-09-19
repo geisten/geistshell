@@ -58,6 +58,25 @@ fail() {
     exit 1
 }
 
+# Wait for a CONDITION, not for a number of tries. The plant advances with wall
+# time, so a fixed count is a bet on how fast the machine is: on a loaded
+# 4-vCPU runner the old `while [ $i -lt 50 ]` expired before the vessel had
+# settled, and the failure surfaced two blocks later as a missing journal line.
+# Budget is whole seconds, generous on purpose; the message names what was missed.
+wait_for() { # <seconds> <what-was-missed> <predicate...>
+    _deadline=$(($(date +%s) + $1))
+    _what=$2
+    shift 2
+    while ! "$@"; do
+        [ "$(date +%s)" -lt "$_deadline" ] || fail "$_what"
+        sleep 0.1
+    done
+}
+
+tripped_is_latched() { [ "$(dev read tripped | value_of)" = "1" ]; }
+temp_is_ambient()    { [ "$(dev read temp | value_of)" = "200" ]; }
+heater_is_off()      { [ "$(dev read heater | value_of)" = "0" ]; }
+
 # --- reading a machine ------------------------------------------------------
 COLD=$(dev read temp | value_of)
 [ "$COLD" = "200" ] || fail "cold plant read $COLD, expected 200 (20.0 C)"
@@ -88,15 +107,7 @@ fi
 
 # --- the machine's own interlock --------------------------------------------
 dev write heater 100 >/dev/null || fail "write heater 100 rejected"
-i=0
-TRIPPED=0
-while [ $i -lt 50 ]; do
-    TRIPPED=$(dev read tripped | value_of)
-    [ "$TRIPPED" = "1" ] && break
-    i=$((i + 1))
-    sleep 0.1
-done
-[ "$TRIPPED" = "1" ] || fail "100% heat never reached the over-temperature trip"
+wait_for 30 "100% heat never reached the over-temperature trip" tripped_is_latched
 
 # The device refuses while latched, and geistshell reports that refusal rather
 # than treating an unacknowledged command as done.
@@ -107,15 +118,11 @@ fi
 dev write reset 1 >/dev/null || fail "reset rejected"
 [ "$(dev read tripped | value_of)" = "0" ] || fail "reset did not clear the trip"
 
-# Let the vessel cool back to ambient so the agent below sees a cold plant —
-# at speed 20 the decay to 20.0 C is a matter of a second.
-i=0
-while [ $i -lt 50 ]; do
-    [ "$(dev read temp | value_of)" = "200" ] && break
-    i=$((i + 1))
-    sleep 0.1
-done
-[ "$(dev read temp | value_of)" = "200" ] || fail "vessel never cooled to 200"
+# Let the vessel cool back to ambient so the agent below sees a cold plant. The
+# trip already zeroed the power, but say it out loud: a reset clears the latch
+# only, and a wait whose target nothing drives towards is a trap.
+dev write heater 0 >/dev/null || fail "resetting heater after the trip failed"
+wait_for 30 "vessel never cooled back to ambient (200)" temp_is_ambient
 
 echo "test_cli_device: PASS"
 
@@ -140,7 +147,15 @@ EOF
 [ "$(dev read heater | value_of)" = "0" ] ||
     fail "a policy without the device capability still moved the machine"
 
-# With it, the plant actually responds.
+# With it, the plant actually responds. The journal is truncated first: every
+# agent run below appends to the same file, so an unscoped `grep` could be
+# satisfied by a LATER block — the checks then pass without ever looking at the
+# run they describe. #118's watchdog block and the #119 network block both write
+# a (device-state ...) of their own.
+rm -f build/device-demo.sgj
+wait_for 30 "vessel never cooled back to ambient before the agent run" temp_is_ambient
+heater_is_off || fail "heater was not off before the agent run"
+
 "$SPG_BIN" agent --config examples/device/run.spg --fake-script "$FAKE" \
     --max-steps 2 --allow-exec --device "$DIR/agent.spg" \
     >/dev/null || fail "agent run failed"
@@ -154,7 +169,10 @@ strings build/device-demo.sgj | grep -q '(outcome written)' ||
 # context is journaled whole as MODEL_INPUT, so a (device-state ...) block in
 # the prompt IS the audit record — a replay that shows what the agent did but
 # not what it saw is half a record.
-strings build/device-demo.sgj | grep -q '(device-state (heater 0) (temp 200))' ||
+# Any reading, not the exact 200: the claim is that the numbers the decision was
+# made ON are in the record. Pinning the temperature turns that claim into a bet
+# on how much plant time passed before the sample.
+strings build/device-demo.sgj | grep -Eq '\(device-state \(heater 0\) \(temp -?[0-9]+\)\)' ||
     fail "the plant readings never reached the journaled context"
 
 # And the loop actually closes: the context AFTER the write shows the plant the
