@@ -60,8 +60,15 @@ static bool rw_dir_valid(const char *dir) {
 /* bwrap: unshare everything, then rebuild a usable view. The root is bound
  * read-only rather than hidden -- commands need /usr, /etc and the interpreter
  * to run at all, and READ containment is not what is claimed here. /proc must
- * be remounted because the PID namespace is new, and /tmp is private so a
- * command cannot drop payloads for the next one. */
+ * be remounted because the PID namespace is new.
+ *
+ * /tmp is bound read-write rather than replaced by a tmpfs. A private tmpfs is
+ * the stronger sandbox and was the first shape here, but it made the same
+ * command succeed on macOS and fail on Linux: callers hand geistshell a
+ * mkdtemp'd scratch directory and expect the artifact to still be there
+ * afterwards, which a throwaway tmpfs silently discards. The macOS profile
+ * allows the system temp directories for the same reason, so binding /tmp is
+ * what makes the two hosts agree. */
 static void build_bwrap(const struct spg_sandbox_spec *spec, const char *tool,
                         struct spg_sandbox_wrapper *out) {
     push(out, tool);
@@ -78,7 +85,8 @@ static void build_bwrap(const struct spg_sandbox_spec *spec, const char *tool,
     push(out, "/dev");
     push(out, "--proc");
     push(out, "/proc");
-    push(out, "--tmpfs");
+    push(out, "--bind");
+    push(out, "/tmp");
     push(out, "/tmp");
     if (spec->rw_dir != nullptr) {
         push(out, "--bind");

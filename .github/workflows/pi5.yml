@@ -51,7 +51,7 @@ jobs:
           # start and then fails it on loopback setup, so a weaker smoke test
           # would pass while every governed command dies.
           bwrap --die-with-parent --new-session --unshare-all \
-            --ro-bind / / --dev /dev --proc /proc --tmpfs /tmp -- true || {
+            --ro-bind / / --dev /dev --proc /proc --bind /tmp /tmp -- true || {
             echo "::error::bwrap present but cannot create the sandbox (unprivileged user namespaces restricted?)"
             exit 1
           }

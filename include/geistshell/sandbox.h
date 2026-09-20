@@ -25,7 +25,7 @@ extern "C" {
  * of exec'ing it directly:
  *
  *   Linux   bwrap(1)         network namespace (loopback only), read-only
- *                            root, private /tmp, one writable bind mount
+ *                            root, one writable bind mount plus /tmp
  *   macOS   sandbox-exec(1)  SBPL profile denying network* and every
  *                            file-write* outside the writable directory
  *
@@ -38,7 +38,7 @@ extern "C" {
  * hand-written syscall filter is the upgrade path when a caller needs more
  * than "no network, one writable path". */
 
-/* The wrapper prefix is fixed-shape (17 tokens at most, for bwrap with a
+/* The wrapper prefix is fixed-shape (18 tokens at most, for bwrap with a
  * writable bind); the cap leaves room without inviting growth. */
 #define SPG_SANDBOX_MAX_ARGV    24u
 #define SPG_SANDBOX_PROFILE_CAP 1024u
@@ -46,7 +46,8 @@ extern "C" {
 struct spg_sandbox_spec {
     bool enabled;       /* false runs the command unwrapped (ungoverned paths) */
     bool allow_network; /* false removes every interface but loopback */
-    /* The one writable path (besides a private /tmp). Absolute, no quotes or
+    /* The one writable path (besides the system temp directories, which both
+     * mechanisms leave writable). Absolute, no quotes or
      * control bytes -- it is interpolated into an SBPL string. nullptr leaves
      * nothing but /tmp writable. */
     const char *rw_dir;

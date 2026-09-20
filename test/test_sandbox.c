@@ -11,6 +11,17 @@
 #include <string.h>
 #include <unistd.h>
 
+static size_t count_arg(const struct spg_sandbox_wrapper *w,
+                        const char *needle) {
+    size_t n = 0u;
+    for (size_t i = 0u; i < w->argc; i += 1u) {
+        if (strcmp(w->argv[i], needle) == 0) {
+            n += 1u;
+        }
+    }
+    return n;
+}
+
 static bool has_arg(const struct spg_sandbox_wrapper *w, const char *needle) {
     for (size_t i = 0u; i < w->argc; i += 1u) {
         if (strcmp(w->argv[i], needle) == 0) {
@@ -34,9 +45,12 @@ static int test_bwrap_shape(void) {
         strcmp(w.argv[w.argc - 1u], "--") != 0) {
         return 1;
     }
+    /* Two binds: /tmp, which both mechanisms leave writable, and the caller's
+     * directory. One bind would mean the caller's directory never became
+     * writable at all. */
     if (!has_arg(&w, "--unshare-all") || !has_arg(&w, "--die-with-parent") ||
-        !has_arg(&w, "--ro-bind") || !has_arg(&w, "--tmpfs") ||
-        !has_arg(&w, "--bind") || !has_arg(&w, "/tmp/work")) {
+        !has_arg(&w, "--ro-bind") || count_arg(&w, "--bind") != 2u ||
+        !has_arg(&w, "/tmp/work")) {
         return 1;
     }
     if (has_arg(&w, "--share-net")) {
@@ -47,7 +61,7 @@ static int test_bwrap_shape(void) {
         .enabled = true, .allow_network = true, .rw_dir = nullptr};
     struct spg_sandbox_wrapper nw = {};
     if (spg_sandbox_wrapper_build("/usr/bin/bwrap", &net, &nw) != SPG_OK ||
-        !has_arg(&nw, "--share-net") || has_arg(&nw, "--bind")) {
+        !has_arg(&nw, "--share-net") || count_arg(&nw, "--bind") != 1u) {
         return 1;
     }
     return 0;

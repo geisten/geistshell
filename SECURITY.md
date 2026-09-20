@@ -85,13 +85,16 @@ exec'd directly:
 
 | Host  | Tool              | What it enforces                                                                 |
 | ----- | ----------------- | -------------------------------------------------------------------------------- |
-| Linux | `bwrap(1)`        | network namespace (loopback only), read-only `/`, private `/tmp`, one writable bind |
+| Linux | `bwrap(1)`        | network namespace (loopback only), read-only `/`, one writable bind plus `/tmp`     |
 | macOS | `sandbox-exec(1)` | SBPL profile: `(deny network*)`, `(deny file-write*)` outside the writable directory |
 
 The sandbox spec is produced by the **executor boundary** from operator config,
 never from model output: `uses_network` can only get a command *denied*, it can
-never grant it network access. The writable path is the working directory the
-boundary already gated (the filesystem root is treated as "nothing writable").
+never grant it network access. The writable set is the working directory the
+boundary already gated (the filesystem root is treated as "nothing writable"),
+plus the system temp directories — `/tmp` on Linux, `/private/tmp`,
+`/private/var/tmp` and `/private/var/folders` on macOS. Everything else on the
+filesystem is readable and **not** writable.
 
 This **fails closed**: on a host with neither tool, an approved command does not
 start (`SPG_E_UNSUPPORTED`, observation `exec denied: sandbox unavailable on
@@ -195,7 +198,7 @@ high-stakes use, layer it under real isolation:
 
    ```sh
    bwrap --die-with-parent --new-session --unshare-all \
-     --ro-bind / / --dev /dev --proc /proc --tmpfs /tmp -- true
+     --ro-bind / / --dev /dev --proc /proc --bind /tmp /tmp -- true
    ```
 
 3. **Keep `execution_enabled` off** unless you need shell actions. When on, point

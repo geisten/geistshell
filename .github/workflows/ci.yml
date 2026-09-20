@@ -81,7 +81,7 @@ jobs:
           # Smoke-test the exact shape src/exec/sandbox.c builds, so a runner
           # that cannot sandbox says so here instead of in 9 unrelated tests.
           bwrap --die-with-parent --new-session --unshare-all \
-            --ro-bind / / --dev /dev --proc /proc --tmpfs /tmp -- true \
+            --ro-bind / / --dev /dev --proc /proc --bind /tmp /tmp -- true \
             && echo "bwrap: sandbox usable" \
             || { echo "::error::bwrap cannot create the sandbox on this runner"; exit 1; }
 
