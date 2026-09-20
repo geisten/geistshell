@@ -59,19 +59,50 @@ struct spg_mem_store {
  * validated slug, never from raw model input. */
 [[nodiscard]] bool spg_mem_slug_valid(const char *slug);
 
+/* True when slug sits in a namespace the learning loop owns: "lesson-",
+ * "skill-" or "pref-".
+ *
+ * These are not ordinary memories. agent_loop reads lesson-* back as a
+ * `(directive ...)` and puts it in front of the model, and the improve loop
+ * decides which lessons survive by measuring them. A model that could write
+ * its own lesson would hand itself an instruction and bypass that gate, and one
+ * that could delete a lesson or a pref would edit the learning state just as
+ * effectively. So the public save/delete refuse this namespace, and only the
+ * loop's own writers (spg_mem_save_reserved, spg_mem_delete_reserved) may touch
+ * it. Reading stays open: a lesson reaches the model as context anyway. */
+[[nodiscard]] bool spg_mem_slug_reserved(const char *slug);
+
 /* Upsert a memory: write <dir>/<slug>.md with frontmatter (name, description)
  * and the Markdown body, then regenerate the index. Overwrites an existing slug
  * atomically. Returns SPG_E_INVALID_ARG (bad slug/null/description with a
  * newline) or SPG_E_LIMIT (description/body over cap, or a new slug beyond
- * SPG_MEM_MAX_FILES). */
+ * SPG_MEM_MAX_FILES), or SPG_E_POLICY_DENIED for a reserved slug.
+ *
+ * This is the path every model-driven surface takes (the memory executor and
+ * the chat tool), so the refusal lives here rather than in those callers: a
+ * surface added later is denied by default instead of having to remember. */
 [[nodiscard]] enum spg_status spg_mem_save(struct spg_mem_store *store,
                                            const char           *slug,
                                            const char           *description,
                                            const char           *body);
 
-/* Delete a memory and regenerate the index. SPG_E_NOT_FOUND if absent. */
+/* Delete a memory and regenerate the index. SPG_E_NOT_FOUND if absent,
+ * SPG_E_POLICY_DENIED for a reserved slug. */
 [[nodiscard]] enum spg_status spg_mem_delete(struct spg_mem_store *store,
                                              const char           *slug);
+
+/* Save and delete for the learning loop and the operator CLI: identical to the
+ * two above but allowed in the reserved namespaces. Callers are the improve and
+ * distill paths, pref.c, and `geistshell memory save/delete` — the operator is
+ * trusted by SECURITY.md's threat model, the model is not. Never reachable from
+ * a model recommendation. */
+[[nodiscard]] enum spg_status spg_mem_save_reserved(struct spg_mem_store *store,
+                                                    const char *slug,
+                                                    const char *description,
+                                                    const char *body);
+
+[[nodiscard]] enum spg_status
+spg_mem_delete_reserved(struct spg_mem_store *store, const char *slug);
 
 /* Read the full file content of a memory into dst. SPG_E_NOT_FOUND if absent,
  * SPG_E_LIMIT if dst is too small (dst gets the truncated, NUL-terminated

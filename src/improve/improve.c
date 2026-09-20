@@ -67,7 +67,7 @@ enum spg_status spg_improve_commit(struct spg_mem_store *store,
         return SPG_OK;
     }
     *kept                 = false;
-    const enum spg_status s = spg_mem_delete(store, lesson->slug);
+    const enum spg_status s = spg_mem_delete_reserved(store, lesson->slug);
     /* A revert of a never-saved lesson is fine. */
     return (s == SPG_OK || s == SPG_E_NOT_FOUND) ? SPG_OK : SPG_E_IO;
 }

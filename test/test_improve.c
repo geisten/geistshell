@@ -336,7 +336,8 @@ static int test_commit_keep_and_revert(void) {
         .slug = "lesson-rejected", .description = "d", .body = "b"};
 
     /* accepted -> the (already saved) lesson stays */
-    if (spg_mem_save(&store, lesson.slug, lesson.description, lesson.body) !=
+    if (spg_mem_save_reserved(&store, lesson.slug, lesson.description,
+                              lesson.body) !=
         SPG_OK) {
         return 1;
     }

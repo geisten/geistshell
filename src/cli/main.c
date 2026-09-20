@@ -4452,10 +4452,10 @@ static bool guard_run(void *vctx, const char *config_path, bool with_lesson) {
     /* toggle the candidate lesson so the real model sees it (trial) or not
      * (baseline); cheap file ops, isolating the lesson's effect on the guard */
     if (with_lesson) {
-        (void)spg_mem_save(ctx->store, ctx->lesson->slug,
+        (void)spg_mem_save_reserved(ctx->store, ctx->lesson->slug,
                            ctx->lesson->description, ctx->lesson->body);
     } else {
-        (void)spg_mem_delete(ctx->store, ctx->lesson->slug);
+        (void)spg_mem_delete_reserved(ctx->store, ctx->lesson->slug);
     }
 
     /* the guard's own (expect) criterion (P1) is what judges it */
@@ -4640,7 +4640,8 @@ static int distill_command(int argc, char **argv) {
         fprintf(stderr, "distill: baseline suite run failed\n");
         return 1;
     }
-    if (spg_mem_save(&store, skill.slug, skill.description, skill.body) !=
+    if (spg_mem_save_reserved(&store, skill.slug, skill.description,
+                              skill.body) !=
         SPG_OK) {
         fprintf(stderr, "distill: cannot save %s\n", skill.slug);
         return 1;
@@ -4660,7 +4661,8 @@ static int distill_command(int argc, char **argv) {
         }
         /* the guard runs toggled the skill; leave it saved so the commit
          * decides keep/revert from a known state */
-        (void)spg_mem_save(&store, skill.slug, skill.description, skill.body);
+        (void)spg_mem_save_reserved(&store, skill.slug, skill.description,
+                                    skill.body);
     }
     bool kept = false;
     (void)spg_improve_commit(&store, &skill, accepted, &kept);
@@ -4943,7 +4945,8 @@ static enum spg_gepa_op gepa_evolve(struct spg_mem_store         *store,
         if (op > 0u && variants[op][0] == '\0') {
             continue; /* operator did not apply / over budget */
         }
-        (void)spg_mem_save(store, lesson->slug, variants[op], lesson->body);
+        (void)spg_mem_save_reserved(store, lesson->slug, variants[op],
+                                    lesson->body);
         struct eval_run_report trial;
         if (eval_run_suite(gate_path, store, opts, &trial) != SPG_OK) {
             scores[op] = 0u;
@@ -4955,7 +4958,8 @@ static enum spg_gepa_op gepa_evolve(struct spg_mem_store         *store,
     const size_t best = spg_gepa_select(SPG_GEPA_OP_COUNT, scores);
     (void)snprintf(lesson->description, sizeof lesson->description, "%s",
                    variants[best]);
-    (void)spg_mem_save(store, lesson->slug, lesson->description, lesson->body);
+    (void)spg_mem_save_reserved(store, lesson->slug, lesson->description,
+                                lesson->body);
     *out_score = scores[best];
     return (enum spg_gepa_op)best;
 }
@@ -5118,7 +5122,7 @@ static int improve_command(int argc, char **argv) {
     size_t       kept        = 0u;
     for (size_t k = 0u; k < ncand; k += 1u) {
         struct spg_lesson *lesson = &candidates[k];
-        (void)spg_mem_save(&store, lesson->slug, lesson->description,
+        (void)spg_mem_save_reserved(&store, lesson->slug, lesson->description,
                            lesson->body); /* tentative */
         /* #27: evolve the directive text against the gate before scoring it.
          * The search leaves the fittest variant in lesson->description and in
@@ -5168,7 +5172,7 @@ static int improve_command(int argc, char **argv) {
             guards_ok = spg_guard_ring_gate(&guards, guard_run, &gctx);
             /* the gate's guard runs toggled the lesson; leave it saved so the
              * commit below decides keep/revert from a known state */
-            (void)spg_mem_save(&store, lesson->slug, lesson->description,
+            (void)spg_mem_save_reserved(&store, lesson->slug, lesson->description,
                                lesson->body);
         }
         const bool accepted =
