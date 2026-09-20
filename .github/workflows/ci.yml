@@ -59,12 +59,16 @@ jobs:
           brew install libomp
           echo "LIBOMP_PREFIX=$(brew --prefix libomp)" >> "$GITHUB_ENV"
 
+      # bubblewrap: governed shell execution fails closed without it (SECURITY.md
+      # §3), so a runner without bwrap would report test_sandbox as SKIP(host) —
+      # which the "No silent host skips" gate below turns red on the Linux legs.
+      # macOS needs nothing installed: sandbox-exec ships with the system.
       - name: Install deps (Linux)
         if: runner.os == 'Linux'
         run: |
           sudo apt-get update
           sudo apt-get install -y --no-install-recommends \
-            gcc-14 libopenblas-dev libomp-dev libfftw3-dev
+            gcc-14 libopenblas-dev libomp-dev libfftw3-dev bubblewrap
 
       # A clean tree, always. #99 found the suite passing on a geistshell-chat
       # binary left over from an earlier build that no rule promised; an
