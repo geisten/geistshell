@@ -179,6 +179,25 @@ high-stakes use, layer it under real isolation:
    with macOS) — without it governed shell execution refuses to run. A
    container or VM on top still buys read confinement and a second layer, which
    the in-process sandbox does not provide.
+
+   On **Ubuntu 24.04 and later**, installing `bubblewrap` is not enough:
+   AppArmor confines unprivileged user namespaces and strips `CAP_NET_ADMIN`
+   inside them, so `bwrap` dies configuring loopback — `Failed RTM_NEWADDR:
+   Operation not permitted` — the moment it unshares the network. Ship an
+   AppArmor profile for the binary, or lift the restriction host-wide:
+
+   ```sh
+   sudo sysctl -w kernel.apparmor_restrict_unprivileged_userns=0
+   ```
+
+   Verify the sandbox works before trusting it, with the shape the runtime
+   actually builds:
+
+   ```sh
+   bwrap --die-with-parent --new-session --unshare-all \
+     --ro-bind / / --dev /dev --proc /proc --tmpfs /tmp -- true
+   ```
+
 3. **Keep `execution_enabled` off** unless you need shell actions. When on, point
    `allowed_workdir_prefix` at a disposable scratch directory and set tight
    timeouts, output caps, and `setrlimit` values.
