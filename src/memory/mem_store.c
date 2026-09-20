@@ -43,6 +43,22 @@ bool spg_mem_slug_valid(const char *slug) {
     return n >= 1u && n <= SPG_MEM_SLUG_MAX;
 }
 
+bool spg_mem_slug_reserved(const char *slug) {
+    if (slug == nullptr) {
+        return false;
+    }
+    /* Kept in one place so a new generated namespace is added here and is then
+     * refused on every model-facing path at once. The producers are
+     * improve.c ("lesson-", "skill-") and pref.c ("pref-"). */
+    static const char *const reserved[] = {"lesson-", "skill-", "pref-"};
+    for (size_t i = 0u; i < sizeof reserved / sizeof reserved[0]; i += 1u) {
+        if (strncmp(slug, reserved[i], strlen(reserved[i])) == 0) {
+            return true;
+        }
+    }
+    return false;
+}
+
 enum spg_status spg_mem_store_open(struct spg_mem_store *store,
                                    const char           *dir) {
     if (store == nullptr || dir == nullptr || dir[0] == '\0') {
@@ -285,6 +301,16 @@ static void regenerate_index(const struct spg_mem_store *store) {
 
 enum spg_status spg_mem_save(struct spg_mem_store *store, const char *slug,
                              const char *description, const char *body) {
+    if (spg_mem_slug_reserved(slug)) {
+        return SPG_E_POLICY_DENIED;
+    }
+    return spg_mem_save_reserved(store, slug, description, body);
+}
+
+enum spg_status spg_mem_save_reserved(struct spg_mem_store *store,
+                                      const char           *slug,
+                                      const char           *description,
+                                      const char           *body) {
     if (store == nullptr || !spg_mem_slug_valid(slug) ||
         description == nullptr || body == nullptr) {
         return SPG_E_INVALID_ARG;
@@ -345,6 +371,14 @@ enum spg_status spg_mem_save(struct spg_mem_store *store, const char *slug,
 }
 
 enum spg_status spg_mem_delete(struct spg_mem_store *store, const char *slug) {
+    if (spg_mem_slug_reserved(slug)) {
+        return SPG_E_POLICY_DENIED;
+    }
+    return spg_mem_delete_reserved(store, slug);
+}
+
+enum spg_status spg_mem_delete_reserved(struct spg_mem_store *store,
+                                        const char           *slug) {
     if (store == nullptr || !spg_mem_slug_valid(slug)) {
         return SPG_E_INVALID_ARG;
     }

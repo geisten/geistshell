@@ -67,8 +67,11 @@ static int test_directive(void) {
     if (open_temp(&store, dir) != 0) {
         return 1;
     }
-    if (spg_mem_save(&store, "lesson-rejected", "Emit one valid form.",
-                     "long body text that must NOT be injected") != SPG_OK) {
+    /* Written through the loop's own writer: the public save refuses the
+     * reserved namespace, which is what test_reserved_namespaces covers. */
+    if (spg_mem_save_reserved(&store, "lesson-rejected", "Emit one valid form.",
+                              "long body text that must NOT be injected") !=
+        SPG_OK) {
         return 1;
     }
     char   out[256];
@@ -286,6 +289,50 @@ static int test_index_cache_invalidation(void) {
     return 0;
 }
 
+/* The learning namespaces are not writable through the public API.
+ *
+ * agent_loop reads lesson-* back as a `(directive ...)` and shows it to the
+ * model, and the improve loop decides by measurement which lessons survive. A
+ * model that wrote its own lesson would hand itself an instruction past that
+ * gate — Security-Review.md calls this attack 7. Deleting one is the same
+ * manipulation from the other side, so delete is covered too. */
+static int test_reserved_namespaces(void) {
+    struct spg_mem_store store;
+    char                 dir[64];
+    if (open_temp(&store, dir) != 0) {
+        return 1;
+    }
+    static const char *const reserved[] = {"lesson-rejected", "skill-build",
+                                           "pref-tone"};
+    for (size_t i = 0u; i < sizeof reserved / sizeof reserved[0]; i += 1u) {
+        if (!spg_mem_slug_reserved(reserved[i])) {
+            return 1;
+        }
+        if (spg_mem_save(&store, reserved[i], "d", "b") !=
+            SPG_E_POLICY_DENIED) {
+            return 1;
+        }
+        /* The loop's own writer still works, and the entry it wrote cannot be
+         * removed through the public delete either. */
+        if (spg_mem_save_reserved(&store, reserved[i], "d", "b") != SPG_OK) {
+            return 1;
+        }
+        if (spg_mem_delete(&store, reserved[i]) != SPG_E_POLICY_DENIED) {
+            return 1;
+        }
+        if (spg_mem_delete_reserved(&store, reserved[i]) != SPG_OK) {
+            return 1;
+        }
+    }
+    /* A name that merely contains a reserved word is ordinary: the check is a
+     * namespace prefix, not a substring search. */
+    if (spg_mem_slug_reserved("my-lesson-notes") ||
+        spg_mem_save(&store, "my-lesson-notes", "d", "b") != SPG_OK) {
+        return 1;
+    }
+    return spg_mem_delete(&store, "my-lesson-notes") == SPG_OK ? 0 : 1;
+}
+
 int main(void) {
     if (test_slug_validation() != 0) {
         fprintf(stderr, "test_slug_validation failed\n");
@@ -321,6 +368,10 @@ int main(void) {
     }
     if (test_invalid_args() != 0) {
         fprintf(stderr, "test_invalid_args failed\n");
+        return 1;
+    }
+    if (test_reserved_namespaces() != 0) {
+        fprintf(stderr, "test_reserved_namespaces failed\n");
         return 1;
     }
     return 0;

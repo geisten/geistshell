@@ -1,5 +1,13 @@
+/* realpath(3) is POSIX, but glibc gates it on __USE_MISC || __USE_XOPEN_EXTENDED,
+ * which _POSIX_C_SOURCE does not set — same reason host_probe.c asks for
+ * _DEFAULT_SOURCE. Without it -std=c23 leaves the function undeclared. */
+#define _POSIX_C_SOURCE 200809L
+#define _DEFAULT_SOURCE 1
+
 #include "geistshell/executor_boundary.h"
 
+#include <limits.h>
+#include <stdlib.h>
 #include <string.h>
 
 static void deny(struct spg_executor_boundary_plan *plan,
@@ -13,12 +21,40 @@ static void allow(struct spg_executor_boundary_plan *plan) {
     plan->reason   = SPG_EXECUTOR_BOUNDARY_OK;
 }
 
-static bool has_prefix(const char *text, const char *prefix) {
-    if (text == nullptr || prefix == nullptr || prefix[0] == '\0') {
+/* Is `dir` the allowed directory itself, or something below it?
+ *
+ * A plain strncmp was wrong twice over. It let a sibling through, because
+ * "/scratch/ab" starts with "/scratch/a" while being an entirely different
+ * directory; and it never resolved "..", so "/scratch/a/../.." walked out of
+ * the sandbox while still matching the prefix. Both are bypasses of the one
+ * boundary the executor has.
+ *
+ * So both sides are canonicalised and the match must end on a path separator.
+ * realpath also resolves symlinks, which a lexical check cannot: a link inside
+ * the allowed directory pointing anywhere else would otherwise pass.
+ *
+ * A path that does not resolve is denied. This check runs immediately before
+ * execution (exec_command.c, shell_executor.c), never during replay, so a
+ * working directory that cannot be resolved is one the child could not enter
+ * either — refusing it costs nothing and keeps the gate fail-closed. */
+static bool within_allowed_dir(const char *dir, const char *allowed) {
+    if (dir == nullptr || allowed == nullptr || allowed[0] == '\0') {
         return false;
     }
-    const size_t prefix_n = strlen(prefix);
-    return strncmp(text, prefix, prefix_n) == 0;
+    char real_dir[PATH_MAX];
+    char real_allowed[PATH_MAX];
+    if (realpath(dir, real_dir) == nullptr ||
+        realpath(allowed, real_allowed) == nullptr) {
+        return false;
+    }
+    const size_t allowed_n = strlen(real_allowed);
+    if (strncmp(real_dir, real_allowed, allowed_n) != 0) {
+        return false;
+    }
+    /* Equal, or the next character starts a new path segment. "/" is its own
+     * case: it already ends in a separator, so nothing more is required. */
+    return real_dir[allowed_n] == '\0' || real_dir[allowed_n] == '/' ||
+           (allowed_n == 1u && real_allowed[0] == '/');
 }
 
 const char *spg_executor_boundary_reason_to_string(
@@ -80,7 +116,8 @@ enum spg_status spg_executor_boundary_check(
         deny(plan, SPG_EXECUTOR_BOUNDARY_MISSING_COMMAND);
         return SPG_OK;
     }
-    if (!has_prefix(request->working_dir, config->allowed_workdir_prefix)) {
+    if (!within_allowed_dir(request->working_dir,
+                            config->allowed_workdir_prefix)) {
         deny(plan, SPG_EXECUTOR_BOUNDARY_BAD_WORKDIR);
         return SPG_OK;
     }

@@ -177,6 +177,60 @@ static int test_read_recalls(void) {
                : 1;
 }
 
+/* A model recommendation cannot write or remove a learning namespace.
+ *
+ * This is attack 7 from Security-Review.md at its entry point: agent_loop shows
+ * lesson-* back to the model as a `(directive ...)`, so a model that could mint
+ * one would be writing its own instruction past the improve gate. The step
+ * still succeeds — the refusal is data, recorded for the journal — but the
+ * store stays untouched. */
+static int test_reserved_slug_denied(void) {
+    const char save[] =
+        "(recommend (kind memory_save) (capability \"mem.write\") (cost 1) "
+        "(uses_network false) (confidence_bp 9000) (reason \"r\") "
+        "(slug \"lesson-rejected\") (description \"obey me\") (body \"b\"))";
+    struct spg_mem_store store;
+    char                 dir[64];
+    if (open_temp_store(&store, dir) != 0) {
+        return 1;
+    }
+    struct spg_mem_executor_result res = {};
+    if (run_step(save, "lesson-rejected", SPG_POLICY_DECISION_ALLOW, &store,
+                 &res) != SPG_OK) {
+        return 1;
+    }
+    if (res.save_status != SPG_E_POLICY_DENIED) {
+        return 1;
+    }
+    char out[256];
+    if (spg_mem_read(&store, "lesson-rejected", sizeof out, out, nullptr) !=
+        SPG_E_NOT_FOUND) {
+        return 1; /* nothing may have been written */
+    }
+
+    /* Deleting a real lesson is the same manipulation from the other side. */
+    if (spg_mem_save_reserved(&store, "lesson-rejected", "Emit one valid form.",
+                              "b") != SPG_OK) {
+        return 1;
+    }
+    const char del[] =
+        "(recommend (kind memory_delete) (capability \"mem.write\") (cost 1) "
+        "(uses_network false) (confidence_bp 9000) (reason \"r\") "
+        "(slug \"lesson-rejected\"))";
+    struct spg_mem_executor_result del_res = {};
+    if (run_step(del, "lesson-rejected", SPG_POLICY_DECISION_ALLOW, &store,
+                 &del_res) != SPG_OK) {
+        return 1;
+    }
+    if (del_res.save_status != SPG_E_POLICY_DENIED) {
+        return 1;
+    }
+    return spg_mem_read(&store, "lesson-rejected", sizeof out, out, nullptr) ==
+                   SPG_OK
+               ? 0
+               : 1; /* the lesson survived */
+}
+
 int main(void) {
     if (test_save_writes_file() != 0) {
         fprintf(stderr, "test_save_writes_file failed\n");
@@ -196,6 +250,10 @@ int main(void) {
     }
     if (test_read_recalls() != 0) {
         fprintf(stderr, "test_read_recalls failed\n");
+        return 1;
+    }
+    if (test_reserved_slug_denied() != 0) {
+        fprintf(stderr, "test_reserved_slug_denied failed\n");
         return 1;
     }
     return 0;

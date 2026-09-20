@@ -126,7 +126,7 @@ int spg_memory_command(const int argc, char **argv) {
             used += r;
         }
         body[used] = '\0';
-        const enum spg_status s = spg_mem_save(&store, pos[1], pos[2], body);
+        const enum spg_status s = spg_mem_save_reserved(&store, pos[1], pos[2], body);
         if (s == SPG_E_INVALID_ARG) {
             fprintf(stderr, "memory: invalid slug or description\n");
             return 1;
@@ -196,7 +196,7 @@ int spg_memory_command(const int argc, char **argv) {
             usage();
             return 2;
         }
-        const enum spg_status s = spg_mem_delete(&store, pos[1]);
+        const enum spg_status s = spg_mem_delete_reserved(&store, pos[1]);
         if (s == SPG_E_NOT_FOUND) {
             fprintf(stderr, "memory: not found: %s\n", pos[1]);
             return 1;

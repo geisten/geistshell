@@ -89,7 +89,7 @@ enum spg_status spg_pref_record(struct spg_mem_store *store, const char *key,
                    "only; it never changes what the policy permits.",
                    evidence_name(evidence), observed_count, key, value);
 
-    const enum spg_status s = spg_mem_save(store, slug, description, body);
+    const enum spg_status s = spg_mem_save_reserved(store, slug, description, body);
     if (s == SPG_OK && wrote != nullptr) {
         *wrote = true;
     }
