@@ -22,18 +22,23 @@ Hard constraints:
 - Use attributes ([[nodiscard]], etc.) conservatively but meaningfully.
 
 Memory allocation rule:
-- The `heap.h` allocation interface is owned by the geist engine (`deps/geist/heap.h`),
-  not by geistshell. geistshell consumes it directly (`#include "heap.h"`, resolved via
-  `-Ideps/geist`) and must not maintain a divergent copy. Treat geist as the single source
-  of truth for allocation policy and the `memory_arena` type.
-- Prefer this `heap.h` allocation interface whenever dynamic memory is required.
-- Do not call `malloc`, `calloc`, `realloc`, or `free` directly unless there is a clear, explicitly justified reason.
-- Route dynamic memory through `heap.h` so allocation behavior, tracking, limits, failure handling, and portability remain consistent with the project.
-- If allocation is needed, prefer APIs that accept an explicit heap/context/allocator handle when that matches the project design.
-- If no allocation is needed, prefer caller-provided buffers and explicit workspace/scratch memory.
-- Do not hide heap allocation in hot paths.
-- Keep allocation and deallocation responsibilities explicit.
-- If a function allocates via `heap.h`, document exactly who owns the memory and how it must be released.
+- geistshell does not allocate. The default is caller-provided buffers and explicit
+  workspace/scratch memory, sized by a compile-time constant — that is what makes the
+  spine replayable and portable to constrained targets.
+- The engine's `heap.h` is NOT available to us. It lives in libgeist's private
+  `src/base/`, and the `-I$(GEIST_DIR)` that once reached it was dropped with the arena
+  wrapper in v0.3.1 (see the Makefile): geistshell depends on the engine's PUBLIC headers
+  only. Do not reintroduce that include path, and do not maintain a local copy of it.
+- Do not call `malloc`, `calloc`, `realloc`, or `free` unless there is a clear reason
+  that is written down at the call site. Today two places in the core qualify, and both
+  are sized by something outside this program: the macOS process table, whose size only
+  the kernel knows (`src/machine/backend_macos.c`), and the geistd adapter's
+  vocabulary-sized buffers, whose size the served model reports at open time
+  (`src/model/model_adapter.c`). File slurping in the CLI surface is the third.
+- Never allocate in a hot path, and never hide an allocation inside one.
+- Where an allocation is unavoidable, prefer freeing it in the same function that
+  made it. If ownership transfers to the caller instead, say so in the declaration's
+  comment and name who must release it.
 
 Inference-engine architecture:
 - Separate clearly: model representation, immutable weights, runtime context, scratch memory, kernels, scheduling, token/state handling.
