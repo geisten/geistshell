@@ -121,6 +121,13 @@ struct spg_model_adapter_config {
      * late"). 0 = off (default) — the constrained decode is byte-identical to
      * before. GEIST + constrained only; ignored otherwise. */
     size_t reason_budget;
+    /* geistd (GEIST kind only): serve through a resident daemon instead of
+     * loading the GGUF here — a Unix socket path, or "host:port". The
+     * session, its KV cache and the pinned prefix live in the daemon and
+     * outlive this process, which is the point for short-lived agent runs.
+     * model_path is ignored; geistd_token is required off loopback. */
+    const char *geistd;
+    const char *geistd_token;
 };
 
 struct spg_model_adapter {
@@ -174,6 +181,21 @@ struct spg_model_adapter {
      * and the verifier can pick the winning run. Own RNG because the mask can't
      * go through the session sampler. GEIST only. */
     uint64_t    choice_rng;
+    /* geistd path (see spg_model_adapter_config.geistd). The decoder scans
+     * the vocabulary by surface form, so the pieces are fetched once;
+     * shadow mirrors what the daemon's KV holds so append-style prefill
+     * maps onto geistd's whole-context prefill. */
+    void    *gd; /* struct geistd *, or null = in-process libgeist */
+    char     gd_session[17];
+    char   **gd_pieces;
+    size_t   gd_vocab;
+    float   *gd_logits;
+    int32_t *gd_shadow;
+    size_t   gd_shadow_n;
+    size_t   gd_pinned;
+    int32_t  gd_eos;
+    int32_t  gd_bos;
+    bool     gd_add_bos;
 };
 
 struct spg_model_generate_request {
