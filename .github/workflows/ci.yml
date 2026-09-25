@@ -99,6 +99,25 @@ jobs:
       # optional artefact is missing — a GGUF, python3, a built gym env, a
       # REMOTE=1 binary — is legitimate on every platform, and counting those
       # too is what turned main red the first time this ran there.
+      # A red leg otherwise arrives as a bare "Process completed with exit
+      # code 2": the log holds the answer, but reading it means opening a
+      # browser, and it is not in any API. Annotations are, and they show up
+      # on the run summary and against the PR. Costs nothing when green.
+      - name: Name the failing tests
+        if: failure()
+        run: |
+          [ -f test.log ] || exit 0
+          if grep -qE '^FAILED: ' test.log; then
+            grep -E '^FAILED: ' test.log | head -20 \
+              | while IFS= read -r line; do echo "::error::$line"; done
+          else
+            # Failed before or outside the test loop — the build, a header
+            # check, or the harness itself. The tail is the best available
+            # summary, and saying so beats an empty annotation list.
+            echo "::error::make test failed without naming a test; tail follows"
+            tail -15 test.log | while IFS= read -r line; do echo "::error::$line"; done
+          fi
+
       - name: No silent host skips
         run: |
           summary=$(grep '^test summary:' test.log || true)

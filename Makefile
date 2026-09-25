@@ -311,16 +311,24 @@ check-headers:
 #
 # Output goes through a file rather than a pipe: POSIX sh has no PIPESTATUS, and
 # `cmd | tee` would report tee's status, silently swallowing every failure.
+# Every test runs before the exit status is honoured, so one failure does not
+# hide the rest — which also means the failure sits in the middle of a long
+# log rather than at its end. Each one that exits non-zero therefore announces
+# itself as "FAILED: <path> (exit N)": not every test prints a PASS line, so
+# the absence of one is no signal, and reconstructing which test died from
+# interleaved output is guesswork.
 test: $(TEST_BINS) $(PROBE_BINS) $(SPG_BIN) $(CHAT_BIN) $(WORKLOAD_BIN) check-backends check-headers
 	@log=$$(mktemp); one=$$(mktemp); status=0; \
 	for t in $(TEST_BINS); do \
 		echo "$$t"; \
-		"$$t" >"$$one" 2>&1 || status=$$?; \
+		if "$$t" >"$$one" 2>&1; then :; else \
+			status=$$?; echo "FAILED: $$t (exit $$status)"; fi; \
 		cat "$$one"; cat "$$one" >>"$$log"; \
 	done; \
 	for t in $(CLI_TESTS); do \
 		echo "$$t"; \
-		SPG_BIN="$(SPG_BIN)" sh "$$t" >"$$one" 2>&1 || status=$$?; \
+		if SPG_BIN="$(SPG_BIN)" sh "$$t" >"$$one" 2>&1; then :; else \
+			status=$$?; echo "FAILED: $$t (exit $$status)"; fi; \
 		cat "$$one"; cat "$$one" >>"$$log"; \
 	done; \
 	passed=$$(grep -c ': PASS' "$$log" || true); \
