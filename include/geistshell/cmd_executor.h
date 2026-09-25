@@ -1,6 +1,7 @@
 #ifndef GEISTSHELL_CMD_EXECUTOR_H
 #define GEISTSHELL_CMD_EXECUTOR_H
 
+#include "geistshell/sandbox.h"
 #include "geistshell/status.h"
 
 #include <stdbool.h>
@@ -52,6 +53,14 @@ struct spg_cmd_request {
     bool        clear_env;   /* run with an empty environment */
 
     struct spg_cmd_limits limits; /* OS resource caps (all 0 = inherited) */
+
+    /* OS isolation (sandbox.h). An enabled spec wraps the command in the
+     * host's sandbox tool and FAILS CLOSED -- status SPG_E_UNSUPPORTED, the
+     * command never starts -- when the host has none. Governed shell paths get
+     * this spec from the executor boundary; the ungoverned helpers (device
+     * channels, host probes) declare their own network needs in the operator's
+     * channel table and run unwrapped. */
+    struct spg_sandbox_spec sandbox;
 
     size_t stdout_cap; /* bytes of stdout_buf, including the terminator */
     char  *stdout_buf; /* receives captured stdout, NUL-terminated on return */

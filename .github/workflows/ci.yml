@@ -59,12 +59,31 @@ jobs:
           brew install libomp
           echo "LIBOMP_PREFIX=$(brew --prefix libomp)" >> "$GITHUB_ENV"
 
+      # bubblewrap: governed shell execution fails closed without it (SECURITY.md
+      # §3), so a runner without bwrap would report test_sandbox as SKIP(host) —
+      # which the "No silent host skips" gate below turns red on the Linux legs.
+      # macOS needs nothing installed: sandbox-exec ships with the system.
       - name: Install deps (Linux)
         if: runner.os == 'Linux'
         run: |
           sudo apt-get update
           sudo apt-get install -y --no-install-recommends \
-            gcc-14 libopenblas-dev libomp-dev libfftw3-dev
+            gcc-14 libopenblas-dev libomp-dev libfftw3-dev bubblewrap
+          # Ubuntu 24.04 confines unprivileged user namespaces with AppArmor,
+          # and the confinement strips CAP_NET_ADMIN inside them. bwrap then
+          # dies bringing up loopback — "Failed RTM_NEWADDR: Operation not
+          # permitted" — the moment it unshares the network, which is every
+          # governed command. Lifting the sysctl is the runner-side fix; a
+          # deployment instead ships an AppArmor profile for the binary
+          # (SECURITY.md, Operator hardening).
+          sysctl kernel.apparmor_restrict_unprivileged_userns || true
+          sudo sysctl -w kernel.apparmor_restrict_unprivileged_userns=0 || true
+          # Smoke-test the exact shape src/exec/sandbox.c builds, so a runner
+          # that cannot sandbox says so here instead of in 9 unrelated tests.
+          bwrap --die-with-parent --new-session --unshare-all \
+            --ro-bind / / --dev /dev --proc /proc --bind /tmp /tmp -- true \
+            && echo "bwrap: sandbox usable" \
+            || { echo "::error::bwrap cannot create the sandbox on this runner"; exit 1; }
 
       # A clean tree, always. #99 found the suite passing on a geistshell-chat
       # binary left over from an earlier build that no rule promised; an

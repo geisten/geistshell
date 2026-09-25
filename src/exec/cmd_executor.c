@@ -250,6 +250,32 @@ static void set_nonblocking(const int fd) {
 static bool spawn_one(const struct spg_cmd_request *req, pid_t *out_pid,
                       int *out_ofd, int *out_efd,
                       struct spg_cmd_result *result) {
+    /* Isolation first, before any fd is opened: a host without a sandbox tool
+     * must fail closed, and it must do so without leaking pipes. */
+    struct spg_sandbox_wrapper wrap = {};
+    char                       rw_dir[PATH_MAX];
+    if (req->sandbox.enabled) {
+        const char *tool = spg_sandbox_tool_path();
+        if (tool == nullptr) {
+            result->status = SPG_E_UNSUPPORTED;
+            return false;
+        }
+        struct spg_sandbox_spec spec = req->sandbox;
+        /* Callers pass the working directory they chdir into, which is often
+         * relative ("."); the sandbox needs the path the kernel sees. */
+        if (spec.rw_dir != nullptr) {
+            if (realpath(spec.rw_dir, rw_dir) == nullptr) {
+                result->status = SPG_E_NOT_FOUND;
+                return false;
+            }
+            spec.rw_dir = rw_dir;
+        }
+        if (spg_sandbox_wrapper_build(tool, &spec, &wrap) != SPG_OK) {
+            result->status = SPG_E_INVALID_ARG;
+            return false;
+        }
+    }
+
     int out_pipe[2]    = {-1, -1};
     int err_pipe[2]    = {-1, -1};
     int status_pipe[2] = {-1, -1};
@@ -272,11 +298,19 @@ static bool spawn_one(const struct spg_cmd_request *req, pid_t *out_pid,
         return false;
     }
 
-    const char *child_argv[SPG_CMD_MAX_ARGS + 1u];
-    for (size_t k = 0u; k < req->argc; k += 1u) {
-        child_argv[k] = req->argv[k];
+    /* The sandbox prefix (if any) comes first: the tool is what we exec, and
+     * it execs the command inside the isolation it just set up. */
+    const char *child_argv[SPG_SANDBOX_MAX_ARGV + SPG_CMD_MAX_ARGS + 1u];
+    size_t      n_argv = 0u;
+    for (size_t k = 0u; k < wrap.argc; k += 1u) {
+        child_argv[n_argv] = wrap.argv[k];
+        n_argv += 1u;
     }
-    child_argv[req->argc] = nullptr;
+    for (size_t k = 0u; k < req->argc; k += 1u) {
+        child_argv[n_argv] = req->argv[k];
+        n_argv += 1u;
+    }
+    child_argv[n_argv] = nullptr;
 
     const pid_t pid = fork();
     if (pid < 0) {

@@ -162,6 +162,7 @@ enum spg_status spg_shell_executor_step(
         .timeout_ms  = config->timeout_ms,
         .clear_env   = false,
         .limits      = SPG_CMD_DEFAULT_LIMITS,
+        .sandbox     = plan.sandbox,
         .stdout_cap  = workspace->stdout_capacity,
         .stdout_buf  = workspace->stdout_buf,
         .stderr_cap  = workspace->stderr_capacity,
@@ -177,7 +178,12 @@ enum spg_status spg_shell_executor_step(
     result->stdout_len       = cres.stdout_len;
     result->stdout_truncated = cres.stdout_truncated;
 
-    if (!cres.started) {
+    if (!cres.started && cres.status == SPG_E_UNSUPPORTED) {
+        /* Fail-closed isolation: this host has no bwrap/sandbox-exec, so the
+         * command was never started rather than run unsandboxed. */
+        (void)snprintf(workspace->observation, workspace->observation_capacity,
+                       "exec denied: sandbox unavailable on this host");
+    } else if (!cres.started) {
         (void)snprintf(workspace->observation, workspace->observation_capacity,
                        "exec error: cannot run %s", argv[0]);
     } else {

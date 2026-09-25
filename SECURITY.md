@@ -78,9 +78,30 @@ is enabled, the policy decision is ALLOW, the action is `local_shell`,
 the configured `allowed_workdir_prefix`, and the timeout / output limits are
 within the configured maxima.
 
-### 3. OS process sandbox (`src/exec/cmd_executor.c`)
+### 3. OS process sandbox (`src/exec/cmd_executor.c`, `src/exec/sandbox.c`)
 
-Shell commands run via **`fork` + `execvp`** with:
+Governed shell commands are handed to the host's own isolation tool rather than
+exec'd directly:
+
+| Host  | Tool              | What it enforces                                                                 |
+| ----- | ----------------- | -------------------------------------------------------------------------------- |
+| Linux | `bwrap(1)`        | network namespace (loopback only), read-only `/`, one writable bind plus `/tmp`     |
+| macOS | `sandbox-exec(1)` | SBPL profile: `(deny network*)`, `(deny file-write*)` outside the writable directory |
+
+The sandbox spec is produced by the **executor boundary** from operator config,
+never from model output: `uses_network` can only get a command *denied*, it can
+never grant it network access. The writable set is the working directory the
+boundary already gated (the filesystem root is treated as "nothing writable"),
+plus the system temp directories — `/tmp` on Linux, `/private/tmp`,
+`/private/var/tmp` and `/private/var/folders` on macOS. Everything else on the
+filesystem is readable and **not** writable.
+
+This **fails closed**: on a host with neither tool, an approved command does not
+start (`SPG_E_UNSUPPORTED`, observation `exec denied: sandbox unavailable on
+this host`). Ungoverned helpers — device channels, host probes — run unwrapped;
+their network needs are declared in the operator's channel table.
+
+Underneath, the command runs via **`fork` + `execvp`** with:
 
 - **No shell.** The command is split on whitespace and the program is exec'd
   directly. Shell metacharacters (`|`, `>`, `;`, `&&`, backticks, `$()`) are
@@ -123,21 +144,22 @@ raw model text. Writes are atomic (temp file + `rename`).
 These are deliberate scope limits. **Read them before exposing geistshell to an
 untrusted model or running it on a machine you care about.**
 
-- **No filesystem jail.** The sandbox `chdir`s into the working directory but
-  there is **no `chroot` / mount namespace**. An executed command runs with the
-  launching process's full uid/gid and can read or write anything those
-  privileges allow, via absolute paths or `..`. `allowed_workdir_prefix`
-  constrains the *launch* directory, **not** what the command can touch.
-- **No network enforcement at the syscall level.** Network containment is
-  *declarative*: it relies on the model's self-declared `uses_network` flag
-  (for device channels: the operator-declared `(network ...)` field of the
-  channel table, #119) and the policy `network_default`. The command itself is **not** inspected, and the
-  OS does not block sockets. A program that does network I/O (e.g. `curl`, `nc`)
-  launched with `uses_network=false` will **not** be stopped by geistshell.
-- **No privilege drop, no seccomp, no cgroups.** The child inherits the parent's
-  uid/gid/groups; there is no syscall filtering and no `capabilities(7)`
-  reduction. Resource limits are `setrlimit` only (best-effort, platform-
-  dependent).
+- **No read confinement.** The write boundary is enforced (see §3), the read
+  boundary is not: the root is bound *read-only*, not hidden, because commands
+  need `/usr`, `/etc` and their interpreter to run at all. An executed command
+  can still **read** anything the launching uid can read.
+- **Isolation is only as good as the host tool.** `bwrap` needs unprivileged
+  user namespaces; a kernel or distro that forbids them means no sandbox, and
+  geistshell then refuses to run the command rather than running it exposed.
+  On a host with neither tool, governed shell execution is simply unavailable.
+- **No privilege drop, no cgroups, no syscall filter of our own.** The child
+  inherits the parent's uid/gid/groups; there is no `capabilities(7)` reduction
+  and no seccomp-BPF or Landlock policy beyond what `bwrap` sets up. Resource
+  limits are `setrlimit` only (best-effort, platform-dependent).
+- **Device channels are not sandboxed.** They are the one path that legitimately
+  needs the network, and their transport is operator-declared in the channel
+  table (#119) — geistshell cannot verify what the channel program does once it
+  runs.
 - **The journal is not confidential.** It records prompts, model outputs, and
   tool results in cleartext. Any secret that appears in the model's context or
   output is persisted to disk. Only the API key is excluded. The HMAC seal
@@ -156,9 +178,29 @@ geistshell provides *governance and audit*, not OS isolation. For untrusted or
 high-stakes use, layer it under real isolation:
 
 1. **Run as a dedicated, unprivileged user** — never as root.
-2. **Put it in a container, VM, or jail** for the filesystem and network
-   isolation the runtime does not provide. For network denial, use a network
-   namespace / egress firewall — do **not** rely on the policy network flag.
+2. **Install the host sandbox tool** (`bwrap` on Linux; `sandbox-exec` ships
+   with macOS) — without it governed shell execution refuses to run. A
+   container or VM on top still buys read confinement and a second layer, which
+   the in-process sandbox does not provide.
+
+   On **Ubuntu 24.04 and later**, installing `bubblewrap` is not enough:
+   AppArmor confines unprivileged user namespaces and strips `CAP_NET_ADMIN`
+   inside them, so `bwrap` dies configuring loopback — `Failed RTM_NEWADDR:
+   Operation not permitted` — the moment it unshares the network. Ship an
+   AppArmor profile for the binary, or lift the restriction host-wide:
+
+   ```sh
+   sudo sysctl -w kernel.apparmor_restrict_unprivileged_userns=0
+   ```
+
+   Verify the sandbox works before trusting it, with the shape the runtime
+   actually builds:
+
+   ```sh
+   bwrap --die-with-parent --new-session --unshare-all \
+     --ro-bind / / --dev /dev --proc /proc --bind /tmp /tmp -- true
+   ```
+
 3. **Keep `execution_enabled` off** unless you need shell actions. When on, point
    `allowed_workdir_prefix` at a disposable scratch directory and set tight
    timeouts, output caps, and `setrlimit` values.

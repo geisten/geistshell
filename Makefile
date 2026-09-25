@@ -134,6 +134,7 @@ SPG_SOURCES := \
     src/exec/cmd_menu.c \
     src/exec/exec_command.c \
     src/exec/host_probe.c \
+    src/exec/sandbox.c \
     src/exec/shell_executor.c \
     src/improve/improve.c \
     src/executor/device_executor.c \

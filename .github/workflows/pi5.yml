@@ -38,6 +38,23 @@ jobs:
           test "$(uname -m)" = aarch64
           gcc --version | head -n 1
           test "$(gcc -dumpversion | cut -d. -f1)" -ge 14
+          # The Pi is the deployment target: without bwrap, governed shell
+          # execution fails closed (SECURITY.md §3) and every exec test would
+          # report a denial instead of a run. `apt install bubblewrap` on the
+          # host, once — a workflow must not mutate a persistent runner.
+          command -v bwrap >/dev/null || {
+            echo "::error::bwrap missing on the Pi runner — apt install bubblewrap"
+            exit 1
+          }
+          # The exact shape src/exec/sandbox.c builds. A distro that confines
+          # unprivileged user namespaces (Ubuntu 24.04+ via AppArmor) lets bwrap
+          # start and then fails it on loopback setup, so a weaker smoke test
+          # would pass while every governed command dies.
+          bwrap --die-with-parent --new-session --unshare-all \
+            --ro-bind / / --dev /dev --proc /proc --bind /tmp /tmp -- true || {
+            echo "::error::bwrap present but cannot create the sandbox (unprivileged user namespaces restricted?)"
+            exit 1
+          }
           nproc
           vcgencmd measure_temp 2>/dev/null || true
           vcgencmd get_throttled 2>/dev/null || true

@@ -90,7 +90,7 @@ flowchart TB
     end
 
     subgraph EXE["Governed executors"]
-        SH["shell — OS sandbox: fork+exec, setrlimit, process-group, boundary"]
+        SH["shell — OS sandbox: bwrap/sandbox-exec, no network, fork+exec, setrlimit, boundary"]
         MEM["memory — mind-palace save/read/delete"]
         DEV["device — channel table: range · safe value · watchdog"]
         MP["machine — process pause/resume, identity re-checked"]
@@ -392,7 +392,7 @@ This section is deliberately critical. geistshell makes a sharp bet: be a
 | **Governance**              | A **mandatory** policy gate (capability + budget) on *every* action — constitutive, not optional middleware.                      | Guardrails are opt‑in middleware bolted around the loop.                                     |
 | **Determinism & audit**     | Hash‑chained journal with logical timestamps → **byte‑identical replay**, plus an optional **keyed HMAC seal** (tamper‑evidence). | Non‑deterministic by default; tracing is best‑effort.                                        |
 | **Self‑improvement safety** | Learned changes are gated by the eval harness — **kept only if no regression**, else reverted.                                    | "Self‑improving" demos rarely have an automatic regression gate; memory edits are unguarded. |
-| **Sandboxed execution**     | `local_shell` runs through fork+exec with `setrlimit`, process‑group kill, and an executor boundary — in a pure‑C runtime.        | Usually shells out with no OS confinement.                                                   |
+| **Sandboxed execution**     | `local_shell` runs inside `bwrap`/`sandbox-exec` — **no network, one writable directory** — plus fork+exec, `setrlimit`, process‑group kill and an executor boundary. Fails closed when the host has no sandbox. | Usually shells out with no OS confinement.                                                   |
 | **Footprint**               | Pure C23, allocation‑free hot paths, caller‑provided buffers, no `malloc`/`assert`/GC; runs on constrained targets.               | Python/Node runtimes; heavy dependencies.                                                    |
 
 The combination — *mandatory gating + deterministic replay + eval‑gated

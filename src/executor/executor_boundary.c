@@ -14,11 +14,26 @@ static void deny(struct spg_executor_boundary_plan *plan,
                  const enum spg_executor_boundary_reason reason) {
     plan->approved = false;
     plan->reason   = reason;
+    plan->sandbox  = (struct spg_sandbox_spec){};
 }
 
-static void allow(struct spg_executor_boundary_plan *plan) {
+static void allow(struct spg_executor_boundary_plan         *plan,
+                  const struct spg_executor_boundary_request *request) {
     plan->approved = true;
     plan->reason   = SPG_EXECUTOR_BOUNDARY_OK;
+    plan->sandbox  = (struct spg_sandbox_spec){
+         .enabled = true,
+        /* Unconditional: the only way past the network check above is
+         * uses_network == false, so an approved command has declared it does
+         * not need the network -- and now the kernel holds it to that. */
+         .allow_network = false,
+        /* "/" as the writable bind is no sandbox at all: a command gated at the
+         * filesystem root gets a private /tmp and nothing else writable. */
+         .rw_dir = (request->working_dir != nullptr &&
+                   strcmp(request->working_dir, "/") != 0)
+                       ? request->working_dir
+                       : nullptr,
+    };
 }
 
 /* Is `dir` the allowed directory itself, or something below it?
@@ -138,7 +153,7 @@ enum spg_status spg_executor_boundary_check(
         return SPG_OK;
     }
 
-    allow(plan);
+    allow(plan, request);
     return SPG_OK;
 }
 

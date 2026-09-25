@@ -2,6 +2,7 @@
 #define GEISTSHELL_EXECUTOR_BOUNDARY_H
 
 #include "geistshell/policy.h"
+#include "geistshell/sandbox.h"
 #include "geistshell/recommendation.h"
 #include "geistshell/status.h"
 
@@ -48,6 +49,13 @@ struct spg_executor_boundary_request {
 struct spg_executor_boundary_plan {
     bool approved;
     enum spg_executor_boundary_reason reason;
+
+    /* The OS isolation an approved command must run under, to be handed to the
+     * command executor as-is. It is derived from operator config, not from the
+     * recommendation: the model's uses_network flag can only get a command
+     * DENIED above, it can never grant network access. Denied plans carry a
+     * zeroed spec. */
+    struct spg_sandbox_spec sandbox;
 };
 
 [[nodiscard]] enum spg_status spg_executor_boundary_check(

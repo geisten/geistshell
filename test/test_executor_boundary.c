@@ -199,6 +199,52 @@ static int test_invalid_args(void) {
                : 1;
 }
 
+/* The isolation an approved command runs under comes from here, not from the
+ * model: whatever the recommendation claims about the network, an approved plan
+ * carries a sandbox with the network off. A denied plan carries nothing to
+ * run with. */
+static int test_plan_carries_sandbox(void) {
+    struct spg_recommendation            rec     = local_shell_recommendation();
+    struct spg_policy_decision           policy  = allow_policy();
+    struct spg_executor_boundary_config  config  = boundary_config();
+    struct spg_executor_boundary_request request = boundary_request();
+    struct spg_executor_boundary_plan    plan    = {};
+
+    if (spg_executor_boundary_check(&config, &rec, &policy, &request, &plan) !=
+            SPG_OK ||
+        !plan.approved) {
+        return 1;
+    }
+    if (!plan.sandbox.enabled || plan.sandbox.allow_network ||
+        plan.sandbox.rw_dir == nullptr ||
+        strcmp(plan.sandbox.rw_dir, request.working_dir) != 0) {
+        return 1;
+    }
+
+    /* The filesystem root as the writable path would be no sandbox at all. */
+    struct spg_executor_boundary_config root_config = config;
+    struct spg_executor_boundary_request root_request = request;
+    root_config.allowed_workdir_prefix = "/";
+    root_request.working_dir           = "/";
+    struct spg_executor_boundary_plan root_plan = {};
+    if (spg_executor_boundary_check(&root_config, &rec, &policy, &root_request,
+                                    &root_plan) != SPG_OK ||
+        !root_plan.approved || !root_plan.sandbox.enabled ||
+        root_plan.sandbox.rw_dir != nullptr) {
+        return 1;
+    }
+
+    /* A denial hands the caller nothing it could run with. */
+    rec.action.uses_network = true;
+    struct spg_executor_boundary_plan denied = {.sandbox = {.enabled = true}};
+    if (spg_executor_boundary_check(&config, &rec, &policy, &request,
+                                    &denied) != SPG_OK ||
+        denied.approved || denied.sandbox.enabled) {
+        return 1;
+    }
+    return 0;
+}
+
 struct case_entry {
     const char *name;
     int (*fn)(void);
@@ -222,6 +268,7 @@ int main(void) {
         {"test_rejects_dotdot_escape", test_rejects_dotdot_escape},
         {"test_rejects_symlink_escape", test_rejects_symlink_escape},
         {"test_rejects_unresolvable_workdir", test_rejects_unresolvable_workdir},
+        {"test_plan_carries_sandbox", test_plan_carries_sandbox},
         {"test_invalid_args", test_invalid_args},
     };
 
