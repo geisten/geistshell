@@ -54,6 +54,8 @@ static enum spg_status map_geist_status(const enum geist_status status) {
  * table and yields nullptr for the stop tokens so EOS detection is the
  * same `piece == nullptr` test. */
 #include "geistd_client.h" /* declarations; the implementation is geistd_client.c */
+#include <stdio.h>
+#include <stdlib.h>
 
 #define GD_CTX 4096u
 
