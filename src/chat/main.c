@@ -200,8 +200,14 @@ static enum spg_status init_adapter(const struct chat_args   *args,
         .explicit_path  = args->model_path,
         .allow_download = args->allow_download,
     };
+    const char *geistd_env = getenv("GEISTSHELL_GEISTD");
+    const bool  via_geistd = geistd_env != nullptr && geistd_env[0] != '\0';
+    if (via_geistd) {
+        snprintf(path, sizeof path, "(geistd %s)", geistd_env);
+    }
     const enum spg_status rstatus =
-        spg_model_resolve(&ropts, sizeof path, path, &downloaded);
+        via_geistd ? SPG_OK
+                   : spg_model_resolve(&ropts, sizeof path, path, &downloaded);
     if (rstatus != SPG_OK) {
         fprintf(stderr,
                 "geistshell-chat: no model (%s). Pass --model <path>, set "
@@ -217,6 +223,8 @@ static enum spg_status init_adapter(const struct chat_args   *args,
     const struct spg_model_adapter_config cfg = {
         .kind         = SPG_MODEL_ADAPTER_GEIST,
         .model_path   = path,
+        .geistd       = getenv("GEISTSHELL_GEISTD"),
+        .geistd_token = getenv("GEISTD_TOKEN"),
         .backend_name = nullptr, /* "auto" */
         .sampling     = {.max_seq_len = CHAT_MAX_SEQ_LEN,
                          .temperature = 0.0f,

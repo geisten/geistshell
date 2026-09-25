@@ -37,6 +37,25 @@ make bench      # real-model benchmark (reports "skipped" when no GGUF is presen
 ./build/host-debug/bin/geistshell-chat       # governed chat REPL
 ```
 
+## Resident model: geistd
+
+Agent runs are short processes; loading a GGUF in each one is the expensive
+part. With [geistd](https://github.com/geisten/geist-serve/blob/main/docs/GEISTD.md)
+from geist-serve the model and the session live in a daemon and every run
+attaches to it: the constant prefix stays pinned in the daemon's KV cache,
+a run pays only for the tokens it adds, and the constrained decoder works
+unchanged (logits and token-level prefill go over the socket).
+
+```sh
+brew install geisten/tap/geist-serve            # or the release binary
+geistd model.gguf &                             # $XDG_RUNTIME_DIR/geistd.sock
+GEISTSHELL_GEISTD=/tmp/geistd-$(id -u).sock geistshell agent --config run.spg
+GEISTSHELL_GEISTD=pi:7433 GEISTD_TOKEN=... geistshell eval suite.spg   # a Pi over a trusted LAN
+```
+
+`GEISTSHELL_GEISTD` is a Unix socket path or `host:port`; the run file's
+`(model …)` is then ignored. `test/smoke_geistd.sh` exercises the path.
+
 ## Architecture
 
 ```mermaid

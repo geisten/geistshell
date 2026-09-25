@@ -38,8 +38,260 @@ static enum spg_status map_geist_status(const enum geist_status status) {
         return SPG_E_INVALID_STATE;
     case GEIST_E_TOO_MANY_TOKENS:
         return SPG_E_BUDGET_EXCEEDED;
+    case GEIST_E_STALE_CALIBRATION:
+        return SPG_E_MODEL;
     }
     return SPG_E_MODEL;
+}
+
+/* ====================================================================== */
+/* Engine layer: libgeist in-process, or geistd over a socket              */
+/* ====================================================================== */
+/* Every decode path below calls eng_*; the two implementations agree on
+ * the libgeist contract. Remote: prefill appends (a shadow of the daemon's
+ * history makes geistd's whole-context prefill an append), reset keeps the
+ * pinned prefix, peek returns the whole vector, token_to_str is a local
+ * table and yields nullptr for the stop tokens so EOS detection is the
+ * same `piece == nullptr` test. */
+#include "geistd_client.h" /* declarations; the implementation is geistd_client.c */
+#include <stdio.h>
+#include <stdlib.h>
+
+#define GD_CTX 4096u
+
+static struct geistd *gd(const struct spg_model_adapter *a) {
+    return (struct geistd *)a->gd;
+}
+
+static enum geist_status gd_status(const struct spg_model_adapter *a,
+                                   const int                       rc) {
+    if (rc == 0) {
+        return GEIST_OK;
+    }
+    const char *e = geistd_error(gd(a));
+    fprintf(stderr, "geistd: %s\n", e); /* an agent run wants to see why */
+    if (strstr(e, "unknown session") != nullptr ||
+        strstr(e, "pinned") != nullptr) {
+        return GEIST_E_INVALID_STATE;
+    }
+    if (strstr(e, "context") != nullptr) {
+        return GEIST_E_TOO_MANY_TOKENS;
+    }
+    if (strstr(e, "unsupported") != nullptr) {
+        return GEIST_E_UNSUPPORTED;
+    }
+    return GEIST_E_BACKEND;
+}
+
+static enum geist_status eng_tokenize(struct spg_model_adapter *a,
+                                      const char *text, const size_t cap,
+                                      geist_token_t out[], size_t *n_out) {
+    if (a->gd == nullptr) {
+        return geist_session_tokenize(a->session, text, cap, out, n_out);
+    }
+    return gd_status(a, geistd_tokenize(gd(a), text, cap, (int32_t *)out,
+                                        n_out));
+}
+
+/* Append n tokens: the daemon gets shadow + tail and prefills the diff. */
+static enum geist_status eng_prefill_tokens(struct spg_model_adapter *a,
+                                            const size_t              n,
+                                            const geist_token_t       ids[]) {
+    if (a->gd == nullptr) {
+        return geist_session_prefill_tokens(a->session, n, ids);
+    }
+    if (a->gd_shadow_n + n > GD_CTX) {
+        return GEIST_E_TOO_MANY_TOKENS;
+    }
+    memcpy(a->gd_shadow + a->gd_shadow_n, ids, n * sizeof *ids);
+    size_t    pre = 0u;
+    size_t    re  = 0u;
+    const int rc  = geistd_prefill(gd(a), a->gd_session, a->gd_shadow_n + n,
+                                   a->gd_shadow, &pre, &re);
+    if (rc == 0) {
+        a->gd_shadow_n += n;
+    }
+    return gd_status(a, rc);
+}
+
+static enum geist_status eng_decode_step(struct spg_model_adapter *a,
+                                         geist_token_t            *tok) {
+    if (a->gd == nullptr) {
+        return geist_session_decode_step(a->session, tok);
+    }
+    bool      stop = false;
+    const int rc   = geistd_step(gd(a), a->gd_session, tok, &stop);
+    if (rc == 0 && a->gd_shadow_n < GD_CTX) {
+        a->gd_shadow[a->gd_shadow_n++] = *tok;
+    }
+    return gd_status(a, rc);
+}
+
+static const float *eng_peek_logits(struct spg_model_adapter *a, size_t *n) {
+    if (a->gd == nullptr) {
+        return geist_session_peek_logits(n, a->session);
+    }
+    size_t got = 0u;
+    if (geistd_peek_full(gd(a), a->gd_session, a->gd_vocab, a->gd_logits,
+                         &got) != 0) {
+        *n = 0u;
+        return nullptr;
+    }
+    *n = got;
+    return a->gd_logits;
+}
+
+static const char *eng_token_to_str(const struct spg_model_adapter *a,
+                                    const geist_token_t             t) {
+    if (a->gd == nullptr) {
+        return geist_session_token_to_str(a->session, t);
+    }
+    if (t < 0 || (size_t)t >= a->gd_vocab || t == a->gd_eos) {
+        return nullptr;
+    }
+    return a->gd_pieces[t];
+}
+
+static enum geist_status eng_reset(struct spg_model_adapter *a) {
+    if (a->gd == nullptr) {
+        return geist_session_reset(a->session);
+    }
+    const int rc = geistd_reset(gd(a), a->gd_session);
+    if (rc == 0) {
+        a->gd_shadow_n = a->gd_pinned;
+    }
+    return gd_status(a, rc);
+}
+
+/* libgeist's set_prompt tokenizes, prepends BOS when the tokenizer says so,
+ * and appends; the same three steps, remotely. */
+static enum geist_status eng_set_prompt(struct spg_model_adapter *a,
+                                        const char               *prompt) {
+    if (a->gd == nullptr) {
+        return geist_session_set_prompt(a->session, prompt);
+    }
+    static geist_token_t ids[GD_CTX];
+    size_t               n   = 0u;
+    size_t               off = 0u;
+    if (a->gd_add_bos && a->gd_bos >= 0 && a->gd_shadow_n == 0u) {
+        ids[0] = a->gd_bos;
+        off    = 1u;
+    }
+    const enum geist_status ts =
+        eng_tokenize(a, prompt, GD_CTX - off, ids + off, &n);
+    if (ts != GEIST_OK) {
+        return ts;
+    }
+    return eng_prefill_tokens(a, n + off, ids);
+}
+
+static enum geist_status eng_pin_prefix(struct spg_model_adapter *a,
+                                        const size_t              n,
+                                        const geist_token_t       ids[]) {
+    if (a->gd == nullptr) {
+        return geist_session_pin_prefix(a->session, n, ids);
+    }
+    (void)ids; /* the daemon pins its own history, which equals the shadow */
+    const int rc = geistd_pin(gd(a), a->gd_session, n);
+    if (rc == 0) {
+        a->gd_pinned = n;
+    }
+    return gd_status(a, rc);
+}
+
+static void gd_destroy(struct spg_model_adapter *a) {
+    if (a->gd == nullptr) {
+        return;
+    }
+    if (a->gd_session[0] != '\0') {
+        (void)geistd_close_session(gd(a), a->gd_session);
+    }
+    geistd_close(gd(a));
+    if (a->gd_pieces != nullptr) {
+        for (size_t i = 0u; i < a->gd_vocab; i += 1u) {
+            free(a->gd_pieces[i]);
+        }
+    }
+    free(a->gd_pieces);
+    free(a->gd_logits);
+    free(a->gd_shadow);
+    a->gd            = nullptr;
+    a->gd_pieces     = nullptr;
+    a->gd_logits     = nullptr;
+    a->gd_shadow     = nullptr;
+    a->gd_vocab      = 0u;
+    a->gd_shadow_n   = 0u;
+    a->gd_pinned     = 0u;
+    a->gd_session[0] = '\0';
+}
+
+/* Connect, read the model facts, open the session with the sampler options,
+ * fetch the vocabulary once. Any failure leaves nothing allocated. */
+static enum spg_status gd_init(struct spg_model_adapter              *a,
+                               const struct spg_model_adapter_config *c) {
+    const char    *spec  = c->geistd;
+    const char    *colon = strrchr(spec, ':');
+    struct geistd *g     = nullptr;
+    if (colon != nullptr && strchr(spec, '/') == nullptr) {
+        char host[128];
+        snprintf(host, sizeof host, "%.*s", (int)(colon - spec), spec);
+        g = geistd_connect_tcp(host, atoi(colon + 1), c->geistd_token);
+    } else {
+        g = geistd_connect_unix(spec, c->geistd_token);
+    }
+    if (g == nullptr) {
+        return SPG_E_OOM;
+    }
+    a->gd         = g;
+    size_t  vocab = 0u;
+    int32_t eos   = -1;
+    int32_t bos   = -1;
+    bool    add_bos = false;
+    if (geistd_info_numbers(g, &vocab, &eos, &bos, &add_bos) != 0 ||
+        vocab == 0u) {
+        gd_destroy(a);
+        return SPG_E_NOT_FOUND;
+    }
+    if (geistd_open(g, c->sampling.temperature, c->sampling.top_p,
+                    c->sampling.top_k, c->sampling.random_seed,
+                    a->gd_session) != 0) {
+        gd_destroy(a);
+        return SPG_E_MODEL;
+    }
+    a->gd_vocab   = vocab;
+    a->gd_eos     = eos;
+    a->gd_bos     = bos;
+    a->gd_add_bos = add_bos;
+    a->gd_pieces  = calloc(vocab, sizeof *a->gd_pieces);
+    a->gd_logits  = malloc(vocab * sizeof *a->gd_logits);
+    a->gd_shadow  = malloc(GD_CTX * sizeof *a->gd_shadow);
+    int32_t *all  = malloc(vocab * sizeof *all);
+    if (a->gd_pieces == nullptr || a->gd_logits == nullptr ||
+        a->gd_shadow == nullptr || all == nullptr) {
+        free(all);
+        gd_destroy(a);
+        return SPG_E_OOM;
+    }
+    for (size_t i = 0u; i < vocab; i += 1u) {
+        all[i] = (int32_t)i;
+    }
+    const int rc = geistd_strs(g, a->gd_session, vocab, all, a->gd_pieces);
+    free(all);
+    if (rc != 0) {
+        gd_destroy(a);
+        return SPG_E_MODEL;
+    }
+    /* End-of-turn markers end a turn like EOS does: same nullptr signal. */
+    for (size_t i = 0u; i < vocab; i += 1u) {
+        const char *p = a->gd_pieces[i];
+        if (p != nullptr &&
+            (strcmp(p, "<|im_end|>") == 0 || strcmp(p, "<end_of_turn>") == 0 ||
+             strcmp(p, "<turn|>") == 0 || strcmp(p, "<|eot_id|>") == 0)) {
+            free(a->gd_pieces[i]);
+            a->gd_pieces[i] = nullptr;
+        }
+    }
+    return SPG_OK;
 }
 
 static bool adapter_kind_valid(const enum spg_model_adapter_kind kind) {
@@ -75,9 +327,10 @@ static void reset_result(struct spg_model_generate_result *result) {
     result->output[0]              = '\0';
 }
 
+/* n may be 0 (an empty piece), so no [static n]: that bound would be a lie
+ * UBSan reports. */
 static enum spg_status append_bytes(struct spg_model_generate_result *result,
-                                    const size_t n,
-                                    const char bytes[static n]) {
+                                    const size_t n, const char bytes[]) {
     if (n == 0u) {
         return SPG_OK;
     }
@@ -141,8 +394,7 @@ static enum spg_status emit_literal(struct spg_model_adapter *adapter,
                                     const char *text) {
     geist_token_t     ids[256];
     size_t            n      = 0u;
-    enum geist_status status = geist_session_tokenize(
-        adapter->session, text, sizeof ids / sizeof ids[0], ids, &n);
+    enum geist_status status = eng_tokenize(adapter, text, sizeof ids / sizeof ids[0], ids, &n);
     if (status != GEIST_OK) {
         return map_geist_status(status);
     }
@@ -151,7 +403,7 @@ static enum spg_status emit_literal(struct spg_model_adapter *adapter,
         return as;
     }
     if (n > 0u) {
-        status = geist_session_prefill_tokens(adapter->session, n, ids);
+        status = eng_prefill_tokens(adapter, n, ids);
         if (status != GEIST_OK) {
             return map_geist_status(status);
         }
@@ -176,13 +428,12 @@ emit_reason_prefix(struct spg_model_adapter         *adapter,
     size_t used = 0u;
     for (size_t j = 0u; j < budget && used + 1u < sizeof raw; j += 1u) {
         geist_token_t     token  = 0;
-        enum geist_status status = geist_session_decode_step(adapter->session,
-                                                             &token);
+        enum geist_status status = eng_decode_step(adapter, &token);
         if (status != GEIST_OK) {
             return map_geist_status(status);
         }
         result->tokens_decoded += 1u;
-        const char *piece = geist_session_token_to_str(adapter->session, token);
+        const char *piece = eng_token_to_str(adapter, token);
         if (piece == nullptr || piece[0] == '\0') {
             break; /* eos ends the reasoning */
         }
@@ -211,12 +462,12 @@ static enum spg_status decode_string_slot(struct spg_model_adapter *adapter,
                                           struct spg_model_generate_result *result) {
     for (size_t j = 0u; j < 64u; j += 1u) {
         geist_token_t     token  = 0;
-        enum geist_status status = geist_session_decode_step(adapter->session, &token);
+        enum geist_status status = eng_decode_step(adapter, &token);
         if (status != GEIST_OK) {
             return map_geist_status(status);
         }
         result->tokens_decoded += 1u;
-        const char *piece = geist_session_token_to_str(adapter->session, token);
+        const char *piece = eng_token_to_str(adapter, token);
         if (piece == nullptr || piece[0] == '\0') {
             return SPG_OK; /* eos ends the slot */
         }
@@ -243,12 +494,12 @@ decode_number_slot(struct spg_model_adapter         *adapter,
     size_t emitted = 0u;
     for (size_t j = 0u; j < 12u; j += 1u) {
         geist_token_t     token  = 0;
-        enum geist_status status = geist_session_decode_step(adapter->session, &token);
+        enum geist_status status = eng_decode_step(adapter, &token);
         if (status != GEIST_OK) {
             return map_geist_status(status);
         }
         result->tokens_decoded += 1u;
-        const char *piece = geist_session_token_to_str(adapter->session, token);
+        const char *piece = eng_token_to_str(adapter, token);
         if (piece == nullptr || piece[0] == '\0') {
             return SPG_OK;
         }
@@ -323,7 +574,7 @@ static enum spg_status decode_choice_slot(
          step < 24u && !spg_choice_complete(names, names_n, out); step += 1u) {
         size_t       n_vocab = 0u;
         const float *logits =
-            geist_session_peek_logits(&n_vocab, adapter->session);
+            eng_peek_logits(adapter, &n_vocab);
         if (logits == nullptr || n_vocab == 0u) {
             break;
         }
@@ -337,7 +588,7 @@ static enum spg_status decode_choice_slot(
         float         maxl = -INFINITY;
         for (size_t t = 0u; t < n_vocab && nc < 512u; t += 1u) {
             const char *piece =
-                geist_session_token_to_str(adapter->session, (geist_token_t) t);
+                eng_token_to_str(adapter, (geist_token_t) t);
             if (piece == nullptr ||
                 !spg_choice_prefix_ok(names, names_n, out, piece)) {
                 continue;
@@ -378,7 +629,7 @@ static enum spg_status decode_choice_slot(
              * baseline is already folded in above, so pass null). */
             best = cand[spg_pmi_pick(nc, cand_logit, nullptr)];
         }
-        const char *piece = geist_session_token_to_str(adapter->session, best);
+        const char *piece = eng_token_to_str(adapter, best);
         const char *ap    = piece;
         while (*ap == ' ' || *ap == '\t') {
             ap += 1;
@@ -397,7 +648,7 @@ static enum spg_status decode_choice_slot(
             out[used] = '\0';
         }
         const enum geist_status status =
-            geist_session_prefill_tokens(adapter->session, 1u, &best);
+            eng_prefill_tokens(adapter, 1u, &best);
         if (status != GEIST_OK) {
             return map_geist_status(status);
         }
@@ -513,8 +764,7 @@ geist_prefill(struct spg_model_adapter                *adapter,
     /* Already pinned: serve the invariant-prefix fast path. */
     if (adapter->pinned_n > 0u) {
         size_t            full_n = 0u;
-        enum geist_status ts     = geist_session_tokenize(
-            adapter->session, request->prompt, sizeof full / sizeof full[0],
+        enum geist_status ts     = eng_tokenize(adapter, request->prompt, sizeof full / sizeof full[0],
             full, &full_n);
         if (ts != GEIST_OK) {
             return ts;
@@ -527,12 +777,11 @@ geist_prefill(struct spg_model_adapter                *adapter,
              * Refuse rather than risk a corrupt KV. */
             return GEIST_E_INVALID_STATE;
         }
-        const enum geist_status s = geist_session_reset(adapter->session);
+        const enum geist_status s = eng_reset(adapter);
         if (s != GEIST_OK) {
             return s;
         }
-        return geist_session_prefill_tokens(adapter->session,
-                                            full_n - adapter->pinned_n,
+        return eng_prefill_tokens(adapter, full_n - adapter->pinned_n,
                                             full + adapter->pinned_n);
     }
 
@@ -540,14 +789,13 @@ geist_prefill(struct spg_model_adapter                *adapter,
     if (want_pin) {
         size_t            full_n = 0u;
         size_t            pfx_n  = 0u;
-        enum geist_status ts     = geist_session_tokenize(
-            adapter->session, request->prompt, sizeof full / sizeof full[0],
+        enum geist_status ts     = eng_tokenize(adapter, request->prompt, sizeof full / sizeof full[0],
             full, &full_n);
         if (ts == GEIST_OK && full_n > 0u &&
             request->prefix_n < sizeof prefix_buf) {
             memcpy(prefix_buf, request->prompt, request->prefix_n);
             prefix_buf[request->prefix_n] = '\0';
-            ts = geist_session_tokenize(adapter->session, prefix_buf, pin_cap,
+            ts = eng_tokenize(adapter, prefix_buf, pin_cap,
                                         pfx, &pfx_n);
         } else {
             ts = GEIST_E_INVALID_ARG;
@@ -555,15 +803,15 @@ geist_prefill(struct spg_model_adapter                *adapter,
         if (ts == GEIST_OK && pfx_n > 0u && pfx_n <= pin_cap &&
             spg_tokens_are_prefix(full_n, (const int32_t *)full, pfx_n,
                                   (const int32_t *)pfx)) {
-            enum geist_status s = geist_session_reset(adapter->session);
+            enum geist_status s = eng_reset(adapter);
             if (s == GEIST_OK) {
-                s = geist_session_prefill_tokens(adapter->session, full_n,
+                s = eng_prefill_tokens(adapter, full_n,
                                                  full);
             }
             if (s != GEIST_OK) {
                 return s;
             }
-            s = geist_session_pin_prefix(adapter->session, pfx_n, full);
+            s = eng_pin_prefix(adapter, pfx_n, full);
             if (s == GEIST_OK) {
                 adapter->pinned_n = pfx_n;
                 memcpy(adapter->pinned, full, pfx_n * sizeof full[0]);
@@ -579,12 +827,12 @@ geist_prefill(struct spg_model_adapter                *adapter,
 
     if (request->reset_session) {
         const enum geist_status reset_status =
-            geist_session_reset(adapter->session);
+            eng_reset(adapter);
         if (reset_status != GEIST_OK) {
             return reset_status;
         }
     }
-    return geist_session_set_prompt(adapter->session, request->prompt);
+    return eng_set_prompt(adapter, request->prompt);
 }
 
 static enum spg_status generate_geist(
@@ -676,13 +924,13 @@ static enum spg_status generate_geist(
 
     for (size_t i = 0u; i < request->max_decode_tokens; i += 1u) {
         geist_token_t token = 0;
-        status = geist_session_decode_step(adapter->session, &token);
+        status = eng_decode_step(adapter, &token);
         if (status != GEIST_OK) {
             return map_geist_status(status);
         }
         result->tokens_decoded += 1u;
 
-        const char *piece = geist_session_token_to_str(adapter->session, token);
+        const char *piece = eng_token_to_str(adapter, token);
         if (piece == nullptr || piece[0] == '\0') {
             result->stopped_by_eos = true;
             break;
@@ -726,11 +974,11 @@ static void measure_pmi_baseline(struct spg_model_adapter               *adapter
                           adapter->force_prefix[0] != '\0')
                              ? adapter->force_prefix
                              : "(recommend (kind ";
-    if (geist_session_set_prompt(adapter->session, anchor) != GEIST_OK) {
+    if (eng_set_prompt(adapter, anchor) != GEIST_OK) {
         return;
     }
     size_t       n_vocab = 0u;
-    const float *logits  = geist_session_peek_logits(&n_vocab, adapter->session);
+    const float *logits  = eng_peek_logits(adapter, &n_vocab);
     if (logits == nullptr || n_vocab == 0u) {
         return; /* arch without peek_logits: no calibration, safe */
     }
@@ -741,7 +989,7 @@ static void measure_pmi_baseline(struct spg_model_adapter               *adapter
     for (size_t i = 0u; i < knn; i += 1u) {
         geist_token_t ids[8];
         size_t        n = 0u;
-        if (geist_session_tokenize(adapter->session, kn[i],
+        if (eng_tokenize(adapter, kn[i],
                                    sizeof ids / sizeof ids[0], ids, &n) ==
                 GEIST_OK &&
             n > 0u && (size_t)ids[0] < n_vocab) {
@@ -755,7 +1003,7 @@ static void measure_pmi_baseline(struct spg_model_adapter               *adapter
         }
         geist_token_t ids[8];
         size_t        n = 0u;
-        if (geist_session_tokenize(adapter->session, name,
+        if (eng_tokenize(adapter, name,
                                    sizeof ids / sizeof ids[0], ids, &n) ==
                 GEIST_OK &&
             n > 0u && (size_t)ids[0] < n_vocab) {
@@ -808,6 +1056,20 @@ spg_model_adapter_init(struct spg_model_adapter *adapter,
 #endif
     }
 
+    if (config->geistd != nullptr && config->geistd[0] != '\0') {
+        const enum spg_status gs = gd_init(adapter, config);
+        if (gs != SPG_OK) {
+            return gs;
+        }
+        adapter->temperature   = config->sampling.temperature;
+        adapter->choice_rng    = config->sampling.random_seed * 2654435761u + 1u;
+        adapter->pmi_calibrate = config->pmi_calibrate;
+        if (adapter->pmi_calibrate) {
+            measure_pmi_baseline(adapter, config);
+        }
+        adapter->initialized = true;
+        return SPG_OK;
+    }
     if (config->model_path == nullptr || config->model_path[0] == '\0') {
         return SPG_E_INVALID_ARG;
     }
@@ -867,6 +1129,7 @@ void spg_model_adapter_destroy(struct spg_model_adapter *adapter) {
     if (adapter == nullptr) {
         return;
     }
+    gd_destroy(adapter);
 #ifdef SPG_ENABLE_REMOTE
     if (adapter->kind == SPG_MODEL_ADAPTER_REMOTE) {
         spg_remote_destroy(adapter);
@@ -902,7 +1165,7 @@ spg_model_generate(struct spg_model_adapter *adapter,
     case SPG_MODEL_ADAPTER_FAKE:
         return generate_fake(adapter, request, result);
     case SPG_MODEL_ADAPTER_GEIST:
-        if (adapter->session == nullptr) {
+        if (adapter->session == nullptr && adapter->gd == nullptr) {
             return SPG_E_INVALID_STATE;
         }
         return generate_geist(adapter, request, result);

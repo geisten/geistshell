@@ -1770,6 +1770,10 @@ static int run_loop(const char *run_path, const char *fake_output,
                             .random_seed = run.seed},
         .fake_response_n = use_fake ? strlen(fake_output) : 0u,
         .fake_response   = fake_output,
+        /* resident daemon instead of loading the GGUF here — see
+         * geist-serve/docs/GEISTD.md; ignored for --fake and remote */
+        .geistd       = getenv("GEISTSHELL_GEISTD"),
+        .geistd_token = getenv("GEISTD_TOKEN"),
     };
     status = spg_model_adapter_init(&model, &model_config);
     if (status != SPG_OK) {
@@ -2519,6 +2523,8 @@ static int agent_command(int argc, char **argv) {
             : (struct spg_model_adapter_config){
                   .kind             = SPG_MODEL_ADAPTER_GEIST,
                   .model_path       = model_path,
+                  .geistd       = getenv("GEISTSHELL_GEISTD"),
+                  .geistd_token = getenv("GEISTD_TOKEN"),
                   .force_prefix     = constrained ? "(recommend (kind " : nullptr,
                   .capabilities     = agent_caps,
                   .capability_count = agent_caps_n,
@@ -3907,8 +3913,10 @@ static enum spg_status eval_run_suite(const char                 *suite_path,
                              .random_seed = run.seed},
             };
             if (geist_case) {
-                mc.kind       = SPG_MODEL_ADAPTER_GEIST;
-                mc.model_path = model_path;
+                mc.kind         = SPG_MODEL_ADAPTER_GEIST;
+                mc.model_path   = model_path;
+                mc.geistd       = getenv("GEISTSHELL_GEISTD");
+                mc.geistd_token = getenv("GEISTD_TOKEN");
                 /* #51: the same decoder `agent --constrained` runs. Without
                  * this the suite measures free decode — a configuration
                  * nobody ships, and the one a tool-less model cannot pass. */

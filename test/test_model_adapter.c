@@ -1,6 +1,8 @@
 #include "geistshell/model_adapter.h"
+#include "geistshell/policy.h"
 
 #include <stdio.h>
+#include <stdlib.h>
 #include <string.h>
 
 static int test_fake_generate(void) {
@@ -208,7 +210,103 @@ static int test_remote_lifecycle(void) {
     return 0;
 }
 
+/* Through geistd (GEISTSHELL_TEST_GEISTD = socket path): the same adapter
+ * code path an agent run takes, against a resident daemon. Free decode
+ * yields text and stops by EOS or budget; the same request again is served
+ * from the resident prefix; a constrained choice through force_prefix +
+ * capabilities picks from the mask. Skipped without the env. */
+static int test_geistd_path(void) {
+    const char *sock = getenv("GEISTSHELL_TEST_GEISTD");
+    if (sock == nullptr || sock[0] == '\0') {
+        return 0;
+    }
+    struct spg_model_adapter              adapter = {};
+    const struct spg_model_adapter_config config  = {
+        .kind     = SPG_MODEL_ADAPTER_GEIST,
+        .geistd   = sock,
+        .sampling = {.max_seq_len = 4096u, .top_p = 1.0f},
+    };
+    if (spg_model_adapter_init(&adapter, &config) != SPG_OK) {
+        fprintf(stderr, "geistd: init failed\n");
+        return 1;
+    }
+    char                             out[512] = "";
+    struct spg_model_generate_result result   = {.output_capacity = sizeof out,
+                                                 .output          = out};
+    const struct spg_model_generate_request request = {
+        .prompt_n          = strlen("The capital of France is"),
+        .prompt            = "The capital of France is",
+        .reset_session     = true,
+        .max_decode_tokens = 8u,
+    };
+    if (spg_model_generate(&adapter, &request, &result) != SPG_OK) {
+        fprintf(stderr, "geistd: generate failed\n");
+        spg_model_adapter_destroy(&adapter);
+        return 1;
+    }
+    if (result.output_used == 0u || result.tokens_decoded == 0u ||
+        !(result.stopped_by_eos || result.stopped_by_token_limit)) {
+        fprintf(stderr, "geistd: empty or unterminated output\n");
+        spg_model_adapter_destroy(&adapter);
+        return 1;
+    }
+    fprintf(stderr, "geistd free decode: %.*s\n", (int)result.output_used, out);
+    struct spg_model_generate_result again = {.output_capacity = sizeof out,
+                                              .output          = out};
+    if (spg_model_generate(&adapter, &request, &again) != SPG_OK ||
+        again.output_used == 0u) {
+        fprintf(stderr, "geistd: second generate failed\n");
+        spg_model_adapter_destroy(&adapter);
+        return 1;
+    }
+    spg_model_adapter_destroy(&adapter);
+    if (adapter.gd != nullptr) {
+        return 1;
+    }
+    static const struct spg_model_capability caps[] = {
+        {.name = "shell", .kind = SPG_ACTION_LOCAL_SHELL},
+        {.name = "memory", .kind = SPG_ACTION_MEMORY_READ},
+    };
+    struct spg_model_adapter              c_adapter = {};
+    const struct spg_model_adapter_config c_config  = {
+        .kind             = SPG_MODEL_ADAPTER_GEIST,
+        .geistd           = sock,
+        .sampling         = {.max_seq_len = 4096u, .top_p = 1.0f},
+        .force_prefix     = "(recommend (kind ",
+        .capabilities     = caps,
+        .capability_count = 2u,
+    };
+    if (spg_model_adapter_init(&c_adapter, &c_config) != SPG_OK) {
+        fprintf(stderr, "geistd: constrained init failed\n");
+        return 1;
+    }
+    char                             cout[512] = "";
+    struct spg_model_generate_result cres      = {.output_capacity = sizeof cout,
+                                                  .output          = cout};
+    const struct spg_model_generate_request creq = {
+        .prompt_n = strlen("Goal: list the files in the current directory.\n"),
+        .prompt   = "Goal: list the files in the current directory.\n",
+        .reset_session     = true,
+        .max_decode_tokens = 48u,
+    };
+    const enum spg_status cs = spg_model_generate(&c_adapter, &creq, &cres);
+    spg_model_adapter_destroy(&c_adapter);
+    /* any kind from the mask (finish is always allowed), and a closed form */
+    if (cs != SPG_OK || strncmp(cout, "(recommend (kind ", 17) != 0 ||
+        strchr(cout, ')') == nullptr) {
+        fprintf(stderr, "geistd constrained: status %d output %.*s\n", (int)cs,
+                (int)cres.output_used, cout);
+        return 1;
+    }
+    fprintf(stderr, "geistd constrained: %.*s\n", (int)cres.output_used, cout);
+    return 0;
+}
+
 int main(void) {
+    if (test_geistd_path() != 0) {
+        fprintf(stderr, "test_geistd_path failed\n");
+        return 1;
+    }
     if (test_remote_unsupported() != 0) {
         fprintf(stderr, "test_remote_unsupported failed\n");
         return 1;

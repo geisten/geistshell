@@ -107,7 +107,7 @@ endif
 # Only the engine's PUBLIC headers. -I$(GEIST_DIR) (the repo root, which reached
 # private headers like src/base/heap.h) was dropped with the arena wrapper in
 # v0.3.1 — geistshell must not depend on libgeist internals.
-CPPFLAGS := -Iinclude -Iinclude/geistshell -I$(GEIST_DIR)/include -I$(DEPS_DIR)/jsmn
+CPPFLAGS := -Iinclude -Iinclude/geistshell -I$(GEIST_DIR)/include -I$(DEPS_DIR)/jsmn -I$(DEPS_DIR)/geistd
 WARNINGS := -Wall -Wextra -Wpedantic -Wconversion -Wshadow -Wstrict-prototypes -Wimplicit-fallthrough
 CFLAGS := -std=c23 $(WARNINGS) $(SPG_OPT_FLAGS) $(CPPFLAGS) $(REMOTE_DEFS)
 LDLIBS := $(GEIST_LINK_FLAGS) -lm -lpthread $(REMOTE_LIBS)
@@ -155,6 +155,7 @@ SPG_SOURCES := \
     src/machine/telemetry.c \
     src/machine/telemetry_host.c \
     $(MACHINE_BACKEND) \
+    src/model/geistd_client.c \
     src/model/grammar_mask.c \
     src/model/model_adapter.c \
     src/model/model_profile.c \
