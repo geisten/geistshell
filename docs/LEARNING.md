@@ -660,11 +660,12 @@ claim: the context cost of learning per tick as the lesson set grows.
 | 4  | 72 B | 360 B |
 | 8  | 72 B | 720 B |
 | 16 | 72 B | 1454 B |
-| 32 | 72 B | 2233 B |
+| 32 | 72 B | 2926 B |
+| 64 | 72 B | 5870 B |
 
 geistshell's per-tick learning cost is **flat** (one budgeted directive)
-while the mind-palace-index approach grows linearly — 31× more context at 32
-lessons, and widening. This substantiates the *denominator* of the SOTA
+while the mind-palace-index approach grows linearly — 41× more context at 32
+lessons, 82× at 64, and widening. This substantiates the *denominator* of the SOTA
 claim (learning is context-invariant). It does **not** measure success lift:
 the numerator (does flat context still improve task success?) needs a
 model-completable task corpus and real inference — the remaining half of #25.
@@ -685,6 +686,20 @@ The benchmark also surfaced and fixed a real bug: `spg_mem_directive`
 originally read the *capped* index, so a slug beyond `SPG_MEM_INDEX_TOPK`
 injected nothing; it now reads the description from the memory file, available
 for any slug.
+
+**Correction (2026-09-25).** That fix was applied to one arm and missed on the
+other. The RAG arm went on measuring `memory list`, which renders the same
+capped index, so beyond `SPG_MEM_INDEX_TOPK` (24) it stopped growing: the row
+previously published for 32 lessons read 2233 B, of which 27 B were the
+`- ... 8 more` pointer itself, and a 64-lesson row would have read 2236 B — a
+curve offered as evidence that RAG's context grows, which had quietly stopped
+growing. The arm now reads `MEMORY.md`, the same index without the cap, and
+the corrected figures are the ones tabulated above. The error understated the
+contrast rather than inflating it, but an argument about unbounded growth
+cannot rest on a bounded measurement. `eval/bench_context.sh` now asserts both
+properties — the geistshell arm exactly flat, the index arm at least 1.9× per
+doubling — and sweeps past the cap, so a capped read fails the benchmark
+instead of merely looking plausible in a table.
 
 ## Hardware verification (2026-08-02, Pi 5 against Gemma 4 E2B)
 
