@@ -53,20 +53,7 @@ static enum spg_status map_geist_status(const enum geist_status status) {
  * pinned prefix, peek returns the whole vector, token_to_str is a local
  * table and yields nullptr for the stop tokens so EOS detection is the
  * same `piece == nullptr` test. */
-/* The vendored client (deps/geistd) compiles jsmn itself; same warning
- * blanket as model_remote_codec.c gives that header. */
-#if defined(__clang__) || defined(__GNUC__)
-#pragma GCC diagnostic push
-#pragma GCC diagnostic ignored "-Wconversion"
-#pragma GCC diagnostic ignored "-Wsign-conversion"
-#pragma GCC diagnostic ignored "-Wshadow"
-#pragma GCC diagnostic ignored "-Wpedantic"
-#endif
-#define GEISTD_CLIENT_IMPLEMENTATION
-#include "geistd_client.h"
-#if defined(__clang__) || defined(__GNUC__)
-#pragma GCC diagnostic pop
-#endif
+#include "geistd_client.h" /* declarations; the implementation is geistd_client.c */
 
 #define GD_CTX 4096u
 

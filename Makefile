@@ -155,6 +155,7 @@ SPG_SOURCES := \
     src/machine/telemetry.c \
     src/machine/telemetry_host.c \
     $(MACHINE_BACKEND) \
+    src/model/geistd_client.c \
     src/model/grammar_mask.c \
     src/model/model_adapter.c \
     src/model/model_profile.c \
