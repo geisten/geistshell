@@ -25,10 +25,29 @@ Modbus ancestor used (a 20 Hz tick, scaled by SPEED), so a test written
 against that vessel keeps its timing. Standard library only, deliberately: a
 test dependency that has to be installed is a test that will one day be
 skipped.
+
+Every invocation is a read-modify-write of one state file, and geistshell
+samples all channels of a device CONCURRENTLY (#121). So two of these
+processes routinely run at once against the same file, and the state is
+handled the way any real channel program sharing state would have to:
+
+  - The whole read-advance-write runs under an exclusive lock on a sidecar
+    file. Without it, two readers each advance and save, and the slower one
+    silently discards the faster one's update.
+  - The file is replaced atomically, never rewritten in place. open(path, "w")
+    truncates first and writes second; a concurrent reader in between loads
+    an empty file, and a process the executor kills at its deadline between
+    the two leaves the plant permanently unreadable.
+
+The lock is a sidecar rather than the state file itself because the state
+file is replaced: a lock on the old inode would protect nothing.
 """
 
+import fcntl
 import json
+import os
 import sys
+import tempfile
 import time
 
 TRIP_DECIDEGREES = 900  # 90.0 C
@@ -57,6 +76,20 @@ def advance(state, now):
         state["last"] += ticks * TICK_SECONDS
 
 
+def save(path, state):
+    """Replace the state file atomically: readers see the old state or the
+    new one, never a truncated one."""
+    directory = os.path.dirname(os.path.abspath(path))
+    fd, tmp = tempfile.mkstemp(dir=directory, prefix=".state-")
+    try:
+        with os.fdopen(fd, "w", encoding="utf-8") as f:
+            json.dump(state, f)
+        os.replace(tmp, path)
+    except BaseException:
+        os.unlink(tmp)
+        raise
+
+
 def main():
     if len(sys.argv) < 3:
         print(__doc__, file=sys.stderr)
@@ -72,9 +105,14 @@ def main():
             "speed": speed,
             "last": time.time(),
         }
-        with open(path, "w", encoding="utf-8") as f:
-            json.dump(state, f)
+        save(path, state)
         return 0
+
+    # Held until the process exits: released by the kernel even when the
+    # executor kills this process at its deadline, so a straggler cannot
+    # wedge the plant for the next reader.
+    lock = open(path + ".lock", "a", encoding="utf-8")
+    fcntl.flock(lock, fcntl.LOCK_EX)
 
     with open(path, encoding="utf-8") as f:
         state = json.load(f)
@@ -109,8 +147,7 @@ def main():
         else:
             return 1
 
-    with open(path, "w", encoding="utf-8") as f:
-        json.dump(state, f)
+    save(path, state)
     return 0
 
 
