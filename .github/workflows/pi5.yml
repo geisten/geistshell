@@ -27,6 +27,13 @@ jobs:
     runs-on: [self-hosted, Linux, ARM64, pi5]
     timeout-minutes: 60
 
+    # Widened from the workflow default only for this job, and only to write
+    # the benchmark comment below. The job already refuses fork PRs, so the
+    # code that runs beside this token is a collaborator's.
+    permissions:
+      contents: read
+      pull-requests: write
+
     steps:
       - uses: actions/checkout@v4
         with:
@@ -56,17 +63,26 @@ jobs:
 
       - name: Deterministic end-to-end benchmarks
         if: always()
+        # pipefail is why this is bash rather than the default: `set -eu` does
+        # not cover a pipeline, where only the last command's status counts.
+        # improve_benchmark.sh ends in `exit 1` when the governance invariant
+        # fails, and `| tee` was swallowing exactly that.
+        shell: bash
         env:
           SPG_BIN: build/host-release/bin/geistshell
         run: |
-          set -eu
+          set -euo pipefail
           test -x "$SPG_BIN"
           sh examples/eval/bench/improve_benchmark.sh | tee pi5-improve-bench.txt
           sh eval/bench_context.sh | tee pi5-context-bench.txt
 
-      - name: Add benchmarks to job summary
+      # Rendered once into a file, then sent to both destinations. Building
+      # the same report twice is how the summary and the comment would come to
+      # disagree about a run.
+      - name: Render the benchmark report
         if: always()
         run: |
+          set -eu
           {
             echo '### Eval-gated improvement'
             echo '```text'
@@ -76,7 +92,58 @@ jobs:
             echo '```text'
             cat pi5-context-bench.txt 2>/dev/null || echo 'benchmark did not produce output'
             echo '```'
-          } >> "$GITHUB_STEP_SUMMARY"
+          } > pi5-report.md
+          cat pi5-report.md >> "$GITHUB_STEP_SUMMARY"
+
+      # The job summary is reachable only through the Actions UI: it is in no
+      # API, and the artifact's bytes are served from blob storage rather than
+      # from GitHub. A comment is the one place a Pi measurement can be read
+      # without opening a browser — by a reviewer, or by tooling.
+      #
+      # One comment per pull request, updated in place. Both benchmarks are
+      # deterministic and model-free, so the text is byte-identical between
+      # runs: a change in this comment is a change in behaviour, which is only
+      # legible because the comment is not reposted every push.
+      - name: Report the benchmarks on the pull request
+        if: ${{ always() && github.event_name == 'pull_request' }}
+        uses: actions/github-script@v7
+        env:
+          PI5_JOB_STATUS: ${{ job.status }}
+        with:
+          script: |
+            const fs = require('fs');
+            const marker = '<!-- pi5-benchmarks -->';
+            let report;
+            try {
+              report = fs.readFileSync('pi5-report.md', 'utf8');
+            } catch {
+              report = '_The benchmark step produced no report._\n';
+            }
+            const { owner, repo } = context.repo;
+            const runUrl =
+              `${context.serverUrl}/${owner}/${repo}/actions/runs/${context.runId}`;
+            const body = [
+              marker,
+              `### Raspberry Pi 5 — \`${context.payload.pull_request.head.sha.slice(0, 8)}\``,
+              `job \`${process.env.PI5_JOB_STATUS}\` · [run ${context.runId}](${runUrl})`,
+              '',
+              report,
+            ].join('\n');
+
+            const issue_number = context.issue.number;
+            const comments = await github.paginate(github.rest.issues.listComments, {
+              owner, repo, issue_number,
+            });
+            // Only ever edit our own comment. Matching on the marker alone
+            // would let any comment quoting it be overwritten.
+            const mine = comments.find(
+              (c) => c.user?.type === 'Bot' && c.body?.includes(marker),
+            );
+            if (mine) {
+              await github.rest.issues.updateComment({ owner, repo, comment_id: mine.id, body });
+            } else {
+              await github.rest.issues.createComment({ owner, repo, issue_number, body });
+            }
 
       - name: Upload benchmark results
         if: always()
