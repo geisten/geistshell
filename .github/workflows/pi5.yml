@@ -50,12 +50,33 @@ jobs:
           vcgencmd get_throttled 2>/dev/null || true
 
       - name: Clean build and test
+        # bash for pipefail: `set -eu` does not cover a pipeline, so a failing
+        # `make test` piped into `tee` would report success. That is the same
+        # trap the benchmark step was in, avoided here rather than repeated.
+        shell: bash
         run: |
-          set -eu
+          set -euo pipefail
           make clean
           make sync-engine
           make host-debug HOST_CC=gcc
-          make test BUILD_MODE=host-debug HOST_CC=gcc
+          make test BUILD_MODE=host-debug HOST_CC=gcc | tee pi5-test.log
+
+      # `make test` names each failure as "FAILED: <path> (exit N)". Without
+      # this step that name reaches the step log and stops there: the Actions
+      # log is in no API, so a red Pi leg is a bare exit code to anything that
+      # is not a browser. The ci.yml job already does this; the Pi job was
+      # left out, and the first Pi failure was duly unreadable.
+      - name: Name the failing tests
+        if: failure()
+        run: |
+          [ -f pi5-test.log ] || exit 0
+          if grep -qE '^FAILED: ' pi5-test.log; then
+            grep -E '^FAILED: ' pi5-test.log | head -20 \
+              | while IFS= read -r line; do echo "::error::$line"; done
+          else
+            echo "::error::make test failed without naming a test; tail follows"
+            tail -15 pi5-test.log | while IFS= read -r line; do echo "::error::$line"; done
+          fi
 
       - name: Release build
         if: always()
@@ -150,6 +171,8 @@ jobs:
         uses: actions/upload-artifact@v4
         with:
           name: geistshell-pi5-benchmarks-${{ github.run_id }}
-          path: pi5-*-bench.txt
+          path: |
+            pi5-*-bench.txt
+            pi5-test.log
           if-no-files-found: ignore
           retention-days: 14
